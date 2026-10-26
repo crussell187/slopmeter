@@ -15,33 +15,58 @@ _Avoid_: check, lint, policy
 **Scope**:
 The unit a rule measures: function, module (file, class or package), system (whole repo or diff), or architecture.
 
+**Scored set**:
+The claimed files a run measures. Tests are out of it unless a run turns them on.
+_Avoid_: codebase, sources
+
+**Function**:
+A named definition with a body the programmer wrote, including one nested inside another, or a lambda or closure bound to a name outside any function. Declarations, compiler-generated bodies, decorators, and attributes sit outside it; a generic or template counts once, and any other lambda or closure belongs to the function that contains it.
+_Avoid_: method, lambda, closure, callable, declaration, prototype, decorator, attribute
+
+**Pass-through**:
+A function whose body only hands its parameters, other than the receiver, unchanged to one call.
+_Avoid_: wrapper, delegate, pass-through module
+
+**Member chain**:
+Consecutive `.` or `->` accesses in one expression. A chain that starts at the receiver may be two deep; any other chain may be one deep.
+_Avoid_: train wreck, dot chain
+
+**Cyclomatic complexity**:
+The number of independent paths through a function. It starts at 1, and each decision point adds 1.
+_Avoid_: cognitive complexity, complexity
+
 **Tier**:
 How trustworthy a rule's signal is: A is deterministic and gate-worthy, B is deterministic but noisy and warns by default, C needs semantics the tool lacks and is not computed.
 
 **Gate**:
-A rule outcome that fails the run (non-zero exit). Gates are deliberately few.
+A finding at gate level in a touched function. It fails the run. A lower warn level on the same rule does not.
 _Avoid_: error, blocker, hard fail
 
 **Warn**:
-A rule outcome that appears in the report with a score contribution but does not fail the run.
+A finding in the report and in the score that does not fail the run.
 _Avoid_: warning, soft fail, notice
 
 **Finding**:
-One rule violation at one symbol: rule, symbol, location, measured value, threshold, weight, principle, fix shape.
+The worst violation of one rule at one function: rule, symbol, the line of that site, measured value, the threshold it is over, level (`gate` or `warn`), weight, principle, fix shape, anti-fix.
 _Avoid_: issue, violation, diagnostic, error
 
 **Inherited finding**:
-A finding that pre-existed the change under review and was not worsened by it. Listed, never gating.
+A finding in a function the change did not touch. It is listed, and it does not gate.
+_Avoid_: legacy, baseline
+
+**Touched function**:
+A function whose span contains a changed line. The span runs from the first decorator or attribute above the definition through the end of the body.
+_Avoid_: modified file, dirty file
 
 **Slop score**:
-Σ finding weights ÷ KLOC for the scored set, so repos of different size compare. Reported alongside the gate verdict.
-_Avoid_: quality score, grade
+Σ finding weights ÷ KLOC for the scored set, so repos of different size compare. Reported beside the verdict, and it does not fail the run.
+_Avoid_: quality score, grade, ceiling
 
 **Principle**:
 The one-sentence design rule, with its source, that a finding is a proxy for.
 
 **Fix shape**:
-The named refactoring a finding suggests (extract, inline, introduce parameter object, invert dependency, merge modules), filled with the measured numbers. Never contains code.
+The named refactoring a finding suggests, filled with the measured value, the threshold, and the function's location. It does not predict the result of the edit. Never contains code.
 _Avoid_: fix, suggestion, autofix
 
 **Anti-fix**:
