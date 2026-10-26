@@ -20,6 +20,7 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 ## Decisions so far
 
 <!-- one line per closed ticket: gist, then the link for the detail -->
+- [tree-sitter grammars for Python, Rust and C++ from Rust](issues/01-tree-sitter-grammars.md) — use `tree-sitter` 0.27.1 with the org's python 0.25.0 / rust 0.24.2 / cpp 0.23.4 crates; all needed constructs have node types; Rust macro bodies are opaque and C++ `#if`/macros split statements and leak into `&&`/`||` counts, so ticket 16 has its facts.
 
 ## Not yet specified
 
