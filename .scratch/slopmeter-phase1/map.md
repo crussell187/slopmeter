@@ -22,6 +22,7 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 <!-- one line per closed ticket: gist, then the link for the detail -->
 - [tree-sitter grammars for Python, Rust and C++ from Rust](issues/01-tree-sitter-grammars.md) — use `tree-sitter` 0.27.1 with the org's python 0.25.0 / rust 0.24.2 / cpp 0.23.4 crates; all needed constructs have node types; Rust macro bodies are opaque and C++ `#if`/macros split statements and leak into `&&`/`||` counts, so ticket 16 has its facts.
 - [How radon, rust-code-analysis and lizard count cyclomatic complexity](issues/04-cross-check-tools.md) — all agree on base 1 + if/loop/catch/ternary/&&/||; they split on `with`, `assert`, `finally`, Python `match`, Rust match arms (+3 vs +2), C++ `default` and `#if`, so ticket 07 must pick per-language parity targets or a bounded delta.
+- [SonarSource cognitive complexity rules mapped to Python, Rust, C++](issues/03-cognitive-complexity.md) — implement from white paper v1.7 Appendix B; sonar-python and the official sonar-rust give per-construct tables; clippy's lint is a different metric; C++ reference is the community sonar-cxx; recursion is unimplemented everywhere and `match` handling differs per language.
 
 ## Not yet specified
 
