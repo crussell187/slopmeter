@@ -1,7 +1,8 @@
 # SonarSource cognitive complexity rules mapped to Python, Rust, C++
 
 Type: research
-Status: open
+Status: claimed
+Context: research subagent fired 2026-10-26; findings land on branch `research/cognitive-complexity` at `docs/research/cognitive-complexity.md`
 Blocked by: 
 
 ## Question

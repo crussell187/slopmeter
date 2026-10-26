@@ -1,7 +1,8 @@
 # tree-sitter grammars for Python, Rust and C++ from Rust
 
 Type: research
-Status: open
+Status: claimed
+Context: research subagent fired 2026-10-26; findings land on branch `research/tree-sitter-grammars` at `docs/research/tree-sitter-grammars.md`
 Blocked by: 
 
 ## Question

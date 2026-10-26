@@ -1,7 +1,8 @@
 # How radon, rust-code-analysis and lizard count cyclomatic complexity
 
 Type: research
-Status: open
+Status: claimed
+Context: research subagent fired 2026-10-26; findings land on branch `research/cross-check-tools` at `docs/research/cross-check-tools.md`
 Blocked by: 
 
 ## Question

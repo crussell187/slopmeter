@@ -1,7 +1,8 @@
 # Coverage formats: coverage.py LCOV, cargo-llvm-cov, gcov/lcov
 
 Type: research
-Status: open
+Status: claimed
+Context: research subagent fired 2026-10-26; findings land on branch `research/coverage-formats` at `docs/research/coverage-formats.md`
 Blocked by: 
 
 ## Question
