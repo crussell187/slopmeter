@@ -24,6 +24,7 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 - [How radon, rust-code-analysis and lizard count cyclomatic complexity](issues/04-cross-check-tools.md) — all agree on base 1 + if/loop/catch/ternary/&&/||; they split on `with`, `assert`, `finally`, Python `match`, Rust match arms (+3 vs +2), C++ `default` and `#if`, so ticket 07 must pick per-language parity targets or a bounded delta.
 - [SonarSource cognitive complexity rules mapped to Python, Rust, C++](issues/03-cognitive-complexity.md) — implement from white paper v1.7 Appendix B; sonar-python and the official sonar-rust give per-construct tables; clippy's lint is a different metric; C++ reference is the community sonar-cxx; recursion is unimplemented everywhere and `match` handling differs per language.
 - [Coverage formats: coverage.py LCOV, cargo-llvm-cov, gcov/lcov](issues/02-coverage-formats.md) — no tool gives a per-function coverage fraction via FN/FNDA, so derive it from DA line hits intersected with the IR function's line range; never key on FN names (three naming schemes, two mangled); parse both legacy FN/FNDA and lcov 2.2's FNL/FNA.
+- [Install the Rust toolchain on this machine](issues/05-install-rust-toolchain.md) — stable rustc/cargo 1.99.1 (`aarch64-apple-darwin`) via rustup 1.29.2, plus rustfmt, clippy, llvm-tools-preview (LLVM 23.1.1) and cargo-llvm-cov 0.9.1; `~/.cargo/bin` is on PATH through `~/.zshenv`.
 
 ## Not yet specified
 
