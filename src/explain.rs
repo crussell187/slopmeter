@@ -74,6 +74,26 @@ mod tests {
     }
 
     #[test]
+    fn python_thresholds_are_the_calibrated_gates() {
+        let pages = [
+            ("F01", "Python gate at 48."),
+            ("F03", "gates above 58."),
+            ("F04", "Python gate at 19."),
+            ("F05", "Python gate at 6."),
+            ("F06", "Python gate at 196."),
+            ("F08", "Python gates at 3 hops from the"),
+            ("F11", "Python gate at 64."),
+        ];
+        for (rule, phrase) in pages {
+            assert!(page(rule).unwrap().contains(phrase), "{rule}");
+        }
+        assert!(page("F02").unwrap().contains("gate at 8 in every language"));
+        assert!(page("F07")
+            .unwrap()
+            .contains("warn at 80 percent in every language"));
+    }
+
+    #[test]
     fn each_threshold_is_marked_as_the_shipped_stand_in() {
         for rule in RULES {
             let text = page(rule).unwrap();

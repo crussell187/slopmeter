@@ -11,7 +11,8 @@ line where that chain starts.
 
 Threshold
 Shipped stand-in: gate at 2 hops from the receiver, and at 1
-otherwise, in every language. No warn level. A project adds
+otherwise, in Rust and C++. Python gates at 3 hops from the
+receiver and at 3 otherwise. No warn level. A project adds
 allow-list names and cannot move the depths.
 A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
 above the function excuses this gate in Python, and the same tokens

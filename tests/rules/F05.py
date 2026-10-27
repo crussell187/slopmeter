@@ -1,6 +1,2 @@
 def deep(flag):
-    if flag:
-        if flag:
-            if flag:
-                return 1
-    return 0
+    return (lambda: (lambda: (lambda: (lambda: (lambda: (lambda: flag if flag else 0))))))

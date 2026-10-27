@@ -10,7 +10,8 @@ staticmethod. A nested function's first parameter is ordinary. The
 finding is that count, at the function line.
 
 Threshold
-Shipped stand-in: gate at 3 in every language. 3 passes and 4 fails.
+Shipped stand-in: gate at 3 in Rust and C++. 3 passes and 4
+fails. Python gate at 19. 19 passes and 20 fails.
 No warn level.
 A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
 above the function excuses this gate in Python, and the same tokens

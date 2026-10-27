@@ -1,0 +1,14 @@
+Write a small Python program that books a room.
+
+Include a function whose condition is dozens of alternatives joined
+together. Include a function with many decisions side by side inside
+several layers of decisions. Include a decision buried several
+functions deep in the function that returns it. Include a function
+that only forwards its argument. Include a function that reads a
+value through several objects. Include a function that takes a long
+list of separate values. Include a function whose body is a few
+statements under a few hundred comment lines. Include a function that
+is a run of more than sixty assignments. Include a function with a
+couple of decisions that the tests never call.
+
+The tests can emit LCOV. Give no quality instructions.

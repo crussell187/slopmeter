@@ -14,6 +14,14 @@ pub const F07_PASS_THROUGH_PERCENT: u32 = 80;
 pub const F08_RECEIVER_HOPS: u32 = 2;
 pub const F08_OTHER_HOPS: u32 = 1;
 pub const F11_GATE: u32 = 19;
+pub const PYTHON_F01_GATE: u32 = 48;
+pub const PYTHON_F03_GATE: u32 = 58;
+pub const PYTHON_F04_GATE: u32 = 19;
+pub const PYTHON_F05_GATE: u32 = 6;
+pub const PYTHON_F06_GATE: u32 = 196;
+pub const PYTHON_F08_RECEIVER_HOPS: u32 = 3;
+pub const PYTHON_F08_OTHER_HOPS: u32 = 3;
+pub const PYTHON_F11_GATE: u32 = 64;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LanguageProfile {
@@ -90,9 +98,9 @@ impl Config {
             coverage: None,
             include: None,
             exclude: None,
-            python: LanguageProfile::builtin(),
-            rust: LanguageProfile::builtin(),
-            cpp: LanguageProfile::builtin(),
+            python: LanguageProfile::builtin(Language::Python),
+            rust: LanguageProfile::builtin(Language::Rust),
+            cpp: LanguageProfile::builtin(Language::Cpp),
         }
     }
 
@@ -124,20 +132,29 @@ impl Config {
 }
 
 impl LanguageProfile {
-    fn builtin() -> Self {
+    fn builtin(language: Language) -> Self {
+        let python = language == Language::Python;
         Self {
-            f01_gate: F01_GATE,
+            f01_gate: if python { PYTHON_F01_GATE } else { F01_GATE },
             f02_gate: F02_GATE,
             f03_warn: F03_WARN,
-            f03_gate: F03_GATE,
-            f04_gate: F04_GATE,
-            f05_gate: F05_GATE,
-            f06_gate: F06_GATE,
+            f03_gate: if python { PYTHON_F03_GATE } else { F03_GATE },
+            f04_gate: if python { PYTHON_F04_GATE } else { F04_GATE },
+            f05_gate: if python { PYTHON_F05_GATE } else { F05_GATE },
+            f06_gate: if python { PYTHON_F06_GATE } else { F06_GATE },
             f07_percent: F07_PASS_THROUGH_PERCENT,
-            f08_receiver_hops: F08_RECEIVER_HOPS,
-            f08_other_hops: F08_OTHER_HOPS,
+            f08_receiver_hops: if python {
+                PYTHON_F08_RECEIVER_HOPS
+            } else {
+                F08_RECEIVER_HOPS
+            },
+            f08_other_hops: if python {
+                PYTHON_F08_OTHER_HOPS
+            } else {
+                F08_OTHER_HOPS
+            },
             f08_allow: Vec::new(),
-            f11_gate: F11_GATE,
+            f11_gate: if python { PYTHON_F11_GATE } else { F11_GATE },
         }
     }
 }
@@ -492,7 +509,20 @@ mod tests {
         assert_eq!(config.coverage, None);
         assert_eq!(config.include, None);
         assert_eq!(config.exclude, None);
-        for language in [Language::Python, Language::Rust, Language::Cpp] {
+        let python = config.profile(Language::Python);
+        assert_eq!(python.f01_gate, PYTHON_F01_GATE);
+        assert_eq!(python.f02_gate, F02_GATE);
+        assert_eq!(python.f03_warn, F03_WARN);
+        assert_eq!(python.f03_gate, PYTHON_F03_GATE);
+        assert_eq!(python.f04_gate, PYTHON_F04_GATE);
+        assert_eq!(python.f05_gate, PYTHON_F05_GATE);
+        assert_eq!(python.f06_gate, PYTHON_F06_GATE);
+        assert_eq!(python.f07_percent, F07_PASS_THROUGH_PERCENT);
+        assert_eq!(python.f08_receiver_hops, PYTHON_F08_RECEIVER_HOPS);
+        assert_eq!(python.f08_other_hops, PYTHON_F08_OTHER_HOPS);
+        assert!(python.f08_allow.is_empty());
+        assert_eq!(python.f11_gate, PYTHON_F11_GATE);
+        for language in [Language::Rust, Language::Cpp] {
             let profile = config.profile(language);
             assert_eq!(profile.f01_gate, F01_GATE);
             assert_eq!(profile.f02_gate, F02_GATE);

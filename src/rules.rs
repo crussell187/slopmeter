@@ -513,11 +513,27 @@ fn fix_shape(breach: &Breach, name: &str) -> String {
 mod tests {
     use super::*;
     use crate::analyzers::{ChainDepth, Forwarding, Measurement};
-    use crate::inputs::{Config, LanguageProfile};
+    use crate::inputs::{
+        LanguageProfile, F01_GATE, F02_GATE, F03_GATE, F03_WARN, F04_GATE, F05_GATE, F06_GATE,
+        F07_PASS_THROUGH_PERCENT, F08_OTHER_HOPS, F08_RECEIVER_HOPS, F11_GATE,
+    };
     use crate::ir::{Span, WaiverLine};
 
     fn profile() -> LanguageProfile {
-        Config::builtin().python
+        LanguageProfile {
+            f01_gate: F01_GATE,
+            f02_gate: F02_GATE,
+            f03_warn: F03_WARN,
+            f03_gate: F03_GATE,
+            f04_gate: F04_GATE,
+            f05_gate: F05_GATE,
+            f06_gate: F06_GATE,
+            f07_percent: F07_PASS_THROUGH_PERCENT,
+            f08_receiver_hops: F08_RECEIVER_HOPS,
+            f08_other_hops: F08_OTHER_HOPS,
+            f08_allow: Vec::new(),
+            f11_gate: F11_GATE,
+        }
     }
 
     fn base() -> Measurement {

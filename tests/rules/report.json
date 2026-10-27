@@ -2,26 +2,9 @@
   "verdict": "fail",
   "scope": "strict",
   "slop_score": 0.0,
-  "kloc": 0.074,
+  "kloc": 0.232,
   "tool_version": "0.0.0",
   "findings": [
-    {
-      "rule": "F08",
-      "level": "gate",
-      "symbol": {
-        "path": "tests/rules/F08.py",
-        "name": "city",
-        "param_types": [],
-        "qualifier": ""
-      },
-      "line": 2,
-      "measured_value": 2,
-      "threshold": 1,
-      "weight": 0,
-      "principle": "A member chain that does not start at the receiver may be one deep, and a chain that starts at the receiver may be two deep. Law of Demeter.",
-      "fix_shape": "Break the chain at line 2 in city. It is 2 deep, and the limit is 1.",
-      "anti_fix": "Saving the chain in locals leaves the finding in place."
-    },
     {
       "rule": "F02",
       "level": "gate",
@@ -40,6 +23,23 @@
       "anti_fix": "Extracting an uncovered branch leaves that branch's score in place."
     },
     {
+      "rule": "F08",
+      "level": "gate",
+      "symbol": {
+        "path": "tests/rules/F08.py",
+        "name": "city",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 2,
+      "measured_value": 4,
+      "threshold": 3,
+      "weight": 0,
+      "principle": "A member chain that does not start at the receiver may be one deep, and a chain that starts at the receiver may be two deep. Law of Demeter.",
+      "fix_shape": "Break the chain at line 2 in city. It is 4 deep, and the limit is 3.",
+      "anti_fix": "Saving the chain in locals leaves the finding in place."
+    },
+    {
       "rule": "F05",
       "level": "gate",
       "symbol": {
@@ -48,13 +48,30 @@
         "param_types": [],
         "qualifier": ""
       },
-      "line": 4,
-      "measured_value": 3,
-      "threshold": 2,
+      "line": 2,
+      "measured_value": 7,
+      "threshold": 6,
       "weight": 0,
       "principle": "A reader should not hold three decisions at once.",
-      "fix_shape": "Flatten the decision at line 4 in deep. Nesting is 3, and the gate is 2.",
+      "fix_shape": "Flatten the decision at line 2 in deep. Nesting is 7, and the gate is 6.",
       "anti_fix": "Indenting the inner condition less leaves the depth in place."
+    },
+    {
+      "rule": "F03",
+      "level": "gate",
+      "symbol": {
+        "path": "tests/rules/F03.py",
+        "name": "tangled",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 1,
+      "measured_value": 63,
+      "threshold": 58,
+      "weight": 0,
+      "principle": "Nested structure costs more to understand than a path count. SonarSource Cognitive Complexity.",
+      "fix_shape": "Simplify tangled. Its cognitive complexity is 63, and the gate is 58.",
+      "anti_fix": "Adding a comment inside the nested block leaves the score in place."
     },
     {
       "rule": "F04",
@@ -66,11 +83,11 @@
         "qualifier": ""
       },
       "line": 1,
-      "measured_value": 4,
-      "threshold": 3,
+      "measured_value": 20,
+      "threshold": 19,
       "weight": 0,
       "principle": "A function with many ordinary parameters is doing more than one job.",
-      "fix_shape": "Group the parameters of paint. It has 4 ordinary parameters, and the gate is 3.",
+      "fix_shape": "Group the parameters of paint. It has 20 ordinary parameters, and the gate is 19.",
       "anti_fix": "Giving a parameter a default leaves the count in place."
     },
     {
@@ -83,46 +100,12 @@
         "qualifier": ""
       },
       "line": 1,
-      "measured_value": 9,
-      "threshold": 8,
+      "measured_value": 49,
+      "threshold": 48,
       "weight": 0,
       "principle": "A function should have few independent paths. McCabe.",
-      "fix_shape": "Split paths. Its cyclomatic complexity is 9, and the gate is 8.",
+      "fix_shape": "Split paths. Its cyclomatic complexity is 49, and the gate is 48.",
       "anti_fix": "Splitting one condition onto two lines leaves the path count in place."
-    },
-    {
-      "rule": "F06",
-      "level": "gate",
-      "symbol": {
-        "path": "tests/rules/F06.py",
-        "name": "long",
-        "param_types": [],
-        "qualifier": ""
-      },
-      "line": 1,
-      "measured_value": 21,
-      "threshold": 19,
-      "weight": 0,
-      "principle": "A function's body should stay short enough to read at once.",
-      "fix_shape": "Shorten long. Its body is 21 lines, and the gate is 19.",
-      "anti_fix": "Breaking one statement across more lines makes the count larger."
-    },
-    {
-      "rule": "F03",
-      "level": "gate",
-      "symbol": {
-        "path": "tests/rules/F03.py",
-        "name": "tangled",
-        "param_types": [],
-        "qualifier": ""
-      },
-      "line": 1,
-      "measured_value": 16,
-      "threshold": 15,
-      "weight": 0,
-      "principle": "Nested structure costs more to understand than a path count. SonarSource Cognitive Complexity.",
-      "fix_shape": "Simplify tangled. Its cognitive complexity is 16, and the gate is 15.",
-      "anti_fix": "Adding a comment inside the nested block leaves the score in place."
     },
     {
       "rule": "F11",
@@ -134,12 +117,29 @@
         "qualifier": ""
       },
       "line": 1,
-      "measured_value": 20,
-      "threshold": 19,
+      "measured_value": 65,
+      "threshold": 64,
       "weight": 0,
       "principle": "A function should say little. The count is statements, not wrapped lines.",
-      "fix_shape": "Split packed. It has 20 logical lines, and the gate is 19.",
+      "fix_shape": "Split packed. It has 65 logical lines, and the gate is 64.",
       "anti_fix": "Breaking one statement across more lines leaves the count in place."
+    },
+    {
+      "rule": "F06",
+      "level": "gate",
+      "symbol": {
+        "path": "tests/rules/F06.py",
+        "name": "long",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 1,
+      "measured_value": 197,
+      "threshold": 196,
+      "weight": 0,
+      "principle": "A function's body should stay short enough to read at once.",
+      "fix_shape": "Shorten long. Its body is 197 lines, and the gate is 196.",
+      "anti_fix": "Breaking one statement across more lines makes the count larger."
     },
     {
       "rule": "F07",

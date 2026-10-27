@@ -523,14 +523,22 @@ def touched():
     if True:
         if True:
             if True:
-                return 1
+                if True:
+                    if True:
+                        if True:
+                            if True:
+                                return 1
     return 0
 
 def other():
     if True:
         if True:
             if True:
-                return 1
+                if True:
+                    if True:
+                        if True:
+                            if True:
+                                return 1
     return 0
 ";
 

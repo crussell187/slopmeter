@@ -1,5 +1,6 @@
 pub mod adapters;
 pub mod analyzers;
+mod check;
 pub mod cli;
 pub mod explain;
 pub mod inputs;

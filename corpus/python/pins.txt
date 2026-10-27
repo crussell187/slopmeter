@@ -1,0 +1,11 @@
+psf/requests 3c7baaa05ab4aa49cc819ce3a819d260de19c157
+encode/httpx b5addb64f0161ff6bfe94c124ef76f6a1fba5254
+pallets/click 2247b35ea1c47c727d7a06e51fa280e12a863ff6
+F01 48
+F02 8
+F03 58
+F04 19
+F05 6
+F06 196
+F08 3 3
+F11 64

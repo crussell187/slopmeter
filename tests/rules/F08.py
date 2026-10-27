@@ -1,2 +1,2 @@
 def city(response):
-    return response.body.city
+    return response.body.city.region.code

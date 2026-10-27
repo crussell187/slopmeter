@@ -9,7 +9,8 @@ same ones cyclomatic complexity counts. The finding is that depth, at
 the deepest decision.
 
 Threshold
-Shipped stand-in: gate at 2 in every language. 2 passes and 3 fails.
+Shipped stand-in: gate at 2 in Rust and C++. 2 passes and 3
+fails. Python gate at 6. 6 passes and 7 fails.
 No warn level.
 A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
 above the function excuses this gate in Python, and the same tokens
