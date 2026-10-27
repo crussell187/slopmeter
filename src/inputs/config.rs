@@ -1,0 +1,629 @@
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use crate::ir::Language;
+
+pub const F03_WARN: u32 = 10;
+pub const F03_GATE: u32 = 15;
+pub const F07_PASS_THROUGH_PERCENT: u32 = 80;
+pub const F08_RECEIVER_HOPS: u32 = 2;
+pub const F08_OTHER_HOPS: u32 = 1;
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LanguageProfile {
+    pub f03_warn: u32,
+    pub f03_gate: u32,
+    pub f07_percent: u32,
+    pub f08_receiver_hops: u32,
+    pub f08_other_hops: u32,
+    pub f08_allow: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Config {
+    pub coverage: Option<String>,
+    pub include: Option<Vec<String>>,
+    pub exclude: Option<Vec<String>>,
+    pub python: LanguageProfile,
+    pub rust: LanguageProfile,
+    pub cpp: LanguageProfile,
+}
+
+#[derive(Debug)]
+pub enum ConfigError {
+    NotADirectory(PathBuf),
+    Read(PathBuf, std::io::Error),
+    InvalidToml(String),
+    UnknownKey(String),
+    WrongType(String),
+    EmptyOverride(String),
+    InvalidPath(String),
+    InvalidName(String),
+    Negative(String),
+    WarnNotBelowGate {
+        language: String,
+        warn: u32,
+        gate: u32,
+    },
+}
+
+impl std::fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ConfigError::NotADirectory(path) => write!(f, "{} is not a directory", path.display()),
+            ConfigError::Read(path, err) => write!(f, "reading {}: {err}", path.display()),
+            ConfigError::InvalidToml(err) => write!(f, "invalid TOML: {err}"),
+            ConfigError::UnknownKey(key) => write!(f, "unknown key {key}"),
+            ConfigError::WrongType(key) => write!(f, "{key} has the wrong type"),
+            ConfigError::EmptyOverride(key) => write!(f, "{key} is empty"),
+            ConfigError::InvalidPath(path) => write!(f, "invalid path {path}"),
+            ConfigError::InvalidName(name) => write!(f, "invalid allow name {name}"),
+            ConfigError::Negative(key) => write!(f, "{key} is negative"),
+            ConfigError::WarnNotBelowGate {
+                language,
+                warn,
+                gate,
+            } => {
+                write!(f, "{language} F03 warn {warn} is not below gate {gate}")
+            }
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {}
+
+impl Config {
+    pub fn builtin() -> Self {
+        Self {
+            coverage: None,
+            include: None,
+            exclude: None,
+            python: LanguageProfile::builtin(),
+            rust: LanguageProfile::builtin(),
+            cpp: LanguageProfile::builtin(),
+        }
+    }
+
+    pub fn profile(&self, language: Language) -> &LanguageProfile {
+        match language {
+            Language::Python => &self.python,
+            Language::Rust => &self.rust,
+            Language::Cpp => &self.cpp,
+        }
+    }
+
+    pub fn set_coverage_override(&mut self, path: impl Into<String>) {
+        self.coverage = Some(path.into());
+    }
+
+    pub fn retains(&self, path: &str) -> bool {
+        if let Some(include) = &self.include {
+            if !include.iter().any(|pattern| pattern_matches(pattern, path)) {
+                return false;
+            }
+        }
+        if let Some(exclude) = &self.exclude {
+            if exclude.iter().any(|pattern| pattern_matches(pattern, path)) {
+                return false;
+            }
+        }
+        true
+    }
+}
+
+impl LanguageProfile {
+    fn builtin() -> Self {
+        Self {
+            f03_warn: F03_WARN,
+            f03_gate: F03_GATE,
+            f07_percent: F07_PASS_THROUGH_PERCENT,
+            f08_receiver_hops: F08_RECEIVER_HOPS,
+            f08_other_hops: F08_OTHER_HOPS,
+            f08_allow: Vec::new(),
+        }
+    }
+}
+
+pub fn load_config(root: &Path) -> Result<Config, ConfigError> {
+    if !root.is_dir() {
+        return Err(ConfigError::NotADirectory(root.to_path_buf()));
+    }
+    let path = root.join("slopmeter.toml");
+    if !path.exists() {
+        return Ok(Config::builtin());
+    }
+    let text = fs::read_to_string(&path).map_err(|err| ConfigError::Read(path, err))?;
+    parse_config(&text)
+}
+
+fn parse_config(text: &str) -> Result<Config, ConfigError> {
+    let table: toml::Table = text
+        .parse()
+        .map_err(|err: toml::de::Error| ConfigError::InvalidToml(err.to_string()))?;
+    let mut config = Config::builtin();
+    for (key, value) in &table {
+        match key.as_str() {
+            "coverage" => config.coverage = Some(coverage_path(value)?),
+            "include" => config.include = Some(pattern_list(value, "include")?),
+            "exclude" => config.exclude = Some(pattern_list(value, "exclude")?),
+            "profile" => apply_profile(&mut config, value)?,
+            other => return Err(ConfigError::UnknownKey(other.to_string())),
+        }
+    }
+    Ok(config)
+}
+
+fn coverage_path(value: &toml::Value) -> Result<String, ConfigError> {
+    let Some(path) = value.as_str() else {
+        return Err(ConfigError::WrongType("coverage".to_string()));
+    };
+    if path.is_empty() {
+        return Err(ConfigError::EmptyOverride("coverage".to_string()));
+    }
+    validate_repo_path(path)?;
+    Ok(path.to_string())
+}
+
+fn pattern_list(value: &toml::Value, key: &str) -> Result<Vec<String>, ConfigError> {
+    let items = string_list(value, key)?;
+    for pattern in &items {
+        validate_pattern(pattern)?;
+    }
+    Ok(items)
+}
+
+fn string_list(value: &toml::Value, key: &str) -> Result<Vec<String>, ConfigError> {
+    let Some(array) = value.as_array() else {
+        return Err(ConfigError::WrongType(key.to_string()));
+    };
+    if array.is_empty() {
+        return Err(ConfigError::EmptyOverride(key.to_string()));
+    }
+    let mut items = Vec::with_capacity(array.len());
+    for item in array {
+        let Some(text) = item.as_str() else {
+            return Err(ConfigError::WrongType(key.to_string()));
+        };
+        items.push(text.to_string());
+    }
+    Ok(items)
+}
+
+fn apply_profile(config: &mut Config, value: &toml::Value) -> Result<(), ConfigError> {
+    let Some(table) = value.as_table() else {
+        return Err(ConfigError::WrongType("profile".to_string()));
+    };
+    if table.is_empty() {
+        return Err(ConfigError::EmptyOverride("profile".to_string()));
+    }
+    for (name, rules) in table {
+        let language = match name.as_str() {
+            "python" => Language::Python,
+            "rust" => Language::Rust,
+            "cpp" => Language::Cpp,
+            other => return Err(ConfigError::UnknownKey(format!("profile.{other}"))),
+        };
+        apply_language(config, language, rules)?;
+    }
+    Ok(())
+}
+
+fn apply_language(
+    config: &mut Config,
+    language: Language,
+    value: &toml::Value,
+) -> Result<(), ConfigError> {
+    let label = language_name(language);
+    let Some(table) = value.as_table() else {
+        return Err(ConfigError::WrongType(format!("profile.{label}")));
+    };
+    if table.is_empty() {
+        return Err(ConfigError::EmptyOverride(format!("profile.{label}")));
+    }
+    for (rule, body) in table {
+        match rule.as_str() {
+            "F03" => apply_f03(config, language, body)?,
+            "F08" => apply_f08(config, language, body)?,
+            other => return Err(ConfigError::UnknownKey(format!("profile.{label}.{other}"))),
+        }
+    }
+    Ok(())
+}
+
+fn apply_f03(
+    config: &mut Config,
+    language: Language,
+    value: &toml::Value,
+) -> Result<(), ConfigError> {
+    let label = language_name(language);
+    let Some(table) = value.as_table() else {
+        return Err(ConfigError::WrongType(format!("profile.{label}.F03")));
+    };
+    if table.is_empty() {
+        return Err(ConfigError::EmptyOverride(format!("profile.{label}.F03")));
+    }
+    let mut warn = None;
+    let mut gate = None;
+    for (key, item) in table {
+        match key.as_str() {
+            "warn" => warn = Some(nonneg(item, &format!("profile.{label}.F03.warn"))?),
+            "gate" => gate = Some(nonneg(item, &format!("profile.{label}.F03.gate"))?),
+            other => {
+                return Err(ConfigError::UnknownKey(format!(
+                    "profile.{label}.F03.{other}"
+                )))
+            }
+        }
+    }
+    if warn.is_none() && gate.is_none() {
+        return Err(ConfigError::EmptyOverride(format!("profile.{label}.F03")));
+    }
+    let warn = warn.unwrap_or(F03_WARN);
+    let gate = gate.unwrap_or(F03_GATE);
+    if warn >= gate {
+        return Err(ConfigError::WarnNotBelowGate {
+            language: label.to_string(),
+            warn,
+            gate,
+        });
+    }
+    let profile = config.profile_mut(language);
+    profile.f03_warn = warn;
+    profile.f03_gate = gate;
+    Ok(())
+}
+
+fn apply_f08(
+    config: &mut Config,
+    language: Language,
+    value: &toml::Value,
+) -> Result<(), ConfigError> {
+    let label = language_name(language);
+    let Some(table) = value.as_table() else {
+        return Err(ConfigError::WrongType(format!("profile.{label}.F08")));
+    };
+    if table.is_empty() {
+        return Err(ConfigError::EmptyOverride(format!("profile.{label}.F08")));
+    }
+    let mut allow = None;
+    for (key, item) in table {
+        match key.as_str() {
+            "allow" => allow = Some(string_list(item, &format!("profile.{label}.F08.allow"))?),
+            other => {
+                return Err(ConfigError::UnknownKey(format!(
+                    "profile.{label}.F08.{other}"
+                )))
+            }
+        }
+    }
+    let Some(names) = allow else {
+        return Err(ConfigError::EmptyOverride(format!("profile.{label}.F08")));
+    };
+    for name in &names {
+        if name.is_empty() || name.contains(['.', ':', '/']) {
+            return Err(ConfigError::InvalidName(name.clone()));
+        }
+    }
+    config.profile_mut(language).f08_allow = names;
+    Ok(())
+}
+
+fn nonneg(value: &toml::Value, key: &str) -> Result<u32, ConfigError> {
+    let Some(number) = value.as_integer() else {
+        return Err(ConfigError::WrongType(key.to_string()));
+    };
+    if number < 0 {
+        return Err(ConfigError::Negative(key.to_string()));
+    }
+    u32::try_from(number).map_err(|_| ConfigError::WrongType(key.to_string()))
+}
+
+fn validate_repo_path(path: &str) -> Result<(), ConfigError> {
+    if path.starts_with('/') || path.starts_with('\\') || has_drive_prefix(path) {
+        return Err(ConfigError::InvalidPath(path.to_string()));
+    }
+    if path.split(['/', '\\']).any(|segment| segment == "..") {
+        return Err(ConfigError::InvalidPath(path.to_string()));
+    }
+    Ok(())
+}
+
+fn validate_pattern(pattern: &str) -> Result<(), ConfigError> {
+    if pattern.is_empty() || pattern.contains('!') {
+        return Err(ConfigError::InvalidPath(pattern.to_string()));
+    }
+    let trimmed = pattern.trim_end_matches('/');
+    if trimmed.is_empty()
+        || trimmed.starts_with('/')
+        || trimmed.starts_with('\\')
+        || has_drive_prefix(trimmed)
+    {
+        return Err(ConfigError::InvalidPath(pattern.to_string()));
+    }
+    for segment in trimmed.split(['/', '\\']) {
+        if segment.is_empty() || segment == "." || segment == ".." {
+            return Err(ConfigError::InvalidPath(pattern.to_string()));
+        }
+        if segment.contains("**") && segment != "**" {
+            return Err(ConfigError::InvalidPath(pattern.to_string()));
+        }
+    }
+    Ok(())
+}
+
+fn has_drive_prefix(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 2 && bytes[0].is_ascii_alphabetic() && bytes[1] == b':'
+}
+
+fn pattern_matches(pattern: &str, path: &str) -> bool {
+    let pattern = pattern.trim_end_matches('/');
+    if !pattern.contains('*') {
+        return path == pattern || path.starts_with(&format!("{pattern}/"));
+    }
+    let pattern_segments: Vec<&str> = pattern
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    let path_segments: Vec<&str> = path
+        .split('/')
+        .filter(|segment| !segment.is_empty())
+        .collect();
+    segments_match(&pattern_segments, &path_segments)
+}
+
+fn segments_match(pattern: &[&str], path: &[&str]) -> bool {
+    let Some(head) = pattern.first() else {
+        return path.is_empty();
+    };
+    if *head == "**" {
+        if segments_match(&pattern[1..], path) {
+            return true;
+        }
+        return !path.is_empty() && segments_match(pattern, &path[1..]);
+    }
+    !path.is_empty() && segment_matches(head, path[0]) && segments_match(&pattern[1..], &path[1..])
+}
+
+fn segment_matches(pattern: &str, segment: &str) -> bool {
+    let parts: Vec<&str> = pattern.split('*').collect();
+    if parts.len() == 1 {
+        return pattern == segment;
+    }
+    if !segment.starts_with(parts[0]) {
+        return false;
+    }
+    let mut rest = &segment[parts[0].len()..];
+    for (index, part) in parts.iter().enumerate().skip(1) {
+        if index + 1 == parts.len() {
+            return rest.ends_with(part);
+        }
+        if part.is_empty() {
+            continue;
+        }
+        let Some(found) = rest.find(part) else {
+            return false;
+        };
+        rest = &rest[found + part.len()..];
+    }
+    true
+}
+
+fn language_name(language: Language) -> &'static str {
+    match language {
+        Language::Python => "python",
+        Language::Rust => "rust",
+        Language::Cpp => "cpp",
+    }
+}
+
+impl Config {
+    fn profile_mut(&mut self, language: Language) -> &mut LanguageProfile {
+        match language {
+            Language::Python => &mut self.python,
+            Language::Rust => &mut self.rust,
+            Language::Cpp => &mut self.cpp,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::Language;
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn fixture(name: &str) -> PathBuf {
+        static N: AtomicU64 = AtomicU64::new(0);
+        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("config-fixtures")
+            .join(format!(
+                "{name}-{}-{}",
+                std::process::id(),
+                N.fetch_add(1, Ordering::Relaxed)
+            ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn write_config(root: &Path, body: &str) {
+        fs::write(root.join("slopmeter.toml"), body).unwrap();
+    }
+
+    #[test]
+    fn a_missing_file_is_the_built_in_profile() {
+        let root = fixture("missing");
+        fs::write(
+            root.join("nested").join("slopmeter.toml"),
+            "coverage = \"nope.lcov\"\n",
+        )
+        .unwrap_or_else(|_| {
+            fs::create_dir_all(root.join("nested")).unwrap();
+            fs::write(
+                root.join("nested").join("slopmeter.toml"),
+                "coverage = \"nope.lcov\"\n",
+            )
+            .unwrap();
+        });
+
+        let config = load_config(&root).unwrap();
+        assert_eq!(config.coverage, None);
+        assert_eq!(config.include, None);
+        assert_eq!(config.exclude, None);
+        for language in [Language::Python, Language::Rust, Language::Cpp] {
+            let profile = config.profile(language);
+            assert_eq!(profile.f03_warn, F03_WARN);
+            assert_eq!(profile.f03_gate, F03_GATE);
+            assert_eq!(profile.f07_percent, F07_PASS_THROUGH_PERCENT);
+            assert_eq!(profile.f08_receiver_hops, F08_RECEIVER_HOPS);
+            assert_eq!(profile.f08_other_hops, F08_OTHER_HOPS);
+            assert!(profile.f08_allow.is_empty());
+        }
+        assert!(config.retains("src/a.py"));
+        assert!(config.retains("build.rs"));
+    }
+
+    #[test]
+    fn coverage_include_exclude_f03_gate_and_f08_allow_parse() {
+        let root = fixture("departures");
+        write_config(
+            &root,
+            r#"
+coverage = "coverage.lcov"
+include = ["crates/**", "python/**"]
+exclude = ["crates/xtask/**"]
+
+[profile.python.F03]
+gate = 12
+
+[profile.rust.F08]
+allow = ["with_timeout"]
+"#,
+        );
+
+        let config = load_config(&root).unwrap();
+        assert_eq!(config.coverage.as_deref(), Some("coverage.lcov"));
+        assert!(config.retains("crates/slopmeter/src/lib.rs"));
+        assert!(config.retains("python/app.py"));
+        assert!(!config.retains("src/a.py"));
+        assert!(!config.retains("crates/xtask/src/main.rs"));
+        assert!(!config.retains("Crates/slopmeter/src/lib.rs"));
+        assert_eq!(config.profile(Language::Python).f03_warn, F03_WARN);
+        assert_eq!(config.profile(Language::Python).f03_gate, 12);
+        assert_eq!(config.profile(Language::Rust).f03_gate, F03_GATE);
+        assert_eq!(config.profile(Language::Cpp).f03_gate, F03_GATE);
+        assert_eq!(
+            config.profile(Language::Rust).f08_allow,
+            vec!["with_timeout".to_string()]
+        );
+        assert!(config.profile(Language::Python).f08_allow.is_empty());
+        assert_eq!(
+            config.profile(Language::Rust).f07_percent,
+            F07_PASS_THROUGH_PERCENT
+        );
+    }
+
+    #[test]
+    fn a_directory_pattern_covers_its_contents_and_leaves_the_sibling_file() {
+        let root = fixture("directory");
+        write_config(&root, "exclude = [\"build\"]\n");
+        let config = load_config(&root).unwrap();
+        assert!(!config.retains("build/lib.rs"));
+        assert!(!config.retains("build/nested/a.rs"));
+        assert!(config.retains("build.rs"));
+        assert!(config.retains("src/build/lib.rs"));
+    }
+
+    #[test]
+    fn a_star_stays_inside_one_segment() {
+        let root = fixture("star");
+        write_config(&root, "include = [\"src/*.py\"]\n");
+        let config = load_config(&root).unwrap();
+        assert!(config.retains("src/a.py"));
+        assert!(!config.retains("src/sub/a.py"));
+        assert!(!config.retains("src/a.rs"));
+    }
+
+    #[test]
+    fn an_unknown_key_an_empty_include_and_a_gate_below_warn_fail() {
+        let root = fixture("errors");
+        write_config(&root, "weight = 1\n");
+        assert!(load_config(&root).is_err());
+
+        write_config(&root, "include = []\n");
+        assert!(matches!(
+            load_config(&root).unwrap_err(),
+            ConfigError::EmptyOverride(_)
+        ));
+
+        write_config(&root, "[profile.python.F03]\ngate = 10\n");
+        assert!(matches!(
+            load_config(&root).unwrap_err(),
+            ConfigError::WarnNotBelowGate {
+                warn: 10,
+                gate: 10,
+                ..
+            }
+        ));
+
+        write_config(&root, "[profile.python.F03]\ngate = 9\n");
+        assert!(load_config(&root).is_err());
+    }
+
+    #[test]
+    fn other_rules_wrong_types_and_bad_paths_fail() {
+        let root = fixture("rejected");
+        let rejected = [
+            "[profile.python.F01]\ngate = 10\n",
+            "[profile.python.F07]\nwarn = 80\n",
+            "[profile.python.F03]\nallow = [\"x\"]\n",
+            "[profile.rust.F08]\ngate = 2\n",
+            "coverage = \"\"\n",
+            "coverage = \"/tmp/coverage.lcov\"\n",
+            "coverage = \"../coverage.lcov\"\n",
+            "coverage = 1\n",
+            "include = \"src/**\"\n",
+            "[profile.python.F03]\ngate = -1\n",
+            "[profile.python.F03]\ngate = 12.5\n",
+            "include = [\"../secret\"]\n",
+            "include = [\"!src\"]\n",
+            "exclude = []\n",
+            "[profile.rust.F08]\nallow = []\n",
+            "[profile.rust.F08]\nallow = [\"\"]\n",
+            "[profile.rust.F08]\nallow = [\"a.b\"]\n",
+            "[profile.rust.F08]\nallow = [\"a:b\"]\n",
+            "[profile.rust.F08]\nallow = [\"a/b\"]\n",
+            "[profile.python.F03]\n",
+            "coverage =\n",
+            "[profile.python]\n",
+        ];
+        for body in rejected {
+            write_config(&root, body);
+            assert!(load_config(&root).is_err(), "{body}");
+        }
+    }
+
+    #[test]
+    fn a_coverage_flag_may_be_absolute() {
+        let root = fixture("flag");
+        write_config(&root, "coverage = \"coverage.lcov\"\n");
+        let mut config = load_config(&root).unwrap();
+        config.set_coverage_override("/tmp/target/coverage.lcov");
+        assert_eq!(
+            config.coverage.as_deref(),
+            Some("/tmp/target/coverage.lcov")
+        );
+    }
+
+    #[test]
+    fn a_missing_coverage_file_still_loads() {
+        let root = fixture("absent-lcov");
+        write_config(&root, "coverage = \"target/coverage.lcov\"\n");
+        let config = load_config(&root).unwrap();
+        assert_eq!(config.coverage.as_deref(), Some("target/coverage.lcov"));
+    }
+}
