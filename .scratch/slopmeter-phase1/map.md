@@ -57,6 +57,7 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 - [Record waiver lines on the function](issues/45-waiver-lines.md) — `adapters::python::parse` records each `# slopmeter: waive` line above a function on `WaiverLine`, joins the run to the touch span, and does not apply the gate.
 - [Author the nine explain pages](issues/27-explain-pages.md) — `explain::page` returns one shipped page per rule; every gate carries the same waiver sentence, and F07 says a waiver line fails the run.
 - [Turn measurements into findings](issues/35-rule-engine.md) — `rules::evaluate` emits one finding per rule per function at the worst site; a value above the stand-in fails, and a held waiver stays a gate the verdict can ignore.
+- [Print the table and the JSON report](issues/36-reporters.md) — `reporters::render` prints the sorted table or the JSON document; a held waiver does not fail, and a run with no check exits 2.
 
 ## Not yet specified
 
