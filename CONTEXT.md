@@ -39,9 +39,17 @@ _Avoid_: wrapper, delegate, pass-through module
 Consecutive `.` or `->` accesses in one expression. A chain that starts at the receiver may be two deep; any other chain may be one deep.
 _Avoid_: train wreck, dot chain
 
+**Logical line**:
+One statement in a function's body, including a closure's statements and a Rust tail expression. The signature, a blank, a comment, a docstring, a brace, and a decorator or attribute are not one.
+_Avoid_: physical line, source line, LOC
+
 **Cyclomatic complexity**:
 The number of independent paths through a function. It starts at 1, and each decision point adds 1.
 _Avoid_: cognitive complexity, complexity
+
+**Cognitive complexity**:
+The cost of understanding a function. A nested break adds 1 plus its depth. An `else`, a boolean sequence, or a labelled jump adds 1. The same table applies in Python, Rust, and C++.
+_Avoid_: cyclomatic complexity, complexity
 
 **Coverage**:
 The fraction of a function's executable lines that the report marks hit, joined on the body span. A line is executable when the report lists it. With no listed lines, coverage is absent and CRAP is not computed.
@@ -111,8 +119,16 @@ The one stage that knows thresholds, weights and what "bad" means; turns measure
 **Reporter**:
 A stage that renders findings: JSON, worst-first text table, exit code.
 
+**Explain**:
+The one-page description of one rule: its principle, its counting method, the shipped threshold, one before and one after, and the anti-fix list.
+_Avoid_: help text, man page
+
+**Allow-list**:
+Member names that add no hop on a member chain. The adapter publishes the language's defaults. A project adds single member names.
+_Avoid_: exemption, ignore list
+
 **Profile**:
-The per-language table of default thresholds and rule settings in `slopmeter.toml`.
+One language's thresholds. The tool ships the table, including the pass-through ratio and the two chain depths. `slopmeter.toml` records a `warn` or a `gate` a project changes, and names added to that language's allow-list.
 
 **Validation run**:
 A `--strict` score of the per-language corpus once thresholds have been tuned. Clean repos have no gate findings. The sloppy repo fails each gating rule, and shows the F07 warn.

@@ -17,4 +17,4 @@ CRAP needs a coverage fraction per function, and the LCOV function records do no
 
 - A nested function's lines belong to that function. A lambda or closure stays with the function that contains it. One template is one function, and any instantiation's hit covers the line.
 - An `SF` path matches a scored file when the repo-relative path is a directory-boundary suffix of it. The longer path wins. A tie, a missing file, or a function with no `DA` lines leaves coverage absent and does not gate. `DA` lines all at zero are coverage 0, and CRAP runs.
-- The report path's place in config stays on [Shape of slopmeter.toml](../../.scratch/slopmeter-phase1/issues/22-config-shape.md). A header function is covered only from the header's own `SF` record.
+- The report path is `coverage` in the file, or `--coverage` for that run. [The config file records departures](0018-config-records-departures.md). A header function is covered only from the header's own `SF` record.

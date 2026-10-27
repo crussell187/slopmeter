@@ -17,4 +17,4 @@ The agent acts on the finding it is given, so the finding has to carry the count
 
 - A function at cyclomatic complexity 18 carries threshold 15 and level `gate`. At 12 it carries threshold 10 and level `warn`. F07 is always `warn`, threshold 80. F08 is `gate` at the depth it crossed.
 - An inherited finding keeps that level and threshold. The list it sits in stays on [Define the JSON report schema](../../.scratch/slopmeter-phase1/issues/21-report-schema.md).
-- `explain` still carries the longer anti-fix list. The weight numbers wait for the validation run.
+- `explain` carries the longer anti-fix list, and the finding's sentence is its first line. The page format is [The text table is the check a person reads](0019-text-table-and-explain.md). The weight numbers wait for the validation run.

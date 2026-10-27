@@ -23,4 +23,4 @@ Out of the set:
 
 `examples/` and `benches/` stay in.
 
-Include globs, when set, keep only matching files. Exclude globs remove more. Tests stay out until a switch turns them on. Including `target/` or `foo.pb.cc` does not bring them back. Key names and whether a CLI flag beats the file belong to [Shape of slopmeter.toml](22-config-shape.md).
+Include globs, when set, keep only matching files. Exclude globs remove more. Tests stay out until `--tests` turns them on. Including `target/` or `foo.pb.cc` does not bring them back. The keys and the flag are in [Shape of slopmeter.toml](22-config-shape.md).

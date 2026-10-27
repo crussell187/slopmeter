@@ -1,0 +1,5 @@
+include = ["crates/**", "python/**"]
+exclude = ["crates/xtask/**"]
+
+[profile.rust.F08]
+allow = ["with_timeout"]

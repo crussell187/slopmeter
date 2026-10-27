@@ -18,4 +18,4 @@ Phase 1 has no symbol resolution, so it cannot count how many types implement an
 
 - The function-scope gates are F01–F06, F08, and F11. F07 warns in every language, and Phase 1 has no gate level for it.
 - F08 has no softer warn level in Phase 1. Its depth is a default the validation run can move. That run cannot give F07 a gate without the missing exemption.
-- A project adds allow-list names in config. The file shape stays on [Config shape](../../.scratch/slopmeter-phase1/issues/22-config-shape.md).
+- A project adds allow-list names under `allow`. The ratio and the two depths stay in the shipped profile. [The config file records departures](0018-config-records-departures.md).

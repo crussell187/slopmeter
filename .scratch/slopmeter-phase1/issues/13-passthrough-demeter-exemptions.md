@@ -22,7 +22,7 @@ A parameter is forwarded when that one call receives it unchanged, as an argumen
 
 F08 is a gate. Depth is the number of `.` or `->` hops in one expression. A call, an index, and parentheses add no hop and do not break the chain. `::` is a path, not a hop. The chain is receiver-rooted only when it starts with the receiver or with `this`. Implicit `this` in C++ is invisible, so `repo_.save(user)` is depth 1. A receiver-rooted chain may be two deep. Any other chain may be one deep. Past that, the finding fails the run. Phase 1 has no softer warn level.
 
-A listed member name adds no hop. The list is per language and matches the member identifier. A trailing run of calls that ends in `build` adds none either. Hops before that run still count. A project can add names in config; the file shape stays on [Config shape](22-config-shape.md).
+A listed member name adds no hop. The list is per language and matches the member identifier. A trailing run of calls that ends in `build` adds none either. Hops before that run still count. A project adds names under `allow`. The file shape is [Shape of slopmeter.toml](22-config-shape.md).
 
 Python: `get`, `keys`, `values`, `items`, `append`, `extend`, `add`, `update`, `pop`, `split`, `rsplit`, `strip`, `lstrip`, `rstrip`, `join`, `lower`, `upper`, `startswith`, `endswith`, `encode`, `decode`, `format`, `copy`.
 

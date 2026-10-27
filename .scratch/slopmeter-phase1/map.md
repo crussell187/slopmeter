@@ -41,14 +41,15 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 - [Freeze the Phase 1 IR schema](issues/19-ir-schema.md) — scored files and their functions, in memory, with no version field; the adapter records line spans, parameters, decision lines, chain hops, and a forwarding call; classes, edges, churn, and coverage stay out ([ADR 0015](../../docs/adr/0015-ir-is-files-and-functions.md)).
 - [The adapter interface contract](issues/20-adapter-contract.md) — one `parse(path, source) -> File` per language, once per selected file; the module also publishes that language's default allow-list; a new language adds a `Language` variant and one extension arm ([ADR 0016](../../docs/adr/0016-adapter-parses-one-file.md)).
 - [Define the JSON report schema](issues/21-report-schema.md) — `findings` are touched functions and `inherited` are the rest; the verdict fails only on a gate in `findings`; the score sums both lists over physical KLOC and does not fail the run ([ADR 0017](../../docs/adr/0017-json-report-lists-what-must-be-cleared.md)).
+- [Shape of slopmeter.toml](issues/22-config-shape.md) — the file records departures from the built-in profiles: a coverage path, include and exclude patterns, a `warn` or a `gate`, and allow-list names; a missing file is the built-in; an unknown key fails the run ([ADR 0018](../../docs/adr/0018-config-records-departures.md)).
+- [Text table and explain output format](issues/23-text-and-explain-output.md) — the table is the check a person reads and `--json` prints the report instead; a finished check exits 0 or 1, and no check exits 2; `explain` is one page on the shipped threshold ([ADR 0019](../../docs/adr/0019-text-table-and-explain.md)).
+- [Cognitive complexity increments](issues/24-cognitive-complexity-increments.md) — F03 uses the white paper's table in all three languages; recursion, nested-function depth, and `#if` add nothing; a nested break costs 1 plus its depth ([ADR 0020](../../docs/adr/0020-cognitive-complexity-increments.md)).
+- [What increments a logical line](issues/25-lloc-counting.md) — `lloc` is the number of statements in the body; a blank, a comment, a docstring, a brace, and an attribute add nothing; a closure's statements count on the enclosing function ([ADR 0021](../../docs/adr/0021-logical-line-is-a-statement.md)).
 
 ## Not yet specified
 
-- **Build slices.** Once the IR schema, adapter contract, report schema and config shape are frozen, the implementation gets sliced (likely via `/writing-plans`) into task tickets: core + Python adapter + LCOV reader first, ending in the Python validation run; then the Rust adapter and its run; then the C++ adapter and its run. Each slice is execution, in scope per Notes.
 - **Threshold calibration.** The spec's defaults (CC > 10, CRAP > 8.0, 40 LLOC, 4 params…) are for typed class-based languages and come from Martin's tools, not from LLM-written code. Each language profile gets its own defaults after its validation run. Can't be sharpened until a corpus has been scored.
 - **Multi-package repos.** Cargo workspaces, Python monorepos, C++ projects with several targets: how source selection, `--changed` and the KLOC denominator treat them.
-- **Testing slopmeter itself.** Fixture files per rule, golden-file tests for the reporters, and cross-checks of CC against radon, rust-code-analysis and lizard. Shape depends on the crate layout and the cross-check research.
-- **`explain` content.** Authoring the principle, counting method, examples, and the longer anti-fix list for each of the nine shipped rules. The finding already carries one sentence of each. Execution; waits on the explain prototype and on the rules that are still open.
 
 ## Out of scope
 

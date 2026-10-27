@@ -18,4 +18,4 @@ The gate is for the code under review, and a test is often long and branchy on p
 - An include of everything does not score tests. The switch does.
 - `#[cfg(test)]` modules inside an otherwise scored file are out, helpers included.
 - `build.rs`, `examples/`, and `benches/` stay in.
-- Key names and CLI precedence belong to [Shape of slopmeter.toml](../../.scratch/slopmeter-phase1/issues/22-config-shape.md).
+- `include` and `exclude` are the file keys. `--tests` is the switch. [The config file records departures](0018-config-records-departures.md).

@@ -23,6 +23,6 @@ A finding carries `rule`, `level`, `symbol` (`path`, `name`, `param_types`, `qua
 
 ## Consequences
 
-- This document is a finished check. A run that cannot compute the diff does not print it. That failure stays on [What --changed means](../../.scratch/slopmeter-phase1/issues/12-changed-semantics.md).
+- This document is a finished check. The process exits 0 on pass and 1 on fail. A run that produces no check exits 2 and does not print it. The text rendering is [The text table is the check a person reads](0019-text-table-and-explain.md).
 - The sample is `prototype/report-schema/report.json`. Its weights, sentences, version, and cognitive-complexity number are stand-ins.
 - Weight numbers and the logical-line count remain open.

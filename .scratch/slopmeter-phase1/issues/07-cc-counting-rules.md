@@ -41,4 +41,4 @@ Allowed deltas:
 - **lizard:** counts arms after the first, so an exhaustive match with no `_` differs by 1; counts `finally`, `where`, and `#if`; misses a bare `loop`; can count `T&&`; counts `case _`. We do none of those.
 - **crap4java:** counts `default`, because javac represents it as a case label. We leave it at 0.
 
-F03 is not this metric. Its nesting rules are [Cognitive complexity increments](24-cognitive-complexity-increments.md). How preprocessor directives parse stays on [C++ preprocessor and template handling](16-cpp-preprocessor.md).
+F03 is not this metric. Its increments are [Cognitive complexity increments](24-cognitive-complexity-increments.md). How preprocessor directives parse stays on [C++ preprocessor and template handling](16-cpp-preprocessor.md).

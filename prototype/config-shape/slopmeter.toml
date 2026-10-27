@@ -1,0 +1,7 @@
+# Points at one LCOV report. Python F03's gate moves; its warn stays built-in.
+# Rust and C++ are absent, so they keep the built-in profiles.
+
+coverage = "coverage.lcov"
+
+[profile.python.F03]
+gate = 12

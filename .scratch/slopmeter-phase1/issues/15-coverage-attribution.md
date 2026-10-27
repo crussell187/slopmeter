@@ -12,7 +12,7 @@ Given what the coverage research found about FN/FNDA/DA records from coverage.py
 
 Resolved 2026-10-26 with Christopher. Why coverage is a line fraction joined by file and range: [ADR 0011](../../../docs/adr/0011-coverage-by-line-range.md). The glossary terms are **Coverage** and **CRAP** in `CONTEXT.md`. The facts are on [Coverage formats: coverage.py LCOV, cargo-llvm-cov, gcov/lcov](02-coverage-formats.md).
 
-Phase 1 reads an LCOV report it is given. It does not run `pytest`, `cargo test`, or `ctest`. The report path's place in the config file stays on [Shape of slopmeter.toml](22-config-shape.md).
+Phase 1 reads an LCOV report it is given. It does not run `pytest`, `cargo test`, or `ctest`. The report path is `coverage`, or `--coverage` for that run. [Shape of slopmeter.toml](22-config-shape.md).
 
 A function's coverage is hit `DA` lines divided by `DA` lines in its range. The range runs from the `def` or `fn` line through the end of the body. A nested function's lines come out of the parent. A lambda or closure stays in the function that contains it. One template is one function, and a hit from any instantiation covers the line. A count above zero is a hit. `FN`, `FNDA`, `FNL`, and `FNA` are ignored. The reader still accepts a file that contains them.
 

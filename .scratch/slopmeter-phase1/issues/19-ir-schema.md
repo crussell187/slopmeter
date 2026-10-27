@@ -25,12 +25,13 @@ A function has:
 - `touch`, the touch span: the body span extended up through a leading decorator or non-doc attribute. A docstring, `///`, `//!`, a handwritten `#[doc]`, and `//` or `/* */` do not extend it. A blank line between an attribute and the definition is inside the range. An attribute on the struct, the impl, or the module is not on the function.
 - `params`, each `{name, receiver}`.
 - `body`, always present. A declaration is not a function and is omitted.
-  - `lloc`, an integer. What increments it is open: [What increments a logical line](25-lloc-counting.md).
+  - `lloc`, an integer: the number of statements in the body. [What increments a logical line](25-lloc-counting.md).
   - `decisions`, `{line, depth}`. Depth 1 is a decision not inside another. Cyclomatic complexity is one plus the number of lines. Nesting is the deepest depth, or 0 when there are none.
+  - `cognitive`, `{line, kind, depth}`. Kind is `structural`, `hybrid`, or `fundamental`. The sum is 1 plus depth for structural, and 1 otherwise.
   - `chains`, `{line, rooted, members: [{name, call}]}`. Depth drops an allow-listed name and a trailing run of calls that ends in `build`.
   - `forward`, null unless the body is one call. Then `{line, names}` lists the ordinary parameters that call received unchanged. The ratio is those names over the ordinary parameters. The 80% line is a threshold.
 
-A closure or lambda inside a function is not its own record. Its decisions sit on the function that contains it. A template or generic is one function, and the written type parameter stays in `param_types` or in the name. Decorators and attributes are not a list. Cognitive complexity has no field until [Cognitive complexity increments](24-cognitive-complexity-increments.md) closes.
+A closure or lambda inside a function is not its own record. Its decisions, its cognitive increments, and its statements sit on the function that contains it. A template or generic is one function, and the written type parameter stays in `param_types` or in the name. Decorators and attributes are not a list. The cognitive sum is [Cognitive complexity increments](24-cognitive-complexity-increments.md).
 
 The same name, parameter types, and qualifier twice in one file is the only tie, broken by the earlier body span. That start line is not a separate field.
 

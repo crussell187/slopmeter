@@ -1,0 +1,31 @@
+F08  member chain
+
+A member chain that does not start at the receiver may be one deep. A chain
+that starts at the receiver may be two deep. Law of Demeter.
+
+Counting
+Each `.` or `->` through a member adds one hop. A name on the language
+allow-list adds none. A trailing run of calls that ends in `build` adds none.
+The finding is the deepest chain in the function, at the line where it starts.
+
+Threshold
+Gate at 2 hops from the receiver, and at 1 hop otherwise. No warn level.
+The depths are shipped with the profile. A project adds allow-list names and
+cannot move the depths.
+
+Before
+fn city(response: &Response) -> &str {
+    response.body().json().get("city").as_str()
+}
+
+After
+fn city(response: &Response) -> &str {
+    let body = response.body();
+    let json = body.json();
+    json.get("city").as_str()
+}
+
+Anti-fixes
+Saving the chain in locals leaves the finding in place.
+Splitting the chain across two functions leaves a finding in the second.
+A comment on the line does not change the hop count.
