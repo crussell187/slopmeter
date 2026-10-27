@@ -1,0 +1,37 @@
+F08  member chain
+
+A member chain that does not start at the receiver may be one deep.
+A chain that starts at the receiver may be two deep. Law of Demeter.
+
+Counting
+Each `.` or `->` through a member adds one hop. A name on the language
+allow-list adds none. A trailing run of calls that ends in `build`
+adds none. The finding is the chain that crossed its depth, at the
+line where that chain starts.
+
+Threshold
+Shipped stand-in: gate at 2 hops from the receiver, and at 1
+otherwise, in every language. No warn level. A project adds
+allow-list names and cannot move the depths.
+A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
+above the function excuses this gate in Python, and the same tokens
+after `//` do so in Rust and C++, with a whole number except on F02,
+which may be fractional.
+
+Before
+fn city(response: &Response) -> &str {
+    response.body().json().get("city").as_str()
+}
+
+After
+fn city(response: &Response) -> &str {
+    let body = response.body();
+    let json = body.json();
+    let city = json.get("city");
+    city.as_str()
+}
+
+Anti-fixes
+Saving the chain in locals leaves the finding in place.
+Splitting the chain across two functions leaves a finding in the second.
+A comment on the line does not change the hop count.

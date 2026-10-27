@@ -1,0 +1,50 @@
+F01  cyclomatic complexity
+
+A function should have few independent paths. McCabe.
+
+Counting
+The count starts at 1. Each decision adds 1: if, elif, else if, a
+ternary, a loop, a comprehension `for` or `if`, an if let, a while
+let, a `?`, each except or catch, and each boolean `and`, `or`,
+`&&`, or `||`. An assert, a loop else, a try else, a let else, each
+specified match or switch label, and a guard if on an arm also add 1.
+An or-pattern alternative and case labels that share a body each add
+1. else, default, and a wildcard arm add nothing, and so do try,
+finally, with, a where clause, a jump, a preprocessor condition, a
+bitwise operator, and a C++ rvalue reference (`T&&`). A lambda's
+decisions count on the enclosing function. A nested function has its
+own count. The finding is that total, at the function line.
+
+Threshold
+Shipped stand-in: gate at 8 in every language. 8 passes and 9 fails.
+No warn level.
+A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
+above the function excuses this gate in Python, and the same tokens
+after `//` do so in Rust and C++, with a whole number except on F02,
+which may be fractional.
+
+Before
+def classify(n, flag):
+    if n < 0:
+        return "neg"
+    if n == 0 or n == 1:
+        return "small"
+    for i in range(n):
+        if flag and i % 2 == 0:
+            return "even"
+        if i > 10 or i < 0:
+            return "big"
+    return "other"
+
+After
+def classify(n, flag):
+    if n < 0:
+        return "neg"
+    if n == 0 or n == 1:
+        return "small"
+    return scan(n, flag)
+
+Anti-fixes
+Splitting one condition onto two lines leaves the path count in place.
+A comment that names the branches does not remove a decision.
+Moving a branch into a lambda in this function still counts it here.

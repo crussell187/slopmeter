@@ -1,0 +1,30 @@
+F07  pass-through
+
+A function that only hands its parameters to one call adds a hop and
+no behavior. It warns, and it does not fail the run.
+
+Counting
+The body is one statement, ignoring a docstring, that unwraps through
+return, await, and parentheses to one call, and that call contains no
+other call. The ratio is how many ordinary parameters are handed on
+unchanged, over how many ordinary parameters there are. The receiver
+is in neither count. The finding is that ratio, at the call, when it
+is at least 80 percent. There is no gate level.
+
+Threshold
+Shipped stand-in: warn at 80 percent in every language. No gate.
+A waiver line for F07 fails the run, because F07 is not a gate.
+
+Before
+def city(response):
+    return response.get("city")
+
+After
+def city(response):
+    name = response.get("city")
+    return name.strip()
+
+Anti-fixes
+Renaming the forwarded parameters leaves the ratio in place.
+Awaiting the same call, or returning it, is still one forward.
+A docstring above the call does not change the ratio.

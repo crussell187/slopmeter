@@ -1,0 +1,53 @@
+F03  cognitive complexity
+
+Nested structure costs more to understand than a path count.
+SonarSource Cognitive Complexity. The same table applies in Python,
+Rust, and C++.
+
+Counting
+An if, a ternary, a match or switch, a loop, and a catch are worth 1
+plus their nesting, and they nest what is inside. A match or switch is
+one increment. Its labels, a default, a wildcard, and a guard add
+nothing to it. elif, else if, and else are worth 1 and nest their body
+without adding their own depth. A run of `and`/`or`, or of `&&`/`||`,
+is worth 1. A changed operator starts a new run. Parentheses start a
+new expression, and negation does not break a run. A labelled jump is
+worth 1. A lambda adds nothing
+and nests its body on the enclosing function. A nested function starts
+at 0 and keeps its own score.
+Recursion, the extra depth on a nested function, and `#if` add nothing.
+try, finally, with, a comprehension's `for` and `if`, Rust `?`,
+assert, and a plain break, continue, or return add nothing. A boolean
+sequence inside a comprehension still counts. The finding is that
+total, at the def or fn line.
+
+Threshold
+Shipped stand-in: warn above 10 and gate above 15, in every language.
+10 and 15 pass those levels. A waived gate does not also appear as
+the warn.
+A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
+above the function excuses this gate in Python, and the same tokens
+after `//` do so in Rust and C++, with a whole number except on F02,
+which may be fractional.
+
+Before
+def price(order, flag):
+    if order.ready:
+        if flag:
+            for item in order.items:
+                if item.taxable:
+                    if item.qty > 1 and item.qty < 10:
+                        return item.qty
+    else:
+        return 0
+
+After
+def price(order, flag):
+    if not order.ready or not flag:
+        return 0
+    return taxed(order)
+
+Anti-fixes
+Adding a comment inside the nested block leaves the score in place.
+Splitting one boolean operator onto two lines leaves the sequence.
+Moving the inner condition into a lambda here still counts it.

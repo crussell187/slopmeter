@@ -1,0 +1,31 @@
+F04  parameter count
+
+A function with many ordinary parameters is doing more than one job.
+
+Counting
+Each written parameter counts once, including one with a default, a
+*args, and a **kwargs. The receiver does not count: the first
+parameter of a method, including a classmethod, and not a
+staticmethod. A nested function's first parameter is ordinary. The
+finding is that count, at the function line.
+
+Threshold
+Shipped stand-in: gate at 3 in every language. 3 passes and 4 fails.
+No warn level.
+A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
+above the function excuses this gate in Python, and the same tokens
+after `//` do so in Rust and C++, with a whole number except on F02,
+which may be fractional.
+
+Before
+def ship(order, user, warehouse, when):
+    return (order, user, warehouse, when)
+
+After
+def ship(order):
+    return order
+
+Anti-fixes
+Giving a parameter a default leaves the count in place.
+Renaming a parameter does not remove it.
+A comment on the signature does not change the count.

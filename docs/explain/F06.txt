@@ -1,0 +1,35 @@
+F06  function length
+
+A function's body should stay short enough to read at once.
+
+Counting
+The count is the physical lines of the body span, from the def or fn
+line through the end of the body. A blank, a comment, and a docstring
+inside that span count. A decorator or attribute sits outside it, and
+so does a waiver line directly above the function. A waiver line above
+a nested function still lies in the enclosing body, so it counts
+there. The finding is that count, at the function line.
+
+Threshold
+Shipped stand-in: gate at 19 in every language. 19 passes and 20 fails.
+No warn level.
+A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
+above the function excuses this gate in Python, and the same tokens
+after `//` do so in Rust and C++, with a whole number except on F02,
+which may be fractional.
+
+Before
+def load(path):
+    # open it
+    text = path.read_text()
+    # trim it
+    return text.strip()
+
+After
+def load(path):
+    return path.read_text().strip()
+
+Anti-fixes
+Breaking one statement across more lines makes the count larger.
+A comment inside the body still counts as a line.
+A waiver comment inside the body adds a line and does not excuse it.

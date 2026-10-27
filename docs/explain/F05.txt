@@ -1,0 +1,37 @@
+F05  nesting
+
+A reader should not hold three decisions at once.
+
+Counting
+Nesting is the deepest decision. A decision outside any other is depth
+1. A function with no decisions has nesting 0. The decisions are the
+same ones cyclomatic complexity counts. The finding is that depth, at
+the deepest decision.
+
+Threshold
+Shipped stand-in: gate at 2 in every language. 2 passes and 3 fails.
+No warn level.
+A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
+above the function excuses this gate in Python, and the same tokens
+after `//` do so in Rust and C++, with a whole number except on F02,
+which may be fractional.
+
+Before
+def pick(rows, flag):
+    for row in rows:
+        if flag:
+            if row.ok:
+                return row
+
+After
+def pick(rows, flag):
+    if not flag:
+        return None
+    for row in rows:
+        if row.ok:
+            return row
+
+Anti-fixes
+Indenting the inner condition less leaves the depth in place.
+A blank line between the decisions does not lower the depth.
+Moving the inner decision into a lambda here still counts it.

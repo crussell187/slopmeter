@@ -1,0 +1,40 @@
+F11  logical lines
+
+A function should say little. The count is statements, not wrapped
+lines.
+
+Counting
+Each statement in the body counts, and so does each statement in a
+closure. A statement written across many lines is one. Two statements
+separated by a semicolon are two. else, elif, a match or switch label,
+a comprehension's for and if, an empty semicolon, and a preprocessor
+directive add nothing. A block adds nothing beyond what is inside it,
+and a Rust tail expression counts as one. A nested function's body
+stays on that function. In Python the def or class is one statement
+of the parent. In Rust an inner fn adds nothing to the parent. A
+blank, a comment, a docstring, a brace, and an attribute add nothing.
+Both arms of `#if` contribute their statements, and a literal `#if 0`
+drops that arm. The finding is that count, at the function line.
+
+Threshold
+Shipped stand-in: gate at 19 in every language. 19 passes and 20 fails.
+No warn level.
+A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
+above the function excuses this gate in Python, and the same tokens
+after `//` do so in Rust and C++, with a whole number except on F02,
+which may be fractional.
+
+Before
+def load(path):
+    text = path.read_text()
+    stripped = text.strip()
+    return stripped
+
+After
+def load(path):
+    return path.read_text().strip()
+
+Anti-fixes
+Breaking one statement across more lines leaves the count in place.
+A blank line or a comment does not lower the statement count.
+Moving statements into a lambda in this function still counts them here.
