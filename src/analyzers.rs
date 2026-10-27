@@ -1,4 +1,4 @@
-use crate::ir::{Body, Chain, CognitiveKind, File, Function, Member, Span};
+use crate::ir::{Body, Chain, CognitiveKind, File, Function, Member, Span, WaiverLine};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChainDepth {
@@ -12,7 +12,7 @@ pub struct Forwarding {
     pub forwarded: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Measurement {
     pub path: String,
     pub name: String,
@@ -22,10 +22,14 @@ pub struct Measurement {
     pub cyclomatic: u32,
     pub cognitive: u32,
     pub nesting: u32,
+    pub nesting_line: Option<u32>,
     pub params: u32,
+    pub lloc: u32,
     pub receiver_chain: Option<ChainDepth>,
     pub other_chain: Option<ChainDepth>,
     pub forward: Option<Forwarding>,
+    pub waivers: Vec<WaiverLine>,
+    pub crap: Option<f64>,
 }
 
 pub fn measure(file: &File, allow: &[&str]) -> Vec<Measurement> {
@@ -46,13 +50,17 @@ fn measure_function(path: &str, function: &Function, allow: &[&str]) -> Measurem
         cyclomatic: 1 + function.body.decisions.len() as u32,
         cognitive: cognitive(&function.body),
         nesting: nesting(&function.body),
+        nesting_line: nesting_line(&function.body),
         params: parameter_count(function),
+        lloc: function.body.lloc,
         receiver_chain,
         other_chain,
         forward: function.body.forward.as_ref().map(|forward| Forwarding {
             line: forward.line,
             forwarded: forward.names.len() as u32,
         }),
+        waivers: function.waivers.clone(),
+        crap: None,
     }
 }
 
@@ -72,6 +80,18 @@ fn nesting(body: &Body) -> u32 {
         .map(|decision| decision.depth)
         .max()
         .unwrap_or(0)
+}
+
+fn nesting_line(body: &Body) -> Option<u32> {
+    let depth = nesting(body);
+    if depth == 0 {
+        return None;
+    }
+    body.decisions
+        .iter()
+        .filter(|decision| decision.depth == depth)
+        .map(|decision| decision.line)
+        .min()
 }
 
 fn parameter_count(function: &Function) -> u32 {
@@ -418,5 +438,31 @@ mod tests {
         assert_eq!(measured[0].span, Span { start: 40, end: 55 });
         assert_eq!(measured[1].name, "trim");
         assert_eq!(measured[1].span, Span { start: 60, end: 70 });
+    }
+
+    #[test]
+    fn the_measurement_keeps_lines_nesting_and_waivers() {
+        let mut body = empty();
+        body.lloc = 4;
+        body.decisions = vec![
+            Decision { line: 14, depth: 3 },
+            Decision { line: 11, depth: 3 },
+            Decision { line: 12, depth: 1 },
+        ];
+        let mut function = function("choose", vec![], body);
+        function.waivers = vec![crate::ir::WaiverLine {
+            line: 4,
+            rule: Some("F01".to_string()),
+            number: Some("9".to_string()),
+            reason: Some("the branch table is the point".to_string()),
+        }];
+
+        let measured = measure(&file(vec![function]), &[]);
+
+        assert_eq!(measured[0].lloc, 4);
+        assert_eq!(measured[0].nesting_line, Some(11));
+        assert_eq!(measured[0].waivers.len(), 1);
+        assert_eq!(measured[0].waivers[0].line, 4);
+        assert_eq!(measured[0].crap, None);
     }
 }

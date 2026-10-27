@@ -3,20 +3,32 @@ use std::path::{Path, PathBuf};
 
 use crate::ir::Language;
 
+pub const F01_GATE: u32 = 8;
+pub const F02_GATE: u32 = 8;
 pub const F03_WARN: u32 = 10;
 pub const F03_GATE: u32 = 15;
+pub const F04_GATE: u32 = 3;
+pub const F05_GATE: u32 = 2;
+pub const F06_GATE: u32 = 19;
 pub const F07_PASS_THROUGH_PERCENT: u32 = 80;
 pub const F08_RECEIVER_HOPS: u32 = 2;
 pub const F08_OTHER_HOPS: u32 = 1;
+pub const F11_GATE: u32 = 19;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LanguageProfile {
+    pub f01_gate: u32,
+    pub f02_gate: u32,
     pub f03_warn: u32,
     pub f03_gate: u32,
+    pub f04_gate: u32,
+    pub f05_gate: u32,
+    pub f06_gate: u32,
     pub f07_percent: u32,
     pub f08_receiver_hops: u32,
     pub f08_other_hops: u32,
     pub f08_allow: Vec<String>,
+    pub f11_gate: u32,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -114,12 +126,18 @@ impl Config {
 impl LanguageProfile {
     fn builtin() -> Self {
         Self {
+            f01_gate: F01_GATE,
+            f02_gate: F02_GATE,
             f03_warn: F03_WARN,
             f03_gate: F03_GATE,
+            f04_gate: F04_GATE,
+            f05_gate: F05_GATE,
+            f06_gate: F06_GATE,
             f07_percent: F07_PASS_THROUGH_PERCENT,
             f08_receiver_hops: F08_RECEIVER_HOPS,
             f08_other_hops: F08_OTHER_HOPS,
             f08_allow: Vec::new(),
+            f11_gate: F11_GATE,
         }
     }
 }
@@ -476,12 +494,18 @@ mod tests {
         assert_eq!(config.exclude, None);
         for language in [Language::Python, Language::Rust, Language::Cpp] {
             let profile = config.profile(language);
+            assert_eq!(profile.f01_gate, F01_GATE);
+            assert_eq!(profile.f02_gate, F02_GATE);
             assert_eq!(profile.f03_warn, F03_WARN);
             assert_eq!(profile.f03_gate, F03_GATE);
+            assert_eq!(profile.f04_gate, F04_GATE);
+            assert_eq!(profile.f05_gate, F05_GATE);
+            assert_eq!(profile.f06_gate, F06_GATE);
             assert_eq!(profile.f07_percent, F07_PASS_THROUGH_PERCENT);
             assert_eq!(profile.f08_receiver_hops, F08_RECEIVER_HOPS);
             assert_eq!(profile.f08_other_hops, F08_OTHER_HOPS);
             assert!(profile.f08_allow.is_empty());
+            assert_eq!(profile.f11_gate, F11_GATE);
         }
         assert!(config.retains("src/a.py"));
         assert!(config.retains("build.rs"));
