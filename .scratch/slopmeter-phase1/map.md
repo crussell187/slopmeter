@@ -47,6 +47,7 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 - [What increments a logical line](issues/25-lloc-counting.md) — `lloc` is the number of statements in the body; a blank, a comment, a docstring, a brace, and an attribute add nothing; a closure's statements count on the enclosing function ([ADR 0021](../../docs/adr/0021-logical-line-is-a-statement.md)).
 - [Plan the Phase 1 build](issues/26-plan-the-build.md) — sixteen session-sized slices, crate and IR first and the C++ validation run last; F01, F02, F04, F05, F06, and F11 still need a metric before the rule engine ([the plan](../../docs/superpowers/plans/2026-10-27-phase1.md)).
 - [Build the crate and the IR types](issues/28-crate-and-ir.md) — `slopmeter` 0.0.0, with the in-memory IR and a fmt/clippy/test workflow.
+- [Select the scored files](issues/29-source-selection-build.md) — `inputs::select` returns the default scored set; tests, denylisted directories, protobuf names, and gitignored files stay out, and `--tests` brings tests back.
 
 ## Not yet specified
 
