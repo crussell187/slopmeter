@@ -59,6 +59,7 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 - [Turn measurements into findings](issues/35-rule-engine.md) — `rules::evaluate` emits one finding per rule per function at the worst site; a value above the stand-in fails, and a held waiver stays a gate the verdict can ignore.
 - [Print the table and the JSON report](issues/36-reporters.md) — `reporters::render` prints the sorted table or the JSON document; a held waiver does not fail, and a run with no check exits 2.
 - [Gate touched functions](issues/37-diff-scope.md) — `scope::partition` puts touched findings in `findings` and the rest in `inherited`; `--strict` scores the whole set, and an empty diff gates nothing.
+- [Join coverage and compute CRAP](issues/38-lcov-crap.md) — `inputs::cover` sets CRAP from hit `DA` lines over `DA` lines in the body span; no report leaves CRAP unset and notes the run, and `--coverage` replaces the file key.
 
 ## Not yet specified
 
