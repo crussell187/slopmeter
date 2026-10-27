@@ -94,6 +94,23 @@ mod tests {
     }
 
     #[test]
+    fn rust_thresholds_are_the_calibrated_gates() {
+        let pages = [
+            ("F01", "Rust gate at 94."),
+            ("F03", "gates above 192."),
+            ("F04", "Rust gate at 9."),
+            ("F05", "Rust gate at 9."),
+            ("F06", "Rust gate at"),
+            ("F08", "Rust gates at 2 hops from the receiver"),
+            ("F11", "Rust gate at 138."),
+        ];
+        for (rule, phrase) in pages {
+            assert!(page(rule).unwrap().contains(phrase), "{rule}");
+        }
+        assert!(page("F06").unwrap().contains("581."));
+    }
+
+    #[test]
     fn each_threshold_is_marked_as_the_shipped_stand_in() {
         for rule in RULES {
             let text = page(rule).unwrap();

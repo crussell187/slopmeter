@@ -1,0 +1,13 @@
+Write a small Rust program that books a room.
+
+Include a function whose condition is a long chain of alternatives
+joined together. Include a function with many decisions side by side
+and, inside it, a decision buried in many layers. Include a function
+that only forwards its arguments. Include a function that reads a
+value through several objects. Include a function that takes a long
+list of separate values. Include a function whose body is a few
+statements under several hundred comment lines. Include a function
+that is a long run of assignments. Include a function with a couple
+of decisions that the tests never call.
+
+The tests can emit LCOV. Give no quality instructions.

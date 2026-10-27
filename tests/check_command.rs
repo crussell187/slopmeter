@@ -190,22 +190,23 @@ fn a_clean_checkout_gates_nothing_until_strict() {
 }
 
 #[test]
-fn rust_and_cpp_files_wait_for_their_adapters() {
-    for (name, message) in [
-        ("src/lib.rs", "no Rust adapter for src/lib.rs"),
-        (
-            "include/widget.hpp",
-            "no C++ adapter for include/widget.hpp",
-        ),
-    ] {
-        let root = fixture(name);
-        write(&root, name, "int ready() { return 1; }\n");
-        let output = run(&root, &["--strict"]);
-        let stderr = String::from_utf8(output.stderr).unwrap();
-        assert!(output.stdout.is_empty(), "{name}");
-        assert_eq!(output.status.code(), Some(2), "{name}: {stderr}");
-        assert_eq!(stderr, format!("{message}\n"));
-    }
+fn a_rust_file_is_scored_and_cpp_still_waits() {
+    let root = fixture("src/lib.rs");
+    write(&root, "src/lib.rs", "fn ready() {}\n");
+    let output = run(&root, &["--strict"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+
+    let header = "include/widget.hpp";
+    let root = fixture(header);
+    write(&root, header, "int ready() { return 1; }\n");
+    let output = run(&root, &["--strict"]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(output.stdout.is_empty(), "{stderr}");
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert_eq!(stderr, "no C++ adapter for include/widget.hpp\n");
 }
 
 #[test]
