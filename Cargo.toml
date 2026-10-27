@@ -6,3 +6,5 @@ edition = "2021"
 [dependencies]
 ignore = "0.4.33"
 toml = "1.1.8"
+tree-sitter = "=0.27.1"
+tree-sitter-python = "=0.25.0"
