@@ -111,6 +111,23 @@ mod tests {
     }
 
     #[test]
+    fn cpp_thresholds_are_the_calibrated_gates() {
+        let pages = [
+            ("F01", "C++ gate at 136."),
+            ("F03", "gates above 295."),
+            ("F04", "C++ gate at 18."),
+            ("F05", "C++ gate at 8."),
+            ("F06", "C++ gate at 713."),
+            ("F08", "C++ gates at 3 hops from the receiver"),
+            ("F11", "C++ gate at 217."),
+        ];
+        for (rule, phrase) in pages {
+            assert!(page(rule).unwrap().contains(phrase), "{rule}");
+        }
+        assert!(page("F08").unwrap().contains("14 otherwise."));
+    }
+
+    #[test]
     fn each_threshold_is_marked_as_the_shipped_stand_in() {
         for rule in RULES {
             let text = page(rule).unwrap();

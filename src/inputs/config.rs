@@ -30,6 +30,14 @@ pub const RUST_F06_GATE: u32 = 581;
 pub const RUST_F08_RECEIVER_HOPS: u32 = 2;
 pub const RUST_F08_OTHER_HOPS: u32 = 11;
 pub const RUST_F11_GATE: u32 = 138;
+pub const CPP_F01_GATE: u32 = 136;
+pub const CPP_F03_GATE: u32 = 295;
+pub const CPP_F04_GATE: u32 = 18;
+pub const CPP_F05_GATE: u32 = 8;
+pub const CPP_F06_GATE: u32 = 713;
+pub const CPP_F08_RECEIVER_HOPS: u32 = 3;
+pub const CPP_F08_OTHER_HOPS: u32 = 14;
+pub const CPP_F11_GATE: u32 = 217;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LanguageProfile {
@@ -163,14 +171,14 @@ impl LanguageProfile {
                 RUST_F11_GATE,
             ),
             Language::Cpp => (
-                F01_GATE,
-                F03_GATE,
-                F04_GATE,
-                F05_GATE,
-                F06_GATE,
-                F08_RECEIVER_HOPS,
-                F08_OTHER_HOPS,
-                F11_GATE,
+                CPP_F01_GATE,
+                CPP_F03_GATE,
+                CPP_F04_GATE,
+                CPP_F05_GATE,
+                CPP_F06_GATE,
+                CPP_F08_RECEIVER_HOPS,
+                CPP_F08_OTHER_HOPS,
+                CPP_F11_GATE,
             ),
         };
         Self {
@@ -563,18 +571,18 @@ mod tests {
         assert_eq!(rust.f08_other_hops, RUST_F08_OTHER_HOPS);
         assert_eq!(rust.f11_gate, RUST_F11_GATE);
         let cpp = config.profile(Language::Cpp);
-        assert_eq!(cpp.f01_gate, F01_GATE);
+        assert_eq!(cpp.f01_gate, CPP_F01_GATE);
         assert_eq!(cpp.f02_gate, F02_GATE);
         assert_eq!(cpp.f03_warn, F03_WARN);
-        assert_eq!(cpp.f03_gate, F03_GATE);
-        assert_eq!(cpp.f04_gate, F04_GATE);
-        assert_eq!(cpp.f05_gate, F05_GATE);
-        assert_eq!(cpp.f06_gate, F06_GATE);
+        assert_eq!(cpp.f03_gate, CPP_F03_GATE);
+        assert_eq!(cpp.f04_gate, CPP_F04_GATE);
+        assert_eq!(cpp.f05_gate, CPP_F05_GATE);
+        assert_eq!(cpp.f06_gate, CPP_F06_GATE);
         assert_eq!(cpp.f07_percent, F07_PASS_THROUGH_PERCENT);
-        assert_eq!(cpp.f08_receiver_hops, F08_RECEIVER_HOPS);
-        assert_eq!(cpp.f08_other_hops, F08_OTHER_HOPS);
+        assert_eq!(cpp.f08_receiver_hops, CPP_F08_RECEIVER_HOPS);
+        assert_eq!(cpp.f08_other_hops, CPP_F08_OTHER_HOPS);
         assert!(cpp.f08_allow.is_empty());
-        assert_eq!(cpp.f11_gate, F11_GATE);
+        assert_eq!(cpp.f11_gate, CPP_F11_GATE);
         assert!(config.retains("src/a.py"));
         assert!(config.retains("build.rs"));
     }
@@ -607,7 +615,7 @@ allow = ["with_timeout"]
         assert_eq!(config.profile(Language::Python).f03_warn, F03_WARN);
         assert_eq!(config.profile(Language::Python).f03_gate, 12);
         assert_eq!(config.profile(Language::Rust).f03_gate, RUST_F03_GATE);
-        assert_eq!(config.profile(Language::Cpp).f03_gate, F03_GATE);
+        assert_eq!(config.profile(Language::Cpp).f03_gate, CPP_F03_GATE);
         assert_eq!(
             config.profile(Language::Rust).f08_allow,
             vec!["with_timeout".to_string()]

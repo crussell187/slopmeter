@@ -190,7 +190,7 @@ fn a_clean_checkout_gates_nothing_until_strict() {
 }
 
 #[test]
-fn a_rust_file_is_scored_and_cpp_still_waits() {
+fn a_rust_file_and_a_cpp_file_are_scored() {
     let root = fixture("src/lib.rs");
     write(&root, "src/lib.rs", "fn ready() {}\n");
     let output = run(&root, &["--strict"]);
@@ -203,10 +203,10 @@ fn a_rust_file_is_scored_and_cpp_still_waits() {
     let root = fixture(header);
     write(&root, header, "int ready() { return 1; }\n");
     let output = run(&root, &["--strict"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
     let stderr = String::from_utf8(output.stderr).unwrap();
-    assert!(output.stdout.is_empty(), "{stderr}");
-    assert_eq!(output.status.code(), Some(2), "{stderr}");
-    assert_eq!(stderr, "no C++ adapter for include/widget.hpp\n");
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
 }
 
 #[test]

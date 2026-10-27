@@ -11,9 +11,10 @@ a nested function still lies in the enclosing body, so it counts
 there. The finding is that count, at the function line.
 
 Threshold
-Shipped stand-in: gate at 19 in C++. 19 passes and 20 fails.
+Shipped stand-in: gate at 19. 19 passes and 20 fails.
 Python gate at 196. 196 passes and 197 fails. Rust gate at
-581. 581 passes and 582 fails.
+581. 581 passes and 582 fails. C++ gate at 713.
+713 passes and 714 fails.
 No warn level.
 A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
 above the function excuses this gate in Python, and the same tokens
