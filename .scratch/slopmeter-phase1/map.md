@@ -48,6 +48,7 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 - [Plan the Phase 1 build](issues/26-plan-the-build.md) — sixteen session-sized slices, crate and IR first and the C++ validation run last; F01, F02, F04, F05, F06, and F11 still need a metric before the rule engine ([the plan](../../docs/superpowers/plans/2026-10-27-phase1.md)).
 - [Build the crate and the IR types](issues/28-crate-and-ir.md) — `slopmeter` 0.0.0, with the in-memory IR and a fmt/clippy/test workflow.
 - [Select the scored files](issues/29-source-selection-build.md) — `inputs::select` returns the default scored set; tests, denylisted directories, protobuf names, and gitignored files stay out, and `--tests` brings tests back.
+- [Load slopmeter.toml](issues/30-config-loader.md) — a missing file is the built-in profile, F03 warn 10 and gate 15; the file records coverage, include, exclude, an F03 level, and F08 allow names, and an unknown key fails.
 
 ## Not yet specified
 
