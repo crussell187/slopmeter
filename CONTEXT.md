@@ -28,7 +28,7 @@ The lines from the `def` or `fn` through the end of the body. Coverage joins on 
 _Avoid_: touch span, extent
 
 **Touch span**:
-The body span extended up through a leading decorator or non-doc attribute. A doc comment does not extend it. A changed line here touches the function.
+The body span extended up through a leading decorator, non-doc attribute, and the contiguous waiver lines directly above them. A doc comment does not extend it, and a changed line here touches the function.
 _Avoid_: body span, dirty range
 
 **Pass-through**:
@@ -79,15 +79,19 @@ _Avoid_: error rate, parse failure
 How trustworthy a rule's signal is: A is deterministic and gate-worthy, B is deterministic but noisy and warns by default, C needs semantics the tool lacks and is not computed.
 
 **Gate**:
-A finding at gate level in a touched function. It fails the run. A lower warn level on the same rule does not.
+A finding at gate level in a touched function. It fails the run. A waiver on that finding keeps it a gate, and the verdict ignores it. A lower warn level on the same rule does not.
 _Avoid_: error, blocker, hard fail
+
+**Waiver**:
+A stated measurement and a reason that excuse one gate on one function. The finding stays a gate in the report, and the verdict ignores it while the measurement is at most that number.
+_Avoid_: suppression, noqa, allow
 
 **Warn**:
 A finding in the report and in the score that does not fail the run.
 _Avoid_: warning, soft fail, notice
 
 **Finding**:
-The worst violation of one rule at one function: rule, symbol, the line of that site, measured value, the threshold it is over, level (`gate` or `warn`), weight, principle, fix shape, anti-fix.
+The worst violation of one rule at one function: rule, symbol, the line of that site, measured value, the threshold it is over, level (`gate` or `warn`), weight, principle, fix shape, anti-fix. A waived gate also carries the excused measurement and the reason.
 _Avoid_: issue, violation, diagnostic, error
 
 **Inherited finding**:
@@ -126,13 +130,13 @@ A pure function from IR to raw measurements. Knows no thresholds.
 _Avoid_: checker, metric (a metric is what it produces)
 
 **Rule engine**:
-The one stage that knows thresholds, weights and what "bad" means; turns measurements into findings and the verdict.
+The one stage that knows thresholds, weights, waivers, and what "bad" means; turns measurements into findings and the verdict.
 
 **Reporter**:
 A stage that renders findings: JSON, worst-first text table, exit code.
 
 **Explain**:
-The one-page description of one rule: its principle, its counting method, the shipped threshold, one before and one after, and the anti-fix list.
+The one-page description of one rule: its principle, its counting method, the shipped threshold, one before and one after, and the anti-fix list. A gate's page also states how that gate is waived.
 _Avoid_: help text, man page
 
 **Allow-list**:

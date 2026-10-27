@@ -16,3 +16,4 @@ A gate has to name the function to change. `slop_score` is one number for the wh
 
 - An inherited finding stays listed and does not gate. Which findings are allowed to gate, including one that got worse, stays on [Diff-scoped by default, inherited findings, and --strict](../../.scratch/slopmeter-phase1/issues/11-diff-scoped-default.md).
 - The spec's F03 shape is the example: warn above 10, gate above 15.
+- A waiver that holds keeps the finding a gate, and the verdict ignores it. [A waiver excuses one gate up to a stated measurement](0023-a-waiver-excuses-one-gate.md).

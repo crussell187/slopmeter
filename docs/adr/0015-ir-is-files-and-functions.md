@@ -21,3 +21,4 @@ The value lives in memory for the run. It is not written to disk, and it has no 
 - Each function carries its cognitive increments as line, kind, and depth. The sum is [Cognitive complexity follows the white paper](0020-cognitive-complexity-increments.md).
 - The logical-line count is the number of statements in the body. [A logical line is a statement](0021-logical-line-is-a-statement.md). The field is an integer the adapter fills.
 - The sample that tried the shape on three real files is `prototype/ir-schema/`. Its `version` field was dropped.
+- Each function also carries the waiver lines the adapter recorded above its touch span. The rule engine reads that record. [A waiver excuses one gate up to a stated measurement](0023-a-waiver-excuses-one-gate.md).

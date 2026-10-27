@@ -6,4 +6,4 @@ Blocked by: 35
 
 ## Question
 
-Implement session 9 of [the Phase 1 plan](../../../docs/superpowers/plans/2026-10-27-phase1.md). The default run prints the text table on stdout. `--json` prints the report and no table. A finished check exits 0 or 1. A run that produces no check exits 2.
+Implement session 9 of [the Phase 1 plan](../../../docs/superpowers/plans/2026-10-27-phase1.md). The default run prints the text table on stdout. `--json` prints the report and no table. A finished check exits 0 or 1. A run that produces no check exits 2. A row with a waiver also shows the excused number and the reason, as [ADR 0023](../../../docs/adr/0023-a-waiver-excuses-one-gate.md) describes.
