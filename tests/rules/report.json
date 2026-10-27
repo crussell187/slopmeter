@@ -1,0 +1,197 @@
+{
+  "verdict": "fail",
+  "scope": "strict",
+  "slop_score": 0.0,
+  "kloc": 0.074,
+  "tool_version": "0.0.0",
+  "findings": [
+    {
+      "rule": "F08",
+      "level": "gate",
+      "symbol": {
+        "path": "tests/rules/F08.py",
+        "name": "city",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 2,
+      "measured_value": 2,
+      "threshold": 1,
+      "weight": 0,
+      "principle": "A member chain that does not start at the receiver may be one deep, and a chain that starts at the receiver may be two deep. Law of Demeter.",
+      "fix_shape": "Break the chain at line 2 in city. It is 2 deep, and the limit is 1.",
+      "anti_fix": "Saving the chain in locals leaves the finding in place."
+    },
+    {
+      "rule": "F02",
+      "level": "gate",
+      "symbol": {
+        "path": "tests/rules/F02.py",
+        "name": "uncovered",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 1,
+      "measured_value": 12,
+      "threshold": 8,
+      "weight": 0,
+      "principle": "Untested complexity is where defects hide. Change Risk Anti-Patterns.",
+      "fix_shape": "Cover or split uncovered. Its CRAP is 12, and the gate is 8.",
+      "anti_fix": "Extracting an uncovered branch leaves that branch's score in place."
+    },
+    {
+      "rule": "F05",
+      "level": "gate",
+      "symbol": {
+        "path": "tests/rules/F05.py",
+        "name": "deep",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 4,
+      "measured_value": 3,
+      "threshold": 2,
+      "weight": 0,
+      "principle": "A reader should not hold three decisions at once.",
+      "fix_shape": "Flatten the decision at line 4 in deep. Nesting is 3, and the gate is 2.",
+      "anti_fix": "Indenting the inner condition less leaves the depth in place."
+    },
+    {
+      "rule": "F04",
+      "level": "gate",
+      "symbol": {
+        "path": "tests/rules/F04.py",
+        "name": "paint",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 1,
+      "measured_value": 4,
+      "threshold": 3,
+      "weight": 0,
+      "principle": "A function with many ordinary parameters is doing more than one job.",
+      "fix_shape": "Group the parameters of paint. It has 4 ordinary parameters, and the gate is 3.",
+      "anti_fix": "Giving a parameter a default leaves the count in place."
+    },
+    {
+      "rule": "F01",
+      "level": "gate",
+      "symbol": {
+        "path": "tests/rules/F01.py",
+        "name": "paths",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 1,
+      "measured_value": 9,
+      "threshold": 8,
+      "weight": 0,
+      "principle": "A function should have few independent paths. McCabe.",
+      "fix_shape": "Split paths. Its cyclomatic complexity is 9, and the gate is 8.",
+      "anti_fix": "Splitting one condition onto two lines leaves the path count in place."
+    },
+    {
+      "rule": "F06",
+      "level": "gate",
+      "symbol": {
+        "path": "tests/rules/F06.py",
+        "name": "long",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 1,
+      "measured_value": 21,
+      "threshold": 19,
+      "weight": 0,
+      "principle": "A function's body should stay short enough to read at once.",
+      "fix_shape": "Shorten long. Its body is 21 lines, and the gate is 19.",
+      "anti_fix": "Breaking one statement across more lines makes the count larger."
+    },
+    {
+      "rule": "F03",
+      "level": "gate",
+      "symbol": {
+        "path": "tests/rules/F03.py",
+        "name": "tangled",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 1,
+      "measured_value": 16,
+      "threshold": 15,
+      "weight": 0,
+      "principle": "Nested structure costs more to understand than a path count. SonarSource Cognitive Complexity.",
+      "fix_shape": "Simplify tangled. Its cognitive complexity is 16, and the gate is 15.",
+      "anti_fix": "Adding a comment inside the nested block leaves the score in place."
+    },
+    {
+      "rule": "F11",
+      "level": "gate",
+      "symbol": {
+        "path": "tests/rules/F11.py",
+        "name": "packed",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 1,
+      "measured_value": 20,
+      "threshold": 19,
+      "weight": 0,
+      "principle": "A function should say little. The count is statements, not wrapped lines.",
+      "fix_shape": "Split packed. It has 20 logical lines, and the gate is 19.",
+      "anti_fix": "Breaking one statement across more lines leaves the count in place."
+    },
+    {
+      "rule": "F07",
+      "level": "warn",
+      "symbol": {
+        "path": "tests/rules/F07.py",
+        "name": "get",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 2,
+      "measured_value": 100,
+      "threshold": 80,
+      "weight": 0,
+      "principle": "A function that only hands its parameters to one call adds a hop and no behavior.",
+      "fix_shape": "Inline get. It forwards 100 percent of its ordinary parameters, and the limit is 80.",
+      "anti_fix": "Renaming the forwarded parameters leaves the ratio in place."
+    }
+  ],
+  "inherited": [],
+  "notes": [
+    {
+      "path": "tests/rules/F01.py",
+      "message": "No coverage record matches this file."
+    },
+    {
+      "path": "tests/rules/F03.py",
+      "message": "No coverage record matches this file."
+    },
+    {
+      "path": "tests/rules/F04.py",
+      "message": "No coverage record matches this file."
+    },
+    {
+      "path": "tests/rules/F05.py",
+      "message": "No coverage record matches this file."
+    },
+    {
+      "path": "tests/rules/F06.py",
+      "message": "No coverage record matches this file."
+    },
+    {
+      "path": "tests/rules/F07.py",
+      "message": "No coverage record matches this file."
+    },
+    {
+      "path": "tests/rules/F08.py",
+      "message": "No coverage record matches this file."
+    },
+    {
+      "path": "tests/rules/F11.py",
+      "message": "No coverage record matches this file."
+    }
+  ]
+}

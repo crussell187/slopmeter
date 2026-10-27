@@ -1,0 +1,18 @@
+def paths(flag):
+    if flag:
+        return 1
+    if flag:
+        return 2
+    if flag:
+        return 3
+    if flag:
+        return 4
+    if flag:
+        return 5
+    if flag:
+        return 6
+    if flag:
+        return 7
+    if flag:
+        return 8
+    return 0

@@ -1,0 +1,19 @@
+F08  gate  city       tests/rules/F08.py:2  2 > 1
+F02  gate  uncovered  tests/rules/F02.py:1  12 > 8
+F05  gate  deep       tests/rules/F05.py:4  3 > 2
+F04  gate  paint      tests/rules/F04.py:1  4 > 3
+F01  gate  paths      tests/rules/F01.py:1  9 > 8
+F06  gate  long       tests/rules/F06.py:1  21 > 19
+F03  gate  tangled    tests/rules/F03.py:1  16 > 15
+F11  gate  packed     tests/rules/F11.py:1  20 > 19
+F07  warn  get        tests/rules/F07.py:2  100 > 80
+
+note  tests/rules/F01.py  No coverage record matches this file.
+note  tests/rules/F03.py  No coverage record matches this file.
+note  tests/rules/F04.py  No coverage record matches this file.
+note  tests/rules/F05.py  No coverage record matches this file.
+note  tests/rules/F06.py  No coverage record matches this file.
+note  tests/rules/F07.py  No coverage record matches this file.
+note  tests/rules/F08.py  No coverage record matches this file.
+note  tests/rules/F11.py  No coverage record matches this file.
+slop_score 0.0  fail
