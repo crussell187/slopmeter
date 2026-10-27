@@ -55,6 +55,7 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 - [Which metric each rule id measures](issues/34-rule-ids.md) — F01 cyclomatic complexity gate 8, F02 CRAP gate 8, F04 parameter count gate 3, F05 nesting gate 2, F06 function length gate 19, F11 logical lines gate 19; a value greater than the gate fails, and these rules have no warn. F03, F07, and F08 stay as already decided ([ADR 0022](../../docs/adr/0022-rule-ids-and-stand-in-thresholds.md)).
 - [How a gate is waived](issues/44-waivers.md) — a contiguous `#` or `//` run directly above the touch span excuses one gate up to the number in the comment; the finding stays a gate the verdict ignores, and a line the tool cannot accept fails the check ([ADR 0023](../../docs/adr/0023-a-waiver-excuses-one-gate.md)).
 - [Record waiver lines on the function](issues/45-waiver-lines.md) — `adapters::python::parse` records each `# slopmeter: waive` line above a function on `WaiverLine`, joins the run to the touch span, and does not apply the gate.
+- [Author the nine explain pages](issues/27-explain-pages.md) — `explain::page` returns one shipped page per rule; every gate carries the same waiver sentence, and F07 says a waiver line fails the run.
 
 ## Not yet specified
 
