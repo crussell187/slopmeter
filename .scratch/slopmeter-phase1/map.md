@@ -52,10 +52,11 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 - [Parse Python functions](issues/31-python-functions.md) — `adapters::python::parse` records a nested `def` and a named lambda, folds an inner lambda into its function, and publishes the Python allow-list.
 - [Classify a Python body](issues/32-python-classification.md) — `parse` fills logical lines, decisions, cognitive increments, member chains, and the forwarding call. A lambda's counts stay on the enclosing function. A bare forwarding call is not also a chain.
 - [Derive the measurements](issues/33-analyzers.md) — `analyzers::measure` derives cyclomatic complexity, cognitive complexity, nesting, parameter count, chain depth, and the forward ratio. The caller supplies the allow-list. A trailing `build` run adds no hop.
+- [Which metric each rule id measures](issues/34-rule-ids.md) — F01 cyclomatic complexity gate 8, F02 CRAP gate 8, F04 parameter count gate 3, F05 nesting gate 2, F06 function length gate 19, F11 logical lines gate 19; a value greater than the gate fails, and these rules have no warn. F03, F07, and F08 stay as already decided. A waiver for any gate is a separate ticket ([ADR 0022](../../docs/adr/0022-rule-ids-and-stand-in-thresholds.md)).
 
 ## Not yet specified
 
-- **Threshold calibration.** The spec's defaults (CC > 10, CRAP > 8.0, 40 LLOC, 4 params…) are for typed class-based languages and come from Martin's tools, not from LLM-written code. Each language profile gets its own defaults after its validation run. Can't be sharpened until a corpus has been scored.
+- **Threshold calibration.** The stand-ins are [ADR 0022](../../docs/adr/0022-rule-ids-and-stand-in-thresholds.md). The validation run may loosen a gate per language. It may not switch one off. The numbers are not calibrated until a corpus has been scored.
 - **Multi-package repos.** Cargo workspaces, Python monorepos, C++ projects with several targets: how source selection, `--changed` and the KLOC denominator treat them.
 
 ## Out of scope

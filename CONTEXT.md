@@ -43,9 +43,21 @@ _Avoid_: train wreck, dot chain
 One statement in a function's body, including a closure's statements and a Rust tail expression. The signature, a blank, a comment, a docstring, a brace, and a decorator or attribute are not one.
 _Avoid_: physical line, source line, LOC
 
+**Function length**:
+The physical lines of the body span, from the `def` or `fn` line through the end of the body. A decorator or attribute is outside it.
+_Avoid_: logical line, NLOC
+
+**Parameter count**:
+The ordinary parameters of a function. The receiver is not one.
+_Avoid_: arity
+
 **Cyclomatic complexity**:
 The number of independent paths through a function. It starts at 1, and each decision point adds 1.
 _Avoid_: cognitive complexity, complexity
+
+**Nesting**:
+The deepest decision in a function. A decision outside any other is depth 1. A function with no decisions has nesting 0.
+_Avoid_: cognitive depth, indent
 
 **Cognitive complexity**:
 The cost of understanding a function. A nested break adds 1 plus its depth. An `else`, a boolean sequence, or a labelled jump adds 1. The same table applies in Python, Rust, and C++.
