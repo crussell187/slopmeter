@@ -66,6 +66,14 @@ pub struct Body {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct WaiverLine {
+    pub line: u32,
+    pub rule: Option<String>,
+    pub number: Option<String>,
+    pub reason: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Function {
     pub name: String,
     pub param_types: Vec<String>,
@@ -74,6 +82,7 @@ pub struct Function {
     pub touch: Span,
     pub params: Vec<Param>,
     pub body: Body,
+    pub waivers: Vec<WaiverLine>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -96,6 +105,7 @@ mod tests {
             qualifier: String::new(),
             span: Span { start: 74, end: 87 },
             touch: Span { start: 74, end: 87 },
+            waivers: vec![],
             params: vec![
                 Param {
                     name: "url".to_string(),

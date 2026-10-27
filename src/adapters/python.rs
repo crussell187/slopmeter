@@ -5,7 +5,7 @@ use tree_sitter::Node;
 
 use crate::ir::{
     Body, Chain, Cognitive, CognitiveKind, Decision, File, Forward, Function, Language, Member,
-    Param, Span,
+    Param, Span, WaiverLine,
 };
 
 pub const ALLOW: &[&str] = &[
@@ -169,6 +169,10 @@ fn push_function(out: &mut Vec<Function>, scopes: &[Scope], source: &[u8], found
     if let Some(start) = found.touch_start {
         touch.start = start;
     }
+    let waivers = waivers_above(found.node, source);
+    if let Some(first) = waivers.first() {
+        touch.start = first.line;
+    }
     let params: Vec<Param> = found
         .params
         .map(|node| parameter_names(node, source))
@@ -198,7 +202,134 @@ fn push_function(out: &mut Vec<Function>, scopes: &[Scope], source: &[u8], found
         touch,
         params,
         body,
+        waivers,
     });
+}
+
+fn waivers_above(node: Node, source: &[u8]) -> Vec<WaiverLine> {
+    let statement = statement_anchor(node);
+    let mut next_line = span_of(statement).start;
+    let mut found = Vec::new();
+    let open = consume_waiver_comments(statement, source, &mut next_line, &mut found);
+    if open {
+        if let Some(block) = statement.parent() {
+            if block.kind() == "block" && first_statement(statement) {
+                consume_waiver_comments(block, source, &mut next_line, &mut found);
+            }
+        }
+    }
+    found.reverse();
+    found
+}
+
+fn statement_anchor(node: Node) -> Node {
+    let mut current = node;
+    loop {
+        let Some(parent) = current.parent() else {
+            return current;
+        };
+        if parent.kind() == "module" || parent.kind() == "block" {
+            return current;
+        }
+        current = parent;
+    }
+}
+
+fn first_statement(statement: Node) -> bool {
+    let mut cursor = statement.prev_sibling();
+    while let Some(sibling) = cursor {
+        if sibling.kind() != "comment" {
+            return false;
+        }
+        cursor = sibling.prev_sibling();
+    }
+    true
+}
+
+fn consume_waiver_comments(
+    node: Node,
+    source: &[u8],
+    next_line: &mut u32,
+    found: &mut Vec<WaiverLine>,
+) -> bool {
+    let mut cursor = node.prev_sibling();
+    while let Some(sibling) = cursor {
+        if sibling.kind() != "comment" {
+            return false;
+        }
+        let span = span_of(sibling);
+        if span.start != span.end || span.start + 1 != *next_line {
+            return false;
+        }
+        let Some(waiver) = waiver_from_comment(&node_text(sibling, source), span.start) else {
+            return false;
+        };
+        found.push(waiver);
+        *next_line = span.start;
+        cursor = sibling.prev_sibling();
+    }
+    true
+}
+
+fn waiver_from_comment(text: &str, line: u32) -> Option<WaiverLine> {
+    let text = text.trim();
+    let text = text.strip_prefix('#').unwrap_or(text).trim();
+    let (marker, rest) = take_token(text)?;
+    if marker != "slopmeter:" {
+        return None;
+    }
+    let (verb, rest) = take_token(rest)?;
+    if verb != "waive" {
+        return None;
+    }
+    let (rule, rest) = match take_token(rest) {
+        Some((rule, rest)) => (Some(rule.to_string()), rest),
+        None => (None, ""),
+    };
+    let (number, reason) = match take_token(rest) {
+        Some((token, after)) if is_number_token(token) => {
+            (Some(token.to_string()), non_empty(after))
+        }
+        Some(_) => (None, non_empty(rest)),
+        None => (None, None),
+    };
+    Some(WaiverLine {
+        line,
+        rule,
+        number,
+        reason,
+    })
+}
+
+fn non_empty(text: &str) -> Option<String> {
+    let text = text.trim();
+    if text.is_empty() {
+        None
+    } else {
+        Some(text.to_string())
+    }
+}
+
+fn take_token(input: &str) -> Option<(&str, &str)> {
+    let input = input.trim_start();
+    if input.is_empty() {
+        return None;
+    }
+    let end = input.find(char::is_whitespace).unwrap_or(input.len());
+    Some((&input[..end], &input[end..]))
+}
+
+fn is_number_token(token: &str) -> bool {
+    let mut seen_dot = false;
+    let mut seen_digit = false;
+    for character in token.chars() {
+        match character {
+            '0'..='9' => seen_digit = true,
+            '.' if !seen_dot => seen_dot = true,
+            _ => return false,
+        }
+    }
+    seen_digit
 }
 
 fn qualify(scopes: &[Scope], name: &str) -> String {
@@ -1753,6 +1884,229 @@ def none():
             .iter()
             .map(|member| member.name.as_str())
             .collect()
+    }
+
+    #[test]
+    fn a_run_of_waiver_lines_joins_the_touch_span_and_not_the_body_span() {
+        let source = "\
+# slopmeter: waive F06 40 The transitions belong in one function.
+# slopmeter: waive F01 12 The match arms are the states.
+def reduce(state, event):
+    return state
+";
+        let file = parse("src/reduce.py", source.as_bytes());
+        let reduce = function(&file, "reduce");
+        assert_eq!(
+            reduce.waivers,
+            vec![
+                waiver(
+                    1,
+                    Some("F06"),
+                    Some("40"),
+                    Some("The transitions belong in one function.")
+                ),
+                waiver(
+                    2,
+                    Some("F01"),
+                    Some("12"),
+                    Some("The match arms are the states.")
+                ),
+            ]
+        );
+        assert_eq!(reduce.span, crate::ir::Span { start: 3, end: 4 });
+        assert_eq!(reduce.touch, crate::ir::Span { start: 1, end: 4 });
+    }
+
+    #[test]
+    fn a_waiver_above_a_decorator_joins_the_touch_span() {
+        let source = "\
+# slopmeter: waive F06 25 The parser is one table-driven loop.
+@decorator
+def parse(src):
+    return src
+";
+        let file = parse("src/parse.py", source.as_bytes());
+        let parse = function(&file, "parse");
+        assert_eq!(
+            parse.waivers,
+            vec![waiver(
+                1,
+                Some("F06"),
+                Some("25"),
+                Some("The parser is one table-driven loop.")
+            )]
+        );
+        assert_eq!(parse.span.start, 3);
+        assert_eq!(parse.touch.start, 1);
+    }
+
+    #[test]
+    fn a_waiver_between_a_decorator_and_the_signature_does_not_attach() {
+        let source = "\
+@decorator
+# slopmeter: waive F06 25 The parser is one table-driven loop.
+def parse(src):
+    return src
+";
+        let file = parse("src/parse.py", source.as_bytes());
+        let parse = function(&file, "parse");
+        assert!(parse.waivers.is_empty());
+        assert_eq!(parse.touch.start, 1);
+    }
+
+    #[test]
+    fn a_blank_line_ends_the_waiver_run() {
+        let source = "\
+# slopmeter: waive F06 25 The parser is one table-driven loop.
+
+def parse(src):
+    return src
+";
+        let file = parse("src/parse.py", source.as_bytes());
+        assert!(function(&file, "parse").waivers.is_empty());
+    }
+
+    #[test]
+    fn an_ordinary_comment_ends_the_waiver_run() {
+        let source = "\
+# slopmeter: waive F06 25 The parser is one table-driven loop.
+# TODO split later
+def parse(src):
+    return src
+";
+        let file = parse("src/parse.py", source.as_bytes());
+        assert!(function(&file, "parse").waivers.is_empty());
+    }
+
+    #[test]
+    fn a_comment_inside_the_body_does_not_waive_that_function() {
+        let source = "\
+def parse(src):
+    # slopmeter: waive F06 25 The parser is one table-driven loop.
+    return src
+";
+        let file = parse("src/parse.py", source.as_bytes());
+        let parse = function(&file, "parse");
+        assert!(parse.waivers.is_empty());
+        assert_eq!(parse.span, crate::ir::Span { start: 1, end: 3 });
+    }
+
+    #[test]
+    fn a_waiver_above_a_nested_function_attaches_to_the_inner_function() {
+        let source = "\
+def outer():
+    # slopmeter: waive F06 30 The inner parse is one table.
+    def inner():
+        return 1
+    return inner
+";
+        let file = parse("src/outer.py", source.as_bytes());
+        let outer = function(&file, "outer");
+        let inner = function(&file, "outer.inner");
+        assert!(outer.waivers.is_empty());
+        assert!(outer.span.start < 2 && outer.span.end >= 2);
+        assert_eq!(
+            inner.waivers,
+            vec![waiver(
+                2,
+                Some("F06"),
+                Some("30"),
+                Some("The inner parse is one table.")
+            )]
+        );
+        assert_eq!(inner.span.start, 3);
+        assert_eq!(inner.touch.start, 2);
+    }
+
+    #[test]
+    fn an_incomplete_waiver_line_stays_in_the_run() {
+        let source = "\
+# slopmeter: waive F01 12 The match arms are the states.
+# slopmeter: waive F06
+def reduce(state, event):
+    return state
+";
+        let file = parse("src/reduce.py", source.as_bytes());
+        assert_eq!(
+            function(&file, "reduce").waivers,
+            vec![
+                waiver(
+                    1,
+                    Some("F01"),
+                    Some("12"),
+                    Some("The match arms are the states.")
+                ),
+                waiver(2, Some("F06"), None, None),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_marker_with_no_rule_is_still_recorded() {
+        let source = "\
+# slopmeter: waive
+def short():
+    return 1
+";
+        let file = parse("src/short.py", source.as_bytes());
+        assert_eq!(
+            function(&file, "short").waivers,
+            vec![waiver(1, None, None, None)]
+        );
+    }
+
+    #[test]
+    fn a_fractional_number_is_kept_as_written() {
+        let source = "\
+# slopmeter: waive F02 8.5 Coverage is thin on the error arms.
+def parse(src):
+    return src
+";
+        let file = parse("src/parse.py", source.as_bytes());
+        assert_eq!(
+            function(&file, "parse").waivers,
+            vec![waiver(
+                1,
+                Some("F02"),
+                Some("8.5"),
+                Some("Coverage is thin on the error arms.")
+            )]
+        );
+    }
+
+    #[test]
+    fn a_named_lambda_keeps_the_waiver_above_its_assignment() {
+        let source = "\
+# slopmeter: waive F04 5 The callback takes the framework args.
+bound = lambda z: z
+";
+        let file = parse("src/bound.py", source.as_bytes());
+        let bound = function(&file, "bound");
+        assert_eq!(
+            bound.waivers,
+            vec![waiver(
+                1,
+                Some("F04"),
+                Some("5"),
+                Some("The callback takes the framework args.")
+            )]
+        );
+        assert_eq!(bound.touch.start, 1);
+        assert_eq!(bound.span.start, 2);
+    }
+
+    fn waiver(
+        line: u32,
+        rule: Option<&str>,
+        number: Option<&str>,
+        reason: Option<&str>,
+    ) -> crate::ir::WaiverLine {
+        crate::ir::WaiverLine {
+            line,
+            rule: rule.map(str::to_string),
+            number: number.map(str::to_string),
+            reason: reason.map(str::to_string),
+        }
     }
 
     fn function<'a>(file: &'a crate::ir::File, name: &str) -> &'a crate::ir::Function {

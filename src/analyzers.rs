@@ -170,6 +170,7 @@ mod tests {
             touch: Span { start: 8, end: 20 },
             params,
             body,
+            waivers: vec![],
         }
     }
 
