@@ -68,7 +68,7 @@ The fraction of a function's executable lines that the report marks hit, joined 
 _Avoid_: branch coverage, instruction coverage
 
 **CRAP**:
-A function metric that grows with cyclomatic complexity and with uncovered lines. Absent coverage leaves it uncomputed.
+A function metric that grows with cyclomatic complexity and with uncovered lines. The score is CC squared times the uncovered fraction cubed, plus CC. Absent coverage leaves it uncomputed.
 _Avoid_: crap score, grade
 
 **Unparsed ratio**:

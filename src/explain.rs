@@ -62,6 +62,18 @@ mod tests {
     }
 
     #[test]
+    fn f02_states_the_crap_formula() {
+        let text = page("F02")
+            .unwrap()
+            .split_whitespace()
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(
+            text.contains("The score is CC squared times the uncovered fraction cubed, plus CC.")
+        );
+    }
+
+    #[test]
     fn each_threshold_is_marked_as_the_shipped_stand_in() {
         for rule in RULES {
             let text = page(rule).unwrap();

@@ -4,7 +4,8 @@ Untested complexity is where defects hide. Change Risk Anti-Patterns.
 
 Counting
 The score grows with the function's cyclomatic complexity and with the
-lines a coverage report leaves uncovered. Coverage is the hit DA lines
+lines a coverage report leaves uncovered. The score is CC squared times
+the uncovered fraction cubed, plus CC. Coverage is the hit DA lines
 divided by the DA lines in the body span. The tool reads that report
 and does not run the tests. No report, a missing file, or no DA lines
 in the function leaves the score uncomputed, and this rule emits
