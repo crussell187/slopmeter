@@ -61,6 +61,7 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 - [Gate touched functions](issues/37-diff-scope.md) — `scope::partition` puts touched findings in `findings` and the rest in `inherited`; `--strict` scores the whole set, and an empty diff gates nothing.
 - [Join coverage and compute CRAP](issues/38-lcov-crap.md) — `inputs::cover` sets CRAP from hit `DA` lines over `DA` lines in the body span; no report leaves CRAP unset and notes the run, and `--coverage` replaces the file key.
 - [Print one explain page](issues/39-explain-command.md) — `slopmeter explain <RULE>` prints the shipped page and exits 0; an unknown rule writes the reason to stderr and exits 2, and the command does not read a repo.
+- [Lock the reporters and the CC delta](issues/40-fixtures-and-cross-check.md) — one Python file per rule renders to a checked-in table and JSON report; the radon delta is 0 except `or_pattern`, which is 4 against radon's 2.
 
 ## Not yet specified
 
