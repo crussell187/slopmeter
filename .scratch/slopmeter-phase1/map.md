@@ -45,6 +45,8 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 - [Text table and explain output format](issues/23-text-and-explain-output.md) — the table is the check a person reads and `--json` prints the report instead; a finished check exits 0 or 1, and no check exits 2; `explain` is one page on the shipped threshold ([ADR 0019](../../docs/adr/0019-text-table-and-explain.md)).
 - [Cognitive complexity increments](issues/24-cognitive-complexity-increments.md) — F03 uses the white paper's table in all three languages; recursion, nested-function depth, and `#if` add nothing; a nested break costs 1 plus its depth ([ADR 0020](../../docs/adr/0020-cognitive-complexity-increments.md)).
 - [What increments a logical line](issues/25-lloc-counting.md) — `lloc` is the number of statements in the body; a blank, a comment, a docstring, a brace, and an attribute add nothing; a closure's statements count on the enclosing function ([ADR 0021](../../docs/adr/0021-logical-line-is-a-statement.md)).
+- [Plan the Phase 1 build](issues/26-plan-the-build.md) — sixteen session-sized slices, crate and IR first and the C++ validation run last; F01, F02, F04, F05, F06, and F11 still need a metric before the rule engine ([the plan](../../docs/superpowers/plans/2026-10-27-phase1.md)).
+- [Build the crate and the IR types](issues/28-crate-and-ir.md) — `slopmeter` 0.0.0, with the in-memory IR and a fmt/clippy/test workflow.
 
 ## Not yet specified
 
