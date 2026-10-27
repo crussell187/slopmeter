@@ -6,7 +6,9 @@ Charted: 2026-10-26
 
 ## Destination
 
-A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust and C++ source against the function-scope rules (F01–F08, F11), with F07 a warn and the rest gates, reads coverage for CRAP, emits the JSON report and the worst-first text table with exit codes, supports `--changed` and `explain`, and is installable with `cargo install` from this repo. Shipped means the validation run passes for each of the three languages: a set of clean open-source repos pass and a deliberately sloppy agent-written repo fails on every gating rule it should, with thresholds tuned from that run.
+A Phase 1 MVP of **slopmeter** that an agent loop can be gated on: a Rust binary that scores Python, Rust and C++ source against the function-scope rules (F01–F08, F11), with F07 a warn and the rest gates, plus a coverage gate on changed lines, reads coverage for CRAP, emits the JSON report and the worst-first text table with exit codes, supports `--changed` and `explain`, and is installable with `cargo install` from this repo. Shipped means: the gates are set by a stated, reproducible method and flag real slop in the clean repos' worst functions; the diff scoping and the adapters have no whole-body blind spots the review found; the sloppy corpora fail by a wide margin at those gates; and the self-check runs in CI.
+
+Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase1-review.md): the first destination (validation run passes) was reached on 2026-10-27, but the gates it produced flag nothing, so the effort continues under this one. The mutation-testing decision is in scope; its per-language readers are fog until it is made.
 
 ## Notes
 
@@ -15,6 +17,7 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 - **Skills to consult:** `/grilling` and `/domain-modeling` for decision tickets (glossary lives in `CONTEXT.md`); `/prototype` and `/design-an-interface` for prototype tickets; `/research` for research tickets; `/writing-plans` when build slices graduate.
 - **Tracker:** local markdown in this directory, including after the GitHub repo exists. The decisions stay files in git. See [Repo, crate layout, CI and where the GitHub repo lives](issues/18-repo-layout.md).
 - **Spec gaps found while charting:** the spec's JSON report schema and escalation example code blocks are empty in the doc. The report schema is therefore a prototype ticket, not a given.
+- **Review of the first build (2026-10-27):** [the Phase 1 review](../../docs/review/2026-10-27-phase1-review.md) ranks what the build got wrong; tickets 46–66 chart its next steps. Its raw artifacts (per-function distributions over the nine corpus repos, adversarial fixtures per language) were left in the review session's scratchpad and are quoted in the tickets that need them.
 - **Spec terms the tool keeps:** the rule IDs (F01…), tiers (A/B/C), gate vs warn, `slop_score` per KLOC, `fix_shape`, `anti_fix`, `principle`, `scope: changed` with `inherited` findings, the six-stage pipeline (inputs → adapters → IR → analyzers → rule engine → reporters).
 
 ## Decisions so far
@@ -68,7 +71,10 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 
 ## Not yet specified
 
+- **Mutation report readers.** One per language once [Mutation testing as a slopmeter gate](issues/61-mutation-testing.md) is decided: cargo-mutants `outcomes.json`, mutmut's store or stats export, and mull's mutation-testing-elements JSON if C++ gets a build input. Each is a build slice with a fixture report and a sloppy-corpus run.
+- **Assertion density (spec S05).** Once the coverage gate exists, a test that runs everything and asserts nothing reaches 100%; the spec's counter is an assertion-per-test floor. Depends on the coverage-gate decision and on scoring test files, which are out of the scored set today.
 - **Multi-package repos.** Cargo workspaces, Python monorepos, C++ projects with several targets: how source selection, `--changed` and the KLOC denominator treat them.
+- **Secondary-language files inside a repo.** 188 `.py` files inside the C++ corpus repos were scored under the Python profile. Whether a repo declares its languages, or every claimed extension counts everywhere, waits on the recalibration.
 
 ## Out of scope
 
@@ -76,6 +82,6 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 - **Go, Java/Kotlin, C# adapters.** Spec rollout order 4–6.
 - **Module and system scope (Phase 2).** Import graph, cycles, Ce/Ca, interface width, leverage, pass-through ratio, LCOM4, clone detection, hotspots, SARIF.
 - **Gaming defenses and the loop (Phase 3).** Call depth S03, assertion density S05, `previous_slop_score` deltas, escalation, MCP server, pre-commit hook.
-- **Architecture scope (A01–A10) and the Phase 3/4 additions**, mutation testing, LLM-judge pass for Tier C.
+- **Architecture scope (A01–A10) and the Phase 3/4 additions**, LLM-judge pass for Tier C. Mutation testing left this list on 2026-10-27 (ticket 61).
 - **The agent acceptance test** (with-tool vs without-tool run scored by an independent ruler). Not part of the done line.
 - **Public distribution** beyond `cargo install` from the repo: crates.io, Homebrew, GitHub Action, npm wrapper.
