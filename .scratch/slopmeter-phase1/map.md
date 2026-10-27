@@ -63,10 +63,11 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 - [Print one explain page](issues/39-explain-command.md) — `slopmeter explain <RULE>` prints the shipped page and exits 0; an unknown rule writes the reason to stderr and exits 2, and the command does not read a repo.
 - [Lock the reporters and the CC delta](issues/40-fixtures-and-cross-check.md) — one Python file per rule renders to a checked-in table and JSON report; the radon delta is 0 except `or_pattern`, which is 4 against radon's 2.
 - [Run the Python corpus](issues/41-python-validation.md) — `slopmeter --strict` scores a tree; Python gates are F01 48, F03 58, F04 19, F05 6, F06 196, F08 3 and 3, F11 64; F02 stays 8 with no coverage report; the sloppy tree gates on F01–F06, F08, and F11 and warns on F07.
+- [Rust adapter and its validation run](issues/42-rust-adapter.md) — `adapters::rust::parse` records methods, folded closures, and `//` waivers; Rust gates are F01 94, F03 192, F04 9, F05 9, F06 581, F08 2 and 11, F11 138; the sloppy tree gates on F01–F06, F08, and F11 and warns on F07.
 
 ## Not yet specified
 
-- **Rust and C++ thresholds.** Python's gates are the values in [Run the Python corpus](issues/41-python-validation.md). Rust and C++ still ship the stand-ins from [ADR 0022](../../docs/adr/0022-rule-ids-and-stand-in-thresholds.md). A later run may loosen one. It may not switch one off.
+- **C++ thresholds.** Python's gates are the values in [Run the Python corpus](issues/41-python-validation.md). Rust's gates are the values in [Rust adapter and its validation run](issues/42-rust-adapter.md). C++ still ships the stand-ins from [ADR 0022](../../docs/adr/0022-rule-ids-and-stand-in-thresholds.md). A later run may loosen one. It may not switch one off.
 - **Multi-package repos.** Cargo workspaces, Python monorepos, C++ projects with several targets: how source selection, `--changed` and the KLOC denominator treat them.
 
 ## Out of scope
