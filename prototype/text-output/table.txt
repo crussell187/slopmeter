@@ -1,8 +1,8 @@
-F08  gate  <Take<T> as Buf>::chunks_vectored  src/buf/take.rs:170       2 > 1
-F07  warn  get                                 src/requests/api.py:87    100 > 80
+F08  gate  <Take<T> as Buf>::chunks_vectored  src/buf/take.rs:170             2 > 1
+F07  warn  get                                src/requests/api.py:87          100 > 80
 
 inherited
-F03  gate  CLI::detail::join                   include/CLI/StringTools.hpp:54  18 > 15
+F03  gate  CLI::detail::join                  include/CLI/StringTools.hpp:54  18 > 15
 
 note  No coverage report was given. CRAP was not computed.
 slop_score 150.0  fail
