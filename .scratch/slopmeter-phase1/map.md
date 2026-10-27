@@ -51,6 +51,7 @@ A shipped Phase 1 MVP of **slopmeter**: a Rust binary that scores Python, Rust a
 - [Load slopmeter.toml](issues/30-config-loader.md) — a missing file is the built-in profile, F03 warn 10 and gate 15; the file records coverage, include, exclude, an F03 level, and F08 allow names, and an unknown key fails.
 - [Parse Python functions](issues/31-python-functions.md) — `adapters::python::parse` records a nested `def` and a named lambda, folds an inner lambda into its function, and publishes the Python allow-list.
 - [Classify a Python body](issues/32-python-classification.md) — `parse` fills logical lines, decisions, cognitive increments, member chains, and the forwarding call. A lambda's counts stay on the enclosing function. A bare forwarding call is not also a chain.
+- [Derive the measurements](issues/33-analyzers.md) — `analyzers::measure` derives cyclomatic complexity, cognitive complexity, nesting, parameter count, chain depth, and the forward ratio. The caller supplies the allow-list. A trailing `build` run adds no hop.
 
 ## Not yet specified
 
