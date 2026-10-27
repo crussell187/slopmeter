@@ -1,0 +1,67 @@
+{
+  "verdict": "fail",
+  "scope": "changed",
+  "slop_score": 150.0,
+  "kloc": 0.04,
+  "tool_version": "0.0.0",
+  "findings": [
+    {
+      "rule": "F08",
+      "level": "gate",
+      "symbol": {
+        "path": "src/buf/take.rs",
+        "name": "<Take<T> as Buf>::chunks_vectored",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 170,
+      "measured_value": 2,
+      "threshold": 1,
+      "weight": 2,
+      "principle": "A member chain that does not start at the receiver may be one deep. Law of Demeter.",
+      "fix_shape": "Break the chain len().min at line 170 in <Take<T> as Buf>::chunks_vectored. It is 2 deep, and the limit is 1.",
+      "anti_fix": "Saving the chain in locals leaves the finding in place."
+    },
+    {
+      "rule": "F07",
+      "level": "warn",
+      "symbol": {
+        "path": "src/requests/api.py",
+        "name": "get",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 87,
+      "measured_value": 100,
+      "threshold": 80,
+      "weight": 1,
+      "principle": "A function that only forwards its parameters adds a hop without a decision. Martin's pass-through.",
+      "fix_shape": "Inline get. It forwards 100 percent of its ordinary parameters, and the limit is 80.",
+      "anti_fix": "Adding a log line beside the forward leaves the finding in place."
+    }
+  ],
+  "inherited": [
+    {
+      "rule": "F03",
+      "level": "gate",
+      "symbol": {
+        "path": "include/CLI/StringTools.hpp",
+        "name": "CLI::detail::join",
+        "param_types": ["const T &", "std::string"],
+        "qualifier": ""
+      },
+      "line": 54,
+      "measured_value": 18,
+      "threshold": 15,
+      "weight": 3,
+      "principle": "Nested control flow costs more than a flat branch. SonarSource cognitive complexity.",
+      "fix_shape": "Simplify CLI::detail::join. Its cognitive complexity is 18, and the gate is 15.",
+      "anti_fix": "Extracting the body into a lambda leaves the finding in place."
+    }
+  ],
+  "notes": [
+    {
+      "message": "No coverage report was given. CRAP was not computed."
+    }
+  ]
+}

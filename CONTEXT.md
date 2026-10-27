@@ -23,6 +23,14 @@ _Avoid_: codebase, sources
 A named definition with a body the programmer wrote, including one nested inside another, or a lambda or closure bound to a name outside any function. Declarations, compiler-generated bodies, decorators, and attributes sit outside it; a generic or template counts once, and any other lambda or closure belongs to the function that contains it.
 _Avoid_: method, lambda, closure, callable, declaration, prototype, decorator, attribute
 
+**Body span**:
+The lines from the `def` or `fn` through the end of the body. Coverage joins on this span.
+_Avoid_: touch span, extent
+
+**Touch span**:
+The body span extended up through a leading decorator or non-doc attribute. A doc comment does not extend it. A changed line here touches the function.
+_Avoid_: body span, dirty range
+
 **Pass-through**:
 A function whose body only hands its parameters, other than the receiver, unchanged to one call.
 _Avoid_: wrapper, delegate, pass-through module
@@ -34,6 +42,18 @@ _Avoid_: train wreck, dot chain
 **Cyclomatic complexity**:
 The number of independent paths through a function. It starts at 1, and each decision point adds 1.
 _Avoid_: cognitive complexity, complexity
+
+**Coverage**:
+The fraction of a function's executable lines that the report marks hit, joined on the body span. A line is executable when the report lists it. With no listed lines, coverage is absent and CRAP is not computed.
+_Avoid_: branch coverage, instruction coverage
+
+**CRAP**:
+A function metric that grows with cyclomatic complexity and with uncovered lines. Absent coverage leaves it uncomputed.
+_Avoid_: crap score, grade
+
+**Unparsed ratio**:
+The fraction of lines in a file that the parser could not recover. It says how far to trust that file's numbers, and it does not fail the run.
+_Avoid_: error rate, parse failure
 
 **Tier**:
 How trustworthy a rule's signal is: A is deterministic and gate-worthy, B is deterministic but noisy and warns by default, C needs semantics the tool lacks and is not computed.
@@ -55,11 +75,11 @@ A finding in a function the change did not touch. It is listed, and it does not 
 _Avoid_: legacy, baseline
 
 **Touched function**:
-A function whose span contains a changed line. The span runs from the first decorator or attribute above the definition through the end of the body.
+A function whose touch span contains a changed line.
 _Avoid_: modified file, dirty file
 
 **Slop score**:
-Σ finding weights ÷ KLOC for the scored set, so repos of different size compare. Reported beside the verdict, and it does not fail the run.
+Every finding's weight, inherited findings included, divided by the thousands of physical lines in the scored set. The same tree scores the same on a diff run and on `--strict`. Reported beside the verdict, and it does not fail the run. Absent when the scored set has no lines.
 _Avoid_: quality score, grade, ceiling
 
 **Principle**:
@@ -74,11 +94,11 @@ The cheapest way to make a finding's number go green that the tool still catches
 _Avoid_: counter-rule (that is the rule that catches it), gaming
 
 **Adapter**:
-The per-language stage that parses source and produces IR, and nothing else.
+The per-language stage that turns one selected file into that file's IR. It publishes that language's default allow-list. It does not see other files, the coverage report, or names a project adds.
 _Avoid_: plugin, frontend, parser (a parser is a part of it)
 
 **IR**:
-The single language-neutral intermediate representation every stage after the adapters shares. Nothing below the IR sees source text.
+The single language-neutral intermediate representation every stage after the adapters shares. In Phase 1 it is the scored files and their functions. Nothing below the IR sees source text.
 _Avoid_: AST, model
 
 **Analyzer**:
@@ -95,5 +115,9 @@ A stage that renders findings: JSON, worst-first text table, exit code.
 The per-language table of default thresholds and rule settings in `slopmeter.toml`.
 
 **Validation run**:
-Scoring the per-language corpus: clean open-source repos must pass, the deliberately sloppy agent-written repo must fail on every rule it should.
+A `--strict` score of the per-language corpus once thresholds have been tuned. Clean repos have no gate findings. The sloppy repo fails each gating rule, and shows the F07 warn.
 _Avoid_: acceptance test (that is the separate with-tool vs without-tool agent experiment, out of scope for Phase 1)
+
+**Sloppy repo**:
+A pinned tree, one per language, that an agent wrote from a fixed seed so every gating rule fires.
+_Avoid_: fixture, acceptance test
