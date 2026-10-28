@@ -68,12 +68,21 @@ pub fn cover(
     for measurement in measurements.iter_mut() {
         measurement.crap = None;
     }
-    let Some(report) = report.filter(|path| path.is_file()) else {
+    let Some(report) = report else {
         return Ok(vec![Note {
             path: None,
             message: NO_COVERAGE.to_string(),
         }]);
     };
+    if !report.is_file() {
+        return Ok(vec![Note {
+            path: None,
+            message: format!(
+                "No coverage report at {}. CRAP was not computed.",
+                report.display()
+            ),
+        }]);
+    }
     let coverage = read_lcov(report)?;
     Ok(apply(measurements, scored, &coverage))
 }
@@ -142,17 +151,13 @@ fn parse_da(rest: &str) -> Option<(u32, bool)> {
     let count: u64 = parts.next()?.trim().parse().ok()?;
     match parts.next() {
         None => {}
-        Some(checksum) if parts.next().is_none() && !checksum.trim().is_empty() => {}
+        Some(_) if parts.next().is_none() => {}
         Some(_) => return None,
     }
     Some((line, count > 0))
 }
 
 fn push_section(sections: &mut Vec<Section>, section: Section) {
-    if let Some(existing) = sections.iter_mut().find(|item| item.path == section.path) {
-        merge_lines(&mut existing.lines, &section.lines);
-        return;
-    }
     sections.push(section);
 }
 
@@ -263,6 +268,12 @@ fn assign_section(owned: &mut [Owned], section: &Section) {
     }
     let index = winners[0];
     if owned[index].tied {
+        return;
+    }
+    if owned[index].matched {
+        owned[index].tied = true;
+        owned[index].matched = false;
+        owned[index].lines.clear();
         return;
     }
     merge_lines(&mut owned[index].lines, &section.lines);
@@ -607,10 +618,7 @@ end_of_record
             "\
 SF:/one/src/a.py
 DA:1,0
-end_of_record
-SF:/two/src/a.py
-DA:1,1
-DA:2,0
+DA:2,1
 end_of_record
 ",
         );
@@ -628,6 +636,35 @@ end_of_record
             vec![Note {
                 path: Some("a.py".to_string()),
                 message: "No coverage record matches this file.".to_string(),
+            }]
+        );
+    }
+
+    #[test]
+    fn two_records_that_suffix_match_one_file_leave_coverage_absent() {
+        let root = fixture("tie");
+        let report = write_report(
+            &root,
+            "coverage.lcov",
+            "\
+SF:/one/src/a.py
+DA:1,0
+end_of_record
+SF:/two/src/a.py
+DA:1,1
+end_of_record
+",
+        );
+        let mut measurements = vec![measured("src/a.py", "run", 1, 1, 1)];
+
+        let notes = cover(&mut measurements, &["src/a.py"], Some(&report)).unwrap();
+
+        assert_eq!(measurements[0].crap, None);
+        assert_eq!(
+            notes,
+            vec![Note {
+                path: Some("src/a.py".to_string()),
+                message: "Coverage records tie for this file.".to_string(),
             }]
         );
     }
@@ -681,7 +718,7 @@ end_of_record
     }
 
     #[test]
-    fn a_report_path_that_is_not_a_file_adds_the_same_note() {
+    fn a_missing_report_path_names_that_path() {
         let root = fixture("absent-report");
         let mut measurements = vec![measured("src/a.py", "classify", 1, 1, 1)];
 
@@ -697,7 +734,10 @@ end_of_record
             notes,
             vec![Note {
                 path: None,
-                message: "No coverage report was given. CRAP was not computed.".to_string(),
+                message: format!(
+                    "No coverage report at {}. CRAP was not computed.",
+                    root.join("missing.lcov").display()
+                ),
             }]
         );
     }
@@ -774,7 +814,23 @@ end_of_record
     }
 
     #[test]
-    fn duplicate_sections_merge_before_a_line_is_judged() {
+    fn an_empty_checksum_is_a_listed_line() {
+        let root = fixture("checksum");
+        let report = write_report(
+            &root,
+            "coverage.lcov",
+            "SF:src/a.py\nDA:1,1,\nend_of_record\n",
+        );
+        let mut measurements = vec![measured("src/a.py", "run", 1, 1, 1)];
+
+        let notes = cover(&mut measurements, &["src/a.py"], Some(&report)).unwrap();
+
+        assert!(notes.is_empty());
+        assert_eq!(measurements[0].crap, Some(1.0));
+    }
+
+    #[test]
+    fn duplicate_sections_for_one_file_are_a_tie() {
         let root = fixture("dup");
         let report = write_report(
             &root,
@@ -791,11 +847,17 @@ end_of_record
         let coverage = read_lcov(&report).unwrap();
         let mut measurements = vec![measured("src/a.py", "run", 1, 1, 1)];
 
-        cover(&mut measurements, &["src/a.py"], Some(&report)).unwrap();
+        let notes = cover(&mut measurements, &["src/a.py"], Some(&report)).unwrap();
 
-        assert_eq!(coverage.sections.len(), 1);
-        assert_eq!(coverage.sections[0].lines.get(&1), Some(&true));
-        assert_eq!(measurements[0].crap, Some(1.0));
+        assert_eq!(coverage.sections.len(), 2);
+        assert_eq!(measurements[0].crap, None);
+        assert_eq!(
+            notes,
+            vec![Note {
+                path: Some("src/a.py".to_string()),
+                message: "Coverage records tie for this file.".to_string(),
+            }]
+        );
     }
 
     #[test]
