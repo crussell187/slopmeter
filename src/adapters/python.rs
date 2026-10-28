@@ -51,6 +51,7 @@ pub fn parse(path: &str, source: &[u8]) -> File {
             path: path.to_string(),
             language: Language::Python,
             unparsed_ratio: 1.0,
+            unscored_macros: 0,
             functions: Vec::new(),
         };
     };
@@ -62,6 +63,7 @@ pub fn parse(path: &str, source: &[u8]) -> File {
         path: path.to_string(),
         language: Language::Python,
         unparsed_ratio: super::unparsed_ratio(root, source),
+        unscored_macros: 0,
         functions,
     }
 }

@@ -48,6 +48,7 @@ pub fn parse(path: &str, source: &[u8]) -> File {
             path: path.to_string(),
             language: Language::Cpp,
             unparsed_ratio: 1.0,
+            unscored_macros: 0,
             functions: Vec::new(),
         };
     };
@@ -59,6 +60,7 @@ pub fn parse(path: &str, source: &[u8]) -> File {
         path: path.to_string(),
         language: Language::Cpp,
         unparsed_ratio: super::unparsed_ratio(root, source),
+        unscored_macros: unscored_macros(root, source),
         functions,
     }
 }
@@ -85,6 +87,40 @@ fn visit_children(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut 
     for child in named_nodes(node) {
         visit(child, source, scopes, out);
     }
+}
+
+fn unscored_macros(node: Node, source: &[u8]) -> u32 {
+    match node.kind() {
+        "preproc_function_def" => 1,
+        "preproc_def" | "preproc_include" | "preproc_call" | "comment" => 0,
+        "preproc_if" | "preproc_elif" => unscored_in_preproc(node, source, true),
+        "preproc_ifdef" | "preproc_elifdef" | "preproc_else" => {
+            unscored_in_preproc(node, source, false)
+        }
+        _ => named_nodes(node)
+            .into_iter()
+            .map(|child| unscored_macros(child, source))
+            .sum(),
+    }
+}
+
+fn unscored_in_preproc(node: Node, source: &[u8], check_zero: bool) -> u32 {
+    let condition = node.child_by_field_name("condition");
+    let alternative = node.child_by_field_name("alternative");
+    let dead = check_zero && condition.is_some_and(|condition| is_literal_zero(condition, source));
+    let mut count = 0;
+    if !dead {
+        for child in named_nodes(node) {
+            if Some(child) == condition || Some(child) == alternative {
+                continue;
+            }
+            count += unscored_macros(child, source);
+        }
+    }
+    if let Some(alternative) = alternative {
+        count += unscored_macros(alternative, source);
+    }
+    count
 }
 
 fn visit_preproc(
@@ -2165,6 +2201,34 @@ int parent(int a) {
             function(&file, "parent::Local::Local").body.decisions.len(),
             1
         );
+    }
+
+    #[test]
+    fn a_function_like_define_is_counted_on_the_file() {
+        let source = "\
+#define MAX 3
+#define CHECK(x) if (!(x)) return false;
+#define NOOP(x)
+#if 0
+#define DEAD(x) if (x) return;
+#else
+#define ELSE_ARM(x) if (x) return;
+#endif
+#ifdef FLAG
+#define A(x) if (x) return 1;
+#else
+#define B(x) if (x) return 2;
+#endif
+void local() {
+#define INNER(x) if (x) return;
+}
+bool run(int x) { CHECK(x); return true; }
+bool both(int a, int b) { return CHECK(a && b); }
+";
+        let file = parse("macros.hpp", source.as_bytes());
+        assert_eq!(file.unscored_macros, 6, "{source}");
+        assert_eq!(function(&file, "run").body.decisions.len(), 0);
+        assert_eq!(function(&file, "both").body.decisions.len(), 1);
     }
 
     #[test]

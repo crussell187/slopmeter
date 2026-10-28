@@ -199,6 +199,7 @@ mod tests {
             path: "src/paint.py".to_string(),
             language: Language::Python,
             unparsed_ratio: 0.0,
+            unscored_macros: 0,
             functions,
         }
     }

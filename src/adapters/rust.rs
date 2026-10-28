@@ -91,6 +91,7 @@ pub fn parse_with(path: &str, source: &[u8], include_tests: bool) -> File {
             path: path.to_string(),
             language: Language::Rust,
             unparsed_ratio: 1.0,
+            unscored_macros: 0,
             functions: Vec::new(),
         };
     };
@@ -102,6 +103,7 @@ pub fn parse_with(path: &str, source: &[u8], include_tests: bool) -> File {
         path: path.to_string(),
         language: Language::Rust,
         unparsed_ratio: super::unparsed_ratio(root, source),
+        unscored_macros: 0,
         functions,
     }
 }

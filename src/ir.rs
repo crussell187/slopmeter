@@ -90,6 +90,7 @@ pub struct File {
     pub path: String,
     pub language: Language,
     pub unparsed_ratio: f64,
+    pub unscored_macros: u32,
     pub functions: Vec<Function>,
 }
 
@@ -139,6 +140,7 @@ mod tests {
             path: "src/requests/api.py".to_string(),
             language: Language::Python,
             unparsed_ratio: 0.0,
+            unscored_macros: 0,
             functions: vec![function],
         };
 

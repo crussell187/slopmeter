@@ -684,6 +684,7 @@ def other():
             path: path.to_string(),
             language: Language::Python,
             unparsed_ratio: 0.0,
+            unscored_macros: 0,
             functions,
         }
     }
