@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use crate::ir::{File, Function, Language, Span};
@@ -190,7 +190,8 @@ fn old_spans(root: &Path, base: &str, file: &File, delta: &Delta) -> OldSpans {
 }
 
 fn load_old(root: &Path, base: &str, language: Language, old_path: &str) -> Option<Vec<Function>> {
-    let spec = format!("{base}:{old_path}");
+    let prefix = work_tree_prefix(root).ok()?;
+    let spec = format!("{base}:{prefix}{old_path}");
     let out = git(root, &["--no-pager", "show", &spec]).ok()?;
     if !out.status.success() {
         return None;
@@ -222,13 +223,16 @@ fn resolve_base(root: &Path, changed: Option<&str>) -> Result<String, ScopeError
         }
         return Ok(rev.to_string());
     }
-    let name = if rev_exists(root, "main")? {
-        "main"
-    } else if rev_exists(root, "master")? {
-        "master"
-    } else {
-        return Err(ScopeError::NoBase);
-    };
+    for name in ["main", "master", "origin/main", "origin/master"] {
+        if !rev_exists(root, name)? {
+            continue;
+        }
+        return merge_base(root, name);
+    }
+    Err(ScopeError::NoBase)
+}
+
+fn merge_base(root: &Path, name: &str) -> Result<String, ScopeError> {
     let out = git(root, &["merge-base", "HEAD", name])?;
     if !out.status.success() {
         return Err(ScopeError::NoBase);
@@ -241,19 +245,39 @@ fn resolve_base(root: &Path, changed: Option<&str>) -> Result<String, ScopeError
     }
 }
 
-fn work_tree(root: &Path) -> Result<bool, ScopeError> {
-    let out = git(root, &["rev-parse", "--show-toplevel"])?;
+pub fn repo_root(start: &Path) -> Result<Option<PathBuf>, ScopeError> {
+    if !start.is_dir() {
+        return Ok(None);
+    }
+    let out = git(start, &["rev-parse", "--show-toplevel"])?;
     if !out.status.success() {
-        return Ok(false);
+        return Ok(None);
     }
     let printed = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    let Ok(top) = Path::new(&printed).canonicalize() else {
-        return Ok(false);
-    };
-    let Ok(here) = root.canonicalize() else {
-        return Ok(false);
-    };
-    Ok(top == here)
+    if printed.is_empty() {
+        return Ok(None);
+    }
+    let path = PathBuf::from(&printed);
+    Ok(Some(path.canonicalize().unwrap_or(path)))
+}
+
+fn work_tree(root: &Path) -> Result<bool, ScopeError> {
+    Ok(repo_root(root)?.is_some())
+}
+
+fn work_tree_prefix(root: &Path) -> Result<String, ScopeError> {
+    let out = git(root, &["rev-parse", "--show-prefix"])?;
+    if !out.status.success() {
+        return Err(ScopeError::Git(command_error(&out)));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+fn relative_to_prefix(prefix: &str, path: &str) -> Option<String> {
+    if prefix.is_empty() {
+        return Some(path.to_string());
+    }
+    path.strip_prefix(prefix).map(str::to_string)
 }
 
 fn rev_exists(root: &Path, rev: &str) -> Result<bool, ScopeError> {
@@ -269,7 +293,13 @@ fn diff_files(root: &Path, base: &str) -> Result<BTreeMap<String, Delta>, ScopeE
             "--no-pager",
             "-c",
             "core.quotePath=false",
+            "-c",
+            "diff.noprefix=false",
+            "-c",
+            "diff.mnemonicPrefix=false",
             "diff",
+            "--src-prefix=a/",
+            "--dst-prefix=b/",
             "--no-color",
             "--no-ext-diff",
             "--unified=0",
@@ -298,7 +328,11 @@ fn untracked_paths(root: &Path) -> Result<BTreeSet<String>, ScopeError> {
     if !out.status.success() {
         return Err(ScopeError::Git(command_error(&out)));
     }
-    Ok(parse_untracked(&out.stdout))
+    let prefix = work_tree_prefix(root)?;
+    Ok(parse_untracked(&out.stdout)
+        .into_iter()
+        .filter_map(|path| relative_to_prefix(&prefix, &path))
+        .collect())
 }
 
 fn command_error(out: &Output) -> String {
@@ -486,20 +520,16 @@ fn split_number(input: &str) -> Option<(u32, &str)> {
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<Output, ScopeError> {
-    let parent = root.parent().unwrap_or(root);
-    let ceiling = parent
-        .canonicalize()
-        .unwrap_or_else(|_| parent.to_path_buf());
     Command::new("git")
         .args(args)
         .current_dir(root)
-        .env("GIT_CEILING_DIRECTORIES", ceiling)
         .env("GIT_CONFIG_NOSYSTEM", "1")
         .env("GIT_CONFIG_GLOBAL", "/dev/null")
         .env("GIT_CONFIG_SYSTEM", "/dev/null")
         .env_remove("GIT_DIR")
         .env_remove("GIT_WORK_TREE")
         .env_remove("GIT_INDEX_FILE")
+        .env_remove("GIT_CEILING_DIRECTORIES")
         .output()
         .map_err(|err| ScopeError::Git(err.to_string()))
 }
@@ -552,6 +582,18 @@ def other():
                 std::process::id(),
                 N.fetch_add(1, Ordering::Relaxed)
             ));
+        let _ = fs::remove_dir_all(&path);
+        fs::create_dir_all(&path).unwrap();
+        path
+    }
+
+    fn outside_repo(name: &str) -> PathBuf {
+        static N: AtomicU64 = AtomicU64::new(0);
+        let path = std::env::temp_dir().join(format!(
+            "slopmeter-scope-{name}-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
         let _ = fs::remove_dir_all(&path);
         fs::create_dir_all(&path).unwrap();
         path
@@ -713,6 +755,75 @@ def other():
             .findings
             .iter()
             .any(|finding| finding.name == "other"));
+    }
+
+    #[test]
+    fn noprefix_still_touches_the_edited_function() {
+        let root = repo("noprefix", "main");
+        write(&root, "src/a.py", PAIR);
+        commit_all(&root, "base");
+        git(&root, &["config", "diff.noprefix", "true"]);
+        write(&root, "src/a.py", &PAIR.replacen("return 1", "return 2", 1));
+        let bytes = fs::read(root.join("src/a.py")).unwrap();
+        let file = parse("src/a.py", &bytes);
+        let findings = evaluate(&measure(&file, &[]), &Config::builtin().python);
+
+        let scoped = partition(
+            &root,
+            &[file],
+            &findings,
+            ScopeOptions {
+                changed: None,
+                strict: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(scoped.scope, Scope::Changed);
+        assert!(scoped
+            .findings
+            .iter()
+            .any(|finding| finding.name == "touched"));
+        assert!(scoped
+            .findings
+            .iter()
+            .all(|finding| finding.name == "touched"));
+        assert!(scoped
+            .inherited
+            .iter()
+            .all(|finding| finding.name == "other"));
+    }
+
+    #[test]
+    fn mnemonic_prefix_still_touches_the_edited_function() {
+        let root = repo("mnemonic", "main");
+        write(&root, "src/a.py", PAIR);
+        commit_all(&root, "base");
+        git(&root, &["config", "diff.mnemonicPrefix", "true"]);
+        write(&root, "src/a.py", &PAIR.replacen("return 1", "return 2", 1));
+        let bytes = fs::read(root.join("src/a.py")).unwrap();
+        let file = parse("src/a.py", &bytes);
+        let findings = evaluate(&measure(&file, &[]), &Config::builtin().python);
+
+        let scoped = partition(
+            &root,
+            &[file],
+            &findings,
+            ScopeOptions {
+                changed: None,
+                strict: false,
+            },
+        )
+        .unwrap();
+
+        assert!(scoped
+            .findings
+            .iter()
+            .any(|finding| finding.name == "touched"));
+        assert!(scoped
+            .inherited
+            .iter()
+            .all(|finding| finding.name == "other"));
     }
 
     #[test]
@@ -985,8 +1096,120 @@ def other():
     }
 
     #[test]
+    fn a_subdirectory_diff_touches_only_the_edited_function() {
+        let root = repo("subdir-diff", "main");
+        write(&root, "nested/src/a.py", PAIR);
+        write(&root, "src/b.py", "def outside():\n    return 1\n");
+        commit_all(&root, "base");
+        write(
+            &root,
+            "nested/src/a.py",
+            &PAIR.replacen("return 1", "return 2", 1),
+        );
+        write(&root, "src/b.py", "def outside():\n    return 2\n");
+        let nested = root.join("nested");
+        let bytes = fs::read(nested.join("src/a.py")).unwrap();
+        let file = parse("src/a.py", &bytes);
+        let findings = evaluate(&measure(&file, &[]), &Config::builtin().python);
+
+        let scoped = partition(
+            &nested,
+            &[file],
+            &findings,
+            ScopeOptions {
+                changed: None,
+                strict: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(scoped.scope, Scope::Changed);
+        assert!(scoped.notes.is_empty());
+        assert!(scoped
+            .findings
+            .iter()
+            .any(|finding| finding.name == "touched"));
+        assert!(scoped
+            .findings
+            .iter()
+            .all(|finding| finding.name == "touched"));
+        assert!(scoped
+            .inherited
+            .iter()
+            .all(|finding| finding.name == "other"));
+    }
+
+    #[test]
+    fn a_subdirectory_deletion_touches_only_that_function() {
+        let root = repo("subdir-delete", "main");
+        let before = "\
+def touched():
+    value = 1
+    return value
+
+def other():
+    return 0
+";
+        let after = "\
+def touched():
+    return value
+
+def other():
+    return 0
+";
+        write(&root, "nested/src/a.py", before);
+        commit_all(&root, "base");
+        write(&root, "nested/src/a.py", after);
+        let nested = root.join("nested");
+        let file = parse("src/a.py", &fs::read(nested.join("src/a.py")).unwrap());
+        let findings = vec![gate("src/a.py", "touched"), gate("src/a.py", "other")];
+
+        let scoped = partition(
+            &nested,
+            &[file],
+            &findings,
+            ScopeOptions {
+                changed: None,
+                strict: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(names(&scoped.findings), vec!["touched"]);
+        assert_eq!(names(&scoped.inherited), vec!["other"]);
+    }
+
+    #[test]
+    fn an_untracked_file_in_a_subdirectory_is_touched() {
+        let root = repo("subdir-untracked", "main");
+        write(&root, "nested/src/old.py", "def other():\n    return 0\n");
+        commit_all(&root, "base");
+        write(&root, "nested/src/new.py", "def touched():\n    return 1\n");
+        let nested = root.join("nested");
+        let files = vec![
+            source_file("src/old.py", vec![function("other", 1, 2)]),
+            source_file("src/new.py", vec![function("touched", 1, 2)]),
+        ];
+        let findings = vec![gate("src/old.py", "other"), gate("src/new.py", "touched")];
+
+        let scoped = partition(
+            &nested,
+            &files,
+            &findings,
+            ScopeOptions {
+                changed: None,
+                strict: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(names(&scoped.findings), vec!["touched"]);
+        assert_eq!(names(&scoped.inherited), vec!["other"]);
+    }
+
+    #[test]
     fn outside_git_the_whole_set_is_scored_and_the_run_says_so() {
-        let root = fixture("no-git");
+        let root = outside_repo("no-git");
         let file = source_file(
             "src/a.py",
             vec![function("touched", 1, 2), function("other", 4, 5)],
@@ -1059,6 +1282,77 @@ def other():
 
         assert_eq!(names(&scoped.findings), vec!["touched"]);
         assert_eq!(scoped.scope, Scope::Changed);
+    }
+
+    #[test]
+    fn origin_main_is_the_base_when_no_local_branch_exists() {
+        let root = repo("origin-main", "feature");
+        let body = "def touched():\n    return 1\n";
+        write(&root, "src/a.py", body);
+        commit_all(&root, "base");
+        git(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+        write(&root, "src/a.py", &body.replacen("return 1", "return 2", 1));
+
+        let scoped = partition(
+            &root,
+            &[source_file("src/a.py", vec![function("touched", 1, 2)])],
+            &[gate("src/a.py", "touched")],
+            ScopeOptions {
+                changed: None,
+                strict: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(names(&scoped.findings), vec!["touched"]);
+    }
+
+    #[test]
+    fn origin_master_is_the_base_when_origin_main_is_missing() {
+        let root = repo("origin-master", "feature");
+        let body = "def touched():\n    return 1\n";
+        write(&root, "src/a.py", body);
+        commit_all(&root, "base");
+        git(&root, &["update-ref", "refs/remotes/origin/master", "HEAD"]);
+        write(&root, "src/a.py", &body.replacen("return 1", "return 2", 1));
+
+        let scoped = partition(
+            &root,
+            &[source_file("src/a.py", vec![function("touched", 1, 2)])],
+            &[gate("src/a.py", "touched")],
+            ScopeOptions {
+                changed: None,
+                strict: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(names(&scoped.findings), vec!["touched"]);
+    }
+
+    #[test]
+    fn local_main_wins_over_origin_main() {
+        let root = repo("local-wins", "main");
+        let body = "def touched():\n    return 1\n";
+        write(&root, "src/a.py", body);
+        commit_all(&root, "base");
+        git(&root, &["checkout", "-b", "feature"]);
+        write(&root, "src/a.py", &body.replacen("return 1", "return 2", 1));
+        commit_all(&root, "edit");
+        git(&root, &["update-ref", "refs/remotes/origin/main", "HEAD"]);
+
+        let scoped = partition(
+            &root,
+            &[source_file("src/a.py", vec![function("touched", 1, 2)])],
+            &[gate("src/a.py", "touched")],
+            ScopeOptions {
+                changed: None,
+                strict: false,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(names(&scoped.findings), vec!["touched"]);
     }
 
     #[test]

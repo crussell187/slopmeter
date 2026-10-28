@@ -8,6 +8,7 @@ use crate::ir::Language;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct SelectOptions {
     pub tests: bool,
+    pub parent_gitignore: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,11 +42,11 @@ pub fn select(root: &Path, options: SelectOptions) -> Result<Vec<Selected>, Sele
         return Err(SelectError::NotADirectory(root.to_path_buf()));
     }
 
-    let in_git = root.join(".git").exists();
+    let in_git = root.join(".git").exists() || options.parent_gitignore;
     let walker = WalkBuilder::new(root)
         .standard_filters(false)
         .hidden(false)
-        .parents(false)
+        .parents(options.parent_gitignore)
         .follow_links(false)
         .git_ignore(in_git)
         .git_global(in_git)
@@ -191,11 +192,17 @@ mod tests {
     }
 
     fn paths(root: &Path, tests: bool) -> Vec<String> {
-        select(root, SelectOptions { tests })
-            .unwrap()
-            .into_iter()
-            .map(|s| s.path)
-            .collect()
+        select(
+            root,
+            SelectOptions {
+                tests,
+                parent_gitignore: false,
+            },
+        )
+        .unwrap()
+        .into_iter()
+        .map(|s| s.path)
+        .collect()
     }
 
     #[test]
@@ -207,7 +214,14 @@ mod tests {
         write(&root, "foo.pb.cc", "void foo() {}\n");
         write(&root, "build.rs", "fn main() {}\n");
 
-        let selected = select(&root, SelectOptions { tests: false }).unwrap();
+        let selected = select(
+            &root,
+            SelectOptions {
+                tests: false,
+                parent_gitignore: false,
+            },
+        )
+        .unwrap();
         assert_eq!(
             selected.iter().map(|s| s.path.as_str()).collect::<Vec<_>>(),
             vec!["build.rs", "src/a.py"]
@@ -347,7 +361,14 @@ mod tests {
     #[test]
     fn a_missing_root_is_an_error() {
         let missing = fixture("missing-parent").join("nope");
-        let err = select(&missing, SelectOptions { tests: false }).unwrap_err();
+        let err = select(
+            &missing,
+            SelectOptions {
+                tests: false,
+                parent_gitignore: false,
+            },
+        )
+        .unwrap_err();
         assert!(matches!(err, SelectError::NotADirectory(_)));
     }
 }

@@ -7,14 +7,11 @@ use slopmeter::inputs::Config;
 
 fn fixture(name: &str) -> PathBuf {
     static N: AtomicU64 = AtomicU64::new(0);
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("check-fixtures")
-        .join(format!(
-            "{name}-{}-{}",
-            std::process::id(),
-            N.fetch_add(1, Ordering::Relaxed)
-        ));
+    let path = std::env::temp_dir().join(format!(
+        "slopmeter-check-{name}-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
     let _ = fs::remove_dir_all(&path);
     fs::create_dir_all(&path).unwrap();
     path
@@ -33,8 +30,13 @@ fn run(root: &Path, args: &[&str]) -> std::process::Output {
 }
 
 fn invoke(args: &[&str]) -> std::process::Output {
+    invoke_from(&std::env::temp_dir(), args)
+}
+
+fn invoke_from(cwd: &Path, args: &[&str]) -> std::process::Output {
     Command::new(env!("CARGO_BIN_EXE_slopmeter"))
         .args(args)
+        .current_dir(cwd)
         .output()
         .expect("run slopmeter")
 }
@@ -271,6 +273,105 @@ fn an_inline_rust_test_is_absent_until_tests() {
     assert_eq!(tests.status.code(), Some(1), "{stdout}");
     assert!(stdout.contains("eleven"), "{stdout}");
     assert!(stdout.contains("F04"), "{stdout}");
+}
+
+fn changed_subdirectory() -> PathBuf {
+    let root = fixture("subdir-scope");
+    git(&root, &["init", "-b", "main"]);
+    let over = Config::builtin().python.f04_gate + 1;
+    write(&root, "nested/wide.py", &function("wide", over));
+    write(&root, "nested/stale.py", &function("stale", over));
+    write(&root, "outside.py", &function("outside", over));
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-m", "base"]);
+    write(
+        &root,
+        "nested/wide.py",
+        &function("wide", over).replace("return p0", "return p0 + 1"),
+    );
+    write(
+        &root,
+        "outside.py",
+        &function("outside", over).replace("return p0", "return p0 + 1"),
+    );
+    root
+}
+
+fn assert_subdirectory_scope(output: std::process::Output) {
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    assert!(stdout.contains("\"scope\": \"changed\""), "{stdout}");
+    assert!(stdout.contains("\"verdict\": \"fail\""), "{stdout}");
+    assert!(!stdout.contains("not a git repository"), "{stdout}");
+    assert!(!stdout.contains("outside"), "{stdout}");
+    let inherited_at = stdout.find("\"inherited\"").unwrap_or_else(|| {
+        panic!("{stdout}");
+    });
+    let findings = &stdout[..inherited_at];
+    let inherited = &stdout[inherited_at..];
+    assert!(findings.contains("\"name\": \"wide\""), "{stdout}");
+    assert!(findings.contains("\"path\": \"wide.py\""), "{stdout}");
+    assert!(!findings.contains("\"name\": \"stale\""), "{stdout}");
+    assert!(inherited.contains("\"name\": \"stale\""), "{stdout}");
+}
+
+#[test]
+fn a_run_from_a_subdirectory_scopes_the_diff() {
+    let root = changed_subdirectory();
+    assert_subdirectory_scope(invoke_from(&root.join("nested"), &["--json"]));
+}
+
+#[test]
+fn a_subdirectory_path_scopes_the_diff() {
+    let root = changed_subdirectory();
+    assert_subdirectory_scope(invoke_from(&root, &["--json", "nested"]));
+}
+
+#[test]
+fn a_subdirectory_run_reads_the_root_config_and_ignores_a_nested_one() {
+    let root = fixture("subdir-config");
+    git(&root, &["init", "-b", "main"]);
+    let over = Config::builtin().python.f04_gate + 1;
+    write(&root, "nested/wide.py", &function("wide", over));
+    write(&root, "nested/ok.py", &function("ok", over));
+    write(&root, "slopmeter.toml", "exclude = [\"nested/wide.py\"]\n");
+    write(
+        &root,
+        "nested/slopmeter.toml",
+        "exclude = [\"nested/ok.py\"]\n",
+    );
+
+    let output = invoke_from(&root.join("nested"), &["--strict"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    assert!(stdout.contains("ok"), "{stdout}");
+    assert!(!stdout.contains("wide"), "{stdout}");
+    assert!(!stdout.contains("not a git repository"), "{stdout}");
+}
+
+#[test]
+fn a_subdirectory_run_honors_the_root_gitignore() {
+    let root = fixture("subdir-ignore");
+    git(&root, &["init", "-b", "main"]);
+    let over = Config::builtin().python.f04_gate + 1;
+    let at = Config::builtin().python.f04_gate;
+    write(&root, ".gitignore", "secret.py\n");
+    write(&root, "nested/secret.py", &function("secret", over));
+    write(&root, "nested/ok.py", &function("ok", at));
+    write(&root, "outside.py", &function("outside", over));
+
+    let output = invoke_from(&root.join("nested"), &["--strict"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    assert!(!stdout.contains("secret"), "{stdout}");
+    assert!(!stdout.contains("outside"), "{stdout}");
+    assert!(!stdout.contains("not a git repository"), "{stdout}");
 }
 
 #[test]

@@ -9,7 +9,7 @@ The default run gates functions the change touched, so the diff has to include e
 
 A function is touched when a changed line hits its touch span, from the first decorator or non-doc attribute through the end of the body. A doc comment does not extend that span. Contiguous waiver lines directly above that span join it, and a change to one of them touches the function. A change elsewhere in the same file does not touch it. Those decorator lines, and the waiver lines, still add nothing to the function's measurements.
 
-If `main` is missing, the base is `master`. If neither exists, or the merge-base cannot be computed, the run fails and asks for `--changed=<ref>` or `--strict`. A directory that is not a git repo is scored in full, and the run says so. An empty diff still gates nothing.
+If `main` is missing, the base is `master`. If neither local branch exists, the base is `origin/main`, then `origin/master`. If none of those exists, or the merge-base cannot be computed, the run fails and asks for `--changed=<ref>` or `--strict`. A directory that is not a git repo is scored in full, and the run says so. A subdirectory of a work tree is still that work tree. An empty diff still gates nothing.
 
 ## Considered options
 

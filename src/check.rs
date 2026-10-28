@@ -45,14 +45,19 @@ impl std::fmt::Display for CheckError {
 impl std::error::Error for CheckError {}
 
 pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> {
-    let mut config = load_config(root).map_err(CheckError::Config)?;
+    let found = crate::scope::repo_root(root).map_err(CheckError::Scope)?;
+    let in_repo = found.is_some();
+    let repo = found.unwrap_or_else(|| root.to_path_buf());
+    let mut config = load_config(&repo).map_err(CheckError::Config)?;
     if let Some(coverage) = &options.coverage {
         config.set_coverage_override(coverage.clone());
     }
+    let prefix = subtree_prefix(&repo, root);
     let selected = select(
         root,
         SelectOptions {
             tests: options.tests,
+            parent_gitignore: in_repo,
         },
     )
     .map_err(CheckError::Select)?;
@@ -63,7 +68,7 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
     let mut lines = 0usize;
     for item in selected
         .into_iter()
-        .filter(|item| config.retains(&item.path))
+        .filter(|item| config.retains(&repo_relative(&prefix, &item.path)))
     {
         let full = root.join(&item.path);
         let source = fs::read(&full).map_err(|err| CheckError::Read(full, err))?;
@@ -77,7 +82,12 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
     }
 
     let scored: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
-    let report = coverage_path(root, config.coverage.as_deref());
+    let coverage_root = if options.coverage.is_some() {
+        root
+    } else {
+        repo.as_path()
+    };
+    let report = coverage_path(coverage_root, config.coverage.as_deref());
     let mut notes =
         cover(&mut measurements, &scored, report.as_deref()).map_err(CheckError::Coverage)?;
     let findings = evaluate_spans(&measurements, &spans, &config);
@@ -100,6 +110,31 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
         inherited: scoped.inherited,
         notes,
     })
+}
+
+fn repo_relative(prefix: &str, path: &str) -> String {
+    if prefix.is_empty() {
+        path.to_string()
+    } else {
+        format!("{prefix}/{path}")
+    }
+}
+
+fn subtree_prefix(repo: &Path, start: &Path) -> String {
+    let repo = repo.canonicalize().unwrap_or_else(|_| repo.to_path_buf());
+    let start = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
+    start
+        .strip_prefix(&repo)
+        .map(|rel| {
+            rel.components()
+                .filter_map(|component| match component {
+                    std::path::Component::Normal(part) => part.to_str(),
+                    _ => None,
+                })
+                .collect::<Vec<_>>()
+                .join("/")
+        })
+        .unwrap_or_default()
 }
 
 fn measure_file(file: &File, config: &Config) -> Vec<Measurement> {
