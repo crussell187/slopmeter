@@ -12,6 +12,13 @@ pub struct Forwarding {
     pub forwarded: u32,
 }
 
+/// A coverage fraction the report produced, or a report that never showed one.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Coverage {
+    Fraction { fraction: f64, line: u32 },
+    Unshown,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Measurement {
     pub path: String,
@@ -30,6 +37,7 @@ pub struct Measurement {
     pub forward: Option<Forwarding>,
     pub waivers: Vec<WaiverLine>,
     pub crap: Option<f64>,
+    pub coverage: Option<Coverage>,
 }
 
 pub fn measure(file: &File, allow: &[&str]) -> Vec<Measurement> {
@@ -61,6 +69,7 @@ fn measure_function(path: &str, function: &Function, allow: &[&str]) -> Measurem
         }),
         waivers: function.waivers.clone(),
         crap: None,
+        coverage: None,
     }
 }
 

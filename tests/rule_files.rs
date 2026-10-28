@@ -73,7 +73,14 @@ fn report() -> Report {
 #[test]
 fn each_file_trips_only_its_rule_and_the_goldens_match() {
     let report = report();
-    assert!(report.inherited.is_empty());
+    assert_eq!(
+        report
+            .inherited
+            .iter()
+            .map(|finding| finding.rule.as_str())
+            .collect::<Vec<_>>(),
+        vec!["S06"]
+    );
     for (name, rule) in RULES {
         let path = format!("tests/rules/{name}");
         let found: Vec<_> = report

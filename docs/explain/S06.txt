@@ -1,0 +1,47 @@
+S06  coverage
+
+Every executable line of a changed function is hit.
+
+Counting
+Coverage is the hit DA lines divided by the DA lines in the
+body span. A nested function's lines stay with that function.
+Branch records are ignored. The gate reads this fraction on a
+touched function and fails when it is below 1. Full coverage
+passes. A file the report does not match, and a tie between
+records, fail each touched function in that file and record no
+fraction. A matched span with no DA lines stays off the gate,
+and so does an untouched function whose fraction was never
+produced. An untouched function below 1 is inherited. Under
+--strict every shown row stays inherited, so the score matches
+and coverage does not fail that run. A missing report fails
+the default run once a function is touched, and adds no row
+under --strict. The finding sits on the first missed line, or
+on the function line when no fraction was produced.
+
+Threshold
+Shipped stand-in: gate at 1. 1 passes and a fraction below 1
+fails. No warn level.
+A waiver line for S06 fails the run.
+
+Before
+def classify(n):
+    if n < 0:
+        return "neg"
+    return "other"
+
+After
+def classify(n):
+    if n < 0:
+        return "neg"
+    return "other"
+
+def test_classify():
+    assert classify(-1) == "neg"
+    assert classify(1) == "other"
+
+Anti-fixes
+A test that runs the function and asserts nothing marks the
+lines hit.
+A comment that claims the function is tested leaves the lines
+uncovered.
+A test that misses an uncovered line leaves that line missed.

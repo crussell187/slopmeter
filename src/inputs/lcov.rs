@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::analyzers::Measurement;
+use crate::analyzers::{Coverage as Shown, Measurement};
 use crate::ir::Span;
 use crate::reporters::Note;
 
@@ -67,14 +67,17 @@ pub fn cover(
 ) -> Result<Vec<Note>, LcovError> {
     for measurement in measurements.iter_mut() {
         measurement.crap = None;
+        measurement.coverage = None;
     }
     let Some(report) = report else {
+        mark_unshown(measurements);
         return Ok(vec![Note {
             path: None,
             message: NO_COVERAGE.to_string(),
         }]);
     };
     if !report.is_file() {
+        mark_unshown(measurements);
         return Ok(vec![Note {
             path: None,
             message: format!(
@@ -203,6 +206,7 @@ fn apply(measurements: &mut [Measurement], scored: &[&str], coverage: &Coverage)
     let mut notes = Vec::new();
     for file in &owned {
         if file.tied {
+            mark_file_unshown(measurements, &described, &normalize(&file.original));
             notes.push(Note {
                 path: Some(file.original.clone()),
                 message: TIE.to_string(),
@@ -210,6 +214,7 @@ fn apply(measurements: &mut [Measurement], scored: &[&str], coverage: &Coverage)
             continue;
         }
         if !file.matched {
+            mark_file_unshown(measurements, &described, &normalize(&file.original));
             notes.push(Note {
                 path: Some(file.original.clone()),
                 message: MISSING.to_string(),
@@ -223,8 +228,14 @@ fn apply(measurements: &mut [Measurement], scored: &[&str], coverage: &Coverage)
             }
             let holes = holes(&described, index, &key, measurement.span);
             match fraction(&file.lines, measurement.span, &holes) {
-                Some(hit_fraction) => {
+                Some((hit_fraction, first_miss)) => {
                     measurement.crap = Some(crap(measurement.cyclomatic, hit_fraction));
+                    if let Some(line) = first_miss {
+                        measurement.coverage = Some(Shown::Fraction {
+                            fraction: hit_fraction,
+                            line,
+                        });
+                    }
                 }
                 None => notes.push(Note {
                     path: Some(file.original.clone()),
@@ -299,6 +310,24 @@ fn push_file(files: &mut Vec<String>, path: &str) {
     files.push(path.to_string());
 }
 
+fn mark_unshown(measurements: &mut [Measurement]) {
+    for measurement in measurements {
+        measurement.coverage = Some(Shown::Unshown);
+    }
+}
+
+fn mark_file_unshown(
+    measurements: &mut [Measurement],
+    described: &[(String, String, Span)],
+    key: &str,
+) {
+    for (index, measurement) in measurements.iter_mut().enumerate() {
+        if described[index].0 == key {
+            measurement.coverage = Some(Shown::Unshown);
+        }
+    }
+}
+
 fn holes(described: &[(String, String, Span)], index: usize, key: &str, span: Span) -> Vec<Span> {
     described
         .iter()
@@ -316,9 +345,10 @@ fn strictly_inside(inner: Span, outer: Span) -> bool {
         && (inner.start > outer.start || inner.end < outer.end)
 }
 
-fn fraction(lines: &BTreeMap<u32, bool>, span: Span, holes: &[Span]) -> Option<f64> {
+fn fraction(lines: &BTreeMap<u32, bool>, span: Span, holes: &[Span]) -> Option<(f64, Option<u32>)> {
     let mut total = 0u32;
     let mut hit = 0u32;
+    let mut first_miss = None;
     for (line, was_hit) in lines {
         if *line < span.start || *line > span.end {
             continue;
@@ -332,12 +362,14 @@ fn fraction(lines: &BTreeMap<u32, bool>, span: Span, holes: &[Span]) -> Option<f
         total += 1;
         if *was_hit {
             hit += 1;
+        } else if first_miss.is_none() {
+            first_miss = Some(*line);
         }
     }
     if total == 0 {
         None
     } else {
-        Some(f64::from(hit) / f64::from(total))
+        Some((f64::from(hit) / f64::from(total), first_miss))
     }
 }
 
@@ -381,7 +413,7 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::sync::atomic::{AtomicU64, Ordering};
 
-    use crate::analyzers::Measurement;
+    use crate::analyzers::{Coverage, Measurement};
     use crate::inputs::config::{load_config, Config};
     use crate::inputs::lcov::{cover, coverage_path, read_lcov};
     use crate::ir::Span;
@@ -430,6 +462,7 @@ mod tests {
             forward: None,
             waivers: vec![],
             crap: None,
+            coverage: None,
         }
     }
 
@@ -478,9 +511,12 @@ mod tests {
         let findings = evaluate(&measurements, &Config::builtin().python);
 
         assert_eq!(measurements[0].crap, Some(12.0));
-        assert_eq!(findings.len(), 1);
-        assert_eq!(findings[0].rule, "F02");
-        assert_eq!(findings[0].measured_value, Some(12.0));
+        assert!(findings
+            .iter()
+            .any(|finding| { finding.rule == "F02" && finding.measured_value == Some(12.0) }));
+        assert!(findings.iter().any(|finding| {
+            finding.rule == "S06" && finding.line == 1 && finding.measured_value == Some(0.0)
+        }));
     }
 
     #[test]
@@ -496,6 +532,7 @@ mod tests {
         cover(&mut measurements, &["src/a.py"], Some(&report)).unwrap();
 
         assert_eq!(measurements[0].crap, Some(10.0));
+        assert_eq!(measurements[0].coverage, None);
     }
 
     #[test]
@@ -515,7 +552,15 @@ mod tests {
 
         assert!(notes.is_empty());
         assert_eq!(measurements[0].crap, Some(4.0));
+        assert_eq!(measurements[0].coverage, None);
         assert_eq!(measurements[1].crap, Some(2.5));
+        assert_eq!(
+            measurements[1].coverage,
+            Some(Coverage::Fraction {
+                fraction: 0.5,
+                line: 4,
+            })
+        );
     }
 
     #[test]
@@ -573,6 +618,7 @@ end_of_record
         let notes = cover(&mut measurements, &["src/a.py"], Some(&report)).unwrap();
 
         assert_eq!(measurements[0].crap, None);
+        assert_eq!(measurements[0].coverage, None);
         assert_eq!(measurements[1].crap, Some(1.0));
         assert_eq!(
             notes,
@@ -599,6 +645,7 @@ end_of_record
         let notes = cover(&mut measurements, &["src/a.py", "src/b.py"], Some(&report)).unwrap();
 
         assert_eq!(measurements[0].crap, None);
+        assert_eq!(measurements[0].coverage, Some(Coverage::Unshown));
         assert_eq!(measurements[1].crap, Some(1.0));
         assert_eq!(
             notes,
@@ -660,6 +707,7 @@ end_of_record
         let notes = cover(&mut measurements, &["src/a.py"], Some(&report)).unwrap();
 
         assert_eq!(measurements[0].crap, None);
+        assert_eq!(measurements[0].coverage, Some(Coverage::Unshown));
         assert_eq!(
             notes,
             vec![Note {
@@ -708,6 +756,7 @@ end_of_record
         let notes = cover(&mut measurements, &["src/a.py"], None).unwrap();
 
         assert_eq!(measurements[0].crap, None);
+        assert_eq!(measurements[0].coverage, Some(Coverage::Unshown));
         assert_eq!(
             notes,
             vec![Note {
@@ -851,6 +900,7 @@ end_of_record
 
         assert_eq!(coverage.sections.len(), 2);
         assert_eq!(measurements[0].crap, None);
+        assert_eq!(measurements[0].coverage, Some(Coverage::Unshown));
         assert_eq!(
             notes,
             vec![Note {

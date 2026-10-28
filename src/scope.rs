@@ -69,6 +69,12 @@ pub fn partition(
     let mut kept = Vec::new();
     let mut inherited = Vec::new();
     for finding in findings {
+        if coverage_gate(finding) && finding.measured_value.is_none() {
+            if touched.contains(&symbol(finding)) {
+                kept.push(finding.clone());
+            }
+            continue;
+        }
         if touched.contains(&symbol(finding)) {
             kept.push(finding.clone());
         } else {
@@ -84,12 +90,27 @@ pub fn partition(
 }
 
 fn whole(findings: &[Finding], notes: Vec<Note>) -> Scoped {
+    let mut kept = Vec::new();
+    let mut inherited = Vec::new();
+    for finding in findings {
+        if coverage_gate(finding) {
+            if finding.measured_value.is_some() {
+                inherited.push(finding.clone());
+            }
+        } else {
+            kept.push(finding.clone());
+        }
+    }
     Scoped {
         scope: Scope::Strict,
-        findings: findings.to_vec(),
-        inherited: Vec::new(),
+        findings: kept,
+        inherited,
         notes,
     }
+}
+
+fn coverage_gate(finding: &Finding) -> bool {
+    finding.rule == "S06" && finding.weight == 10
 }
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -754,6 +775,82 @@ def other():
             .findings
             .iter()
             .any(|finding| finding.name == "other"));
+    }
+
+    #[test]
+    fn coverage_rows_follow_the_change_and_strict_keeps_shown_rows_inherited() {
+        let root = repo("coverage-scope", "main");
+        write(&root, "src/a.py", PAIR);
+        commit_all(&root, "base");
+        let edited = PAIR.replacen("return 1", "return 2", 1);
+        write(&root, "src/a.py", &edited);
+        let bytes = fs::read(root.join("src/a.py")).unwrap();
+        let file = parse("src/a.py", &bytes);
+        let files = [file];
+        let mut rejection = finding("src/a.py", "other", Level::Gate);
+        rejection.rule = "S06".to_string();
+        rejection.measured_value = None;
+        rejection.threshold = None;
+        let findings = [
+            s06("src/a.py", "touched", Some(0.0)),
+            s06("src/a.py", "other", Some(0.5)),
+            s06("src/a.py", "touched", None),
+            s06("src/a.py", "other", None),
+            rejection,
+        ];
+        let open = ScopeOptions {
+            changed: None,
+            strict: false,
+        };
+
+        let scoped = partition(&root, &files, &findings, open).unwrap();
+
+        assert_eq!(
+            placed(&scoped.findings),
+            vec![("touched", Some(0.0), 10), ("touched", None, 10)]
+        );
+        assert_eq!(
+            placed(&scoped.inherited),
+            vec![("other", Some(0.5), 10), ("other", None, 0)]
+        );
+
+        let strict = partition(
+            &root,
+            &files,
+            &findings,
+            ScopeOptions {
+                changed: None,
+                strict: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(placed(&strict.findings), vec![("other", None, 0)]);
+        assert_eq!(
+            placed(&strict.inherited),
+            vec![("touched", Some(0.0), 10), ("other", Some(0.5), 10)]
+        );
+    }
+
+    fn s06(path: &str, name: &str, measured: Option<f64>) -> Finding {
+        let mut finding = finding(path, name, Level::Gate);
+        finding.rule = "S06".to_string();
+        finding.weight = 10;
+        finding.measured_value = measured;
+        finding.threshold = Some(1.0);
+        finding
+    }
+
+    fn placed(findings: &[Finding]) -> Vec<(&str, Option<f64>, u32)> {
+        findings
+            .iter()
+            .map(|finding| {
+                (
+                    finding.name.as_str(),
+                    finding.measured_value,
+                    finding.weight,
+                )
+            })
+            .collect()
     }
 
     #[test]

@@ -9,6 +9,7 @@ pub fn page(rule: &str) -> Option<&'static str> {
         "F07" => include_str!("../docs/explain/F07.txt"),
         "F08" => include_str!("../docs/explain/F08.txt"),
         "F11" => include_str!("../docs/explain/F11.txt"),
+        "S06" => include_str!("../docs/explain/S06.txt"),
         _ => return None,
     })
 }
@@ -17,8 +18,8 @@ pub fn page(rule: &str) -> Option<&'static str> {
 mod tests {
     use super::page;
 
-    const RULES: [&str; 9] = [
-        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F11",
+    const RULES: [&str; 10] = [
+        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F11", "S06",
     ];
     const GATES: [&str; 8] = ["F01", "F02", "F03", "F04", "F05", "F06", "F08", "F11"];
     const WAIVER: &str = "A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly above the function excuses this gate in Python, and the same tokens after `//` do so in Rust and C++, with a whole number except on F02, which may be fractional.";
@@ -59,6 +60,9 @@ mod tests {
         let f07 = page("F07").unwrap();
         assert!(f07.contains("A waiver line for F07 fails the run, because F07 is not a gate."));
         assert!(!f07.contains("excuses this gate"));
+        let s06 = page("S06").unwrap();
+        assert!(s06.contains("A waiver line for S06 fails the run."));
+        assert!(!s06.contains("excuses this gate"));
     }
 
     #[test]

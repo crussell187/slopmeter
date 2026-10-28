@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::analyzers::{ChainDepth, Measurement};
+use crate::analyzers::{ChainDepth, Coverage, Measurement};
 use crate::inputs::LanguageProfile;
 use crate::ir::{Span, WaiverLine};
 
@@ -94,6 +94,9 @@ fn evaluate_one(measurement: &Measurement, profile: &LanguageProfile) -> Vec<Fin
             &breach,
             attach(&classes, breach.rule, breach.measured, breach.level),
         ));
+    }
+    if let Some(finding) = coverage_finding(measurement) {
+        findings.push(finding);
     }
     for class in &classes {
         let Outcome::Rejected(message) = &class.outcome else {
@@ -202,6 +205,53 @@ fn breaches(measurement: &Measurement, profile: &LanguageProfile) -> Vec<Breach>
         ));
     }
     breaches
+}
+
+fn coverage_finding(measurement: &Measurement) -> Option<Finding> {
+    let (measured_value, line, fix_shape) = match measurement.coverage.as_ref()? {
+        Coverage::Fraction { fraction, .. } if *fraction >= 1.0 => return None,
+        Coverage::Fraction { fraction, line } => (
+            Some(*fraction),
+            *line,
+            format!(
+                "Cover {}. Its coverage is {}, and the gate is 1.",
+                measurement.name,
+                show(*fraction)
+            ),
+        ),
+        Coverage::Unshown => (
+            None,
+            measurement.span.start,
+            format!(
+                "Cover {}. Its coverage was not shown, and the gate is 1.",
+                measurement.name
+            ),
+        ),
+    };
+    Some(Finding {
+        rule: "S06".to_string(),
+        level: Level::Gate,
+        path: measurement.path.clone(),
+        name: measurement.name.clone(),
+        param_types: measurement.param_types.clone(),
+        qualifier: measurement.qualifier.clone(),
+        line,
+        measured_value,
+        threshold: Some(1.0),
+        weight: finding_weight("S06", Level::Gate),
+        principle: principle("S06"),
+        fix_shape,
+        anti_fix: anti_fix("S06"),
+        waiver: None,
+    })
+}
+
+fn show(value: f64) -> String {
+    if value.fract() == 0.0 && value.abs() < 1e15 {
+        format!("{}", value as i64)
+    } else {
+        value.to_string()
+    }
 }
 
 fn breach(rule: &'static str, level: Level, line: u32, measured: u32, threshold: u32) -> Breach {
@@ -408,6 +458,7 @@ fn classify_line(line: &WaiverLine, counts: &BTreeMap<String, usize>) -> Classif
     let reason = line.reason.clone();
     let outcome = match rule.as_deref() {
         None => Outcome::Rejected("The waiver line has no rule.".to_string()),
+        Some("S06") => Outcome::Rejected("S06 cannot be waived.".to_string()),
         Some(rule) if counts.get(rule).copied().unwrap_or(0) > 1 && gate_id(rule) => {
             Outcome::Rejected(format!("{rule} is waived twice."))
         }
@@ -456,6 +507,7 @@ fn principle(rule: &str) -> String {
         "F07" => "A function that only hands its parameters to one call adds a hop and no behavior.",
         "F08" => "A member chain that does not start at the receiver may be one deep, and a chain that starts at the receiver may be two deep. Law of Demeter.",
         "F11" => "A function should say little. The count is statements, not wrapped lines.",
+        "S06" => "Every executable line of a changed function is hit.",
         _ => "A waiver excuses one gate, and this line does not name one.",
     }
     .to_string()
@@ -472,6 +524,7 @@ fn anti_fix(rule: &str) -> String {
         "F07" => "Renaming the forwarded parameters leaves the ratio in place.",
         "F08" => "Saving the chain in locals leaves the finding in place.",
         "F11" => "Breaking one statement across more lines leaves the count in place.",
+        "S06" => "A test that runs the function and asserts nothing marks the lines hit.",
         _ => "Deleting the waiver line leaves the run with no such line.",
     }
     .to_string()
@@ -565,6 +618,7 @@ mod tests {
             forward: None,
             waivers: vec![],
             crap: None,
+            coverage: None,
         }
     }
 
@@ -1159,6 +1213,85 @@ mod tests {
         assert_eq!(
             findings[1].waiver.as_ref().unwrap().reason.as_deref(),
             Some("still a warn")
+        );
+    }
+
+    #[test]
+    fn partial_coverage_is_s06_at_the_first_missed_line() {
+        let mut measured = base();
+        measured.name = "classify".to_string();
+        measured.span = Span { start: 4, end: 9 };
+        measured.coverage = Some(Coverage::Fraction {
+            fraction: 0.5,
+            line: 6,
+        });
+
+        let findings = evaluate(&[measured], &profile());
+
+        assert_eq!(findings.len(), 1);
+        let finding = &findings[0];
+        assert_eq!(finding.rule, "S06");
+        assert_eq!(finding.level, Level::Gate);
+        assert_eq!(finding.line, 6);
+        assert_eq!(finding.measured_value, Some(0.5));
+        assert_eq!(finding.threshold, Some(1.0));
+        assert_eq!(finding.weight, 10);
+        assert_eq!(
+            finding.principle,
+            "Every executable line of a changed function is hit."
+        );
+        assert_eq!(
+            finding.fix_shape,
+            "Cover classify. Its coverage is 0.5, and the gate is 1."
+        );
+        assert_eq!(
+            finding.anti_fix,
+            "A test that runs the function and asserts nothing marks the lines hit."
+        );
+        assert!(finding.waiver.is_none());
+    }
+
+    #[test]
+    fn unshown_coverage_is_s06_at_the_function_line_with_no_fraction() {
+        let mut measured = base();
+        measured.name = "classify".to_string();
+        measured.span = Span { start: 4, end: 9 };
+        measured.coverage = Some(Coverage::Unshown);
+
+        let findings = evaluate(&[measured], &profile());
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule, "S06");
+        assert_eq!(findings[0].line, 4);
+        assert_eq!(findings[0].measured_value, None);
+        assert_eq!(findings[0].threshold, Some(1.0));
+        assert_eq!(
+            findings[0].fix_shape,
+            "Cover classify. Its coverage was not shown, and the gate is 1."
+        );
+    }
+
+    #[test]
+    fn a_waiver_line_for_s06_is_rejected() {
+        let mut measured = base();
+        measured.coverage = Some(Coverage::Fraction {
+            fraction: 0.5,
+            line: 6,
+        });
+        measured.waivers = vec![waiver(2, Some("S06"), Some("0"), Some("later"))];
+
+        let findings = evaluate(&[measured], &profile());
+
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].rule, "S06");
+        assert_eq!(findings[0].weight, 10);
+        assert!(findings[0].waiver.is_none());
+        assert_eq!(findings[1].rule, "S06");
+        assert_eq!(findings[1].weight, 0);
+        assert_eq!(findings[1].line, 2);
+        assert_eq!(
+            findings[1].waiver.as_ref().unwrap().rejection.as_deref(),
+            Some("S06 cannot be waived.")
         );
     }
 

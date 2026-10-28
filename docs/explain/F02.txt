@@ -9,7 +9,8 @@ the uncovered fraction cubed, plus CC. Coverage is the hit DA lines
 divided by the DA lines in the body span. The tool reads that report
 and does not run the tests. No report, a missing file, or no DA lines
 in the function leaves the score uncomputed, and this rule emits
-nothing. DA lines that are all zero are coverage 0, and the score is
+nothing. S06 gates a touched function on that same fraction. DA
+lines that are all zero are coverage 0, and the score is
 computed. A nested function's lines stay with it. A lambda's lines stay
 with the function that contains it. The finding is that score, at the
 function line.

@@ -65,7 +65,7 @@ _Avoid_: cyclomatic complexity, complexity
 
 **Coverage**:
 The fraction of a function's executable lines that the report marks hit, joined on the body span. A line is executable when the report lists it. With no listed lines, coverage is absent and CRAP is not computed.
-_Avoid_: branch coverage, instruction coverage
+_Avoid_: changed-line coverage, branch coverage, instruction coverage
 
 **CRAP**:
 A function metric that grows with cyclomatic complexity and with uncovered lines. The score is CC squared times the uncovered fraction cubed, plus CC. Absent coverage leaves it uncomputed.

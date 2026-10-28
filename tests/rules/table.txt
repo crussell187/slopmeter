@@ -8,6 +8,9 @@ F11  gate  packed     tests/rules/F11.py:1  65 > 64
 F06  gate  long       tests/rules/F06.py:1  197 > 196
 F07  warn  get        tests/rules/F07.py:2  100 > 80
 
+inherited
+S06  gate  uncovered  tests/rules/F02.py:1  0 < 1
+
 note  tests/rules/F01.py  No coverage record matches this file.
 note  tests/rules/F03.py  No coverage record matches this file.
 note  tests/rules/F04.py  No coverage record matches this file.
@@ -16,4 +19,4 @@ note  tests/rules/F06.py  No coverage record matches this file.
 note  tests/rules/F07.py  No coverage record matches this file.
 note  tests/rules/F08.py  No coverage record matches this file.
 note  tests/rules/F11.py  No coverage record matches this file.
-slop_score 349.13793103448273  fail
+slop_score 392.2413793103448  fail

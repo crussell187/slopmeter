@@ -83,6 +83,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Align the Python adapter with ADR 0003 and 0009](issues/57-python-adapter-alignment.md) — a bare call is a hop only when it is the whole chain; a loop or `try` `else` adds no decision and is a radon delta; a lambda in a default or decorator counts on that function; a waiver comment has to occupy its line alone. C++ still counts a bare call that starts a chain ([Drop a C++ bare call that only starts a member chain](issues/70-cpp-bare-call-chain.md)).
 - [What a pass-through is when one extra statement dodges it](issues/58-passthrough-tightening.md) — a logging statement and a dead assignment may sit beside the one call; `Ok`, `Some`, and `Err` peel; the call's object counts; a non-literal extra argument disqualifies the call; a pack expansion forwards the pack ([ADR 0009](../../docs/adr/0009-passthrough-warns-chain-gates.md)).
 - [Fix the LCOV join edge cases](issues/59-lcov-edge-cases.md) — a second record that matches the same file is a tie and leaves coverage absent; an empty `DA` checksum is a listed line; a missing report path is named in the note ([ADR 0011](../../docs/adr/0011-coverage-by-line-range.md)).
+- [A coverage gate on changed lines](issues/60-coverage-gate.md) — S06 gates the hit `DA` fraction of a touched function at 100%; a missing report fails that run; `--strict` keeps shown rows inherited; a waiver line for S06 fails the run ([ADR 0026](../../docs/adr/0026-coverage-gate-on-a-changed-function.md)).
 
 ## Not yet specified
 

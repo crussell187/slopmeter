@@ -1,7 +1,7 @@
 {
   "verdict": "fail",
   "scope": "strict",
-  "slop_score": 349.13793103448273,
+  "slop_score": 392.2413793103448,
   "kloc": 0.232,
   "tool_version": "0.0.0",
   "findings": [
@@ -159,7 +159,25 @@
       "anti_fix": "Renaming the forwarded parameters leaves the ratio in place."
     }
   ],
-  "inherited": [],
+  "inherited": [
+    {
+      "rule": "S06",
+      "level": "gate",
+      "symbol": {
+        "path": "tests/rules/F02.py",
+        "name": "uncovered",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 1,
+      "measured_value": 0,
+      "threshold": 1,
+      "weight": 10,
+      "principle": "Every executable line of a changed function is hit.",
+      "fix_shape": "Cover uncovered. Its coverage is 0, and the gate is 1.",
+      "anti_fix": "A test that runs the function and asserts nothing marks the lines hit."
+    }
+  ],
   "notes": [
     {
       "path": "tests/rules/F01.py",

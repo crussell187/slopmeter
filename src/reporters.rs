@@ -88,6 +88,12 @@ fn level_rank(level: Level) -> u8 {
 }
 
 fn fraction(finding: &Finding) -> f64 {
+    if finding.rule == "S06" {
+        return match finding.measured_value {
+            Some(measured) => -measured,
+            None => f64::INFINITY,
+        };
+    }
     match (finding.measured_value, finding.threshold) {
         (Some(measured), Some(threshold)) if threshold != 0.0 => (measured - threshold) / threshold,
         _ => f64::NEG_INFINITY,
@@ -188,9 +194,21 @@ fn location(finding: &Finding) -> String {
 }
 
 fn detail(finding: &Finding) -> String {
-    let mut text = match (finding.measured_value, finding.threshold) {
-        (Some(measured), Some(threshold)) => format!("{} > {}", show(measured), show(threshold)),
-        _ => String::new(),
+    let mut text = if finding.rule == "S06" {
+        match (finding.measured_value, finding.threshold) {
+            (Some(measured), Some(threshold)) => {
+                format!("{} < {}", show(measured), show(threshold))
+            }
+            (None, Some(threshold)) => format!("absent < {}", show(threshold)),
+            _ => String::new(),
+        }
+    } else {
+        match (finding.measured_value, finding.threshold) {
+            (Some(measured), Some(threshold)) => {
+                format!("{} > {}", show(measured), show(threshold))
+            }
+            _ => String::new(),
+        }
     };
     if let Some(extra) = waiver_text(finding.waiver.as_ref()) {
         if text.is_empty() {
@@ -781,5 +799,49 @@ mod tests {
         assert_eq!(rendered.code, 2);
         assert!(rendered.stdout.is_empty());
         assert_eq!(rendered.stderr, "unknown rule F09\n");
+    }
+
+    #[test]
+    fn a_coverage_row_reads_below_the_gate_and_an_absent_fraction_sorts_first() {
+        let partial = finding(
+            "S06",
+            Level::Gate,
+            "src/a.py",
+            "classify",
+            6,
+            Metric {
+                measured: 0.5,
+                threshold: 1.0,
+                weight: 10,
+            },
+        );
+        let mut absent = finding(
+            "S06",
+            Level::Gate,
+            "src/a.py",
+            "missing",
+            1,
+            Metric {
+                measured: 0.0,
+                threshold: 1.0,
+                weight: 10,
+            },
+        );
+        absent.measured_value = None;
+        let report = Report {
+            scope: Scope::Changed,
+            tool_version: "0.0.0".to_string(),
+            kloc: Some(1.0),
+            findings: vec![partial, absent],
+            inherited: vec![],
+            notes: vec![],
+        };
+
+        let rendered = render(&report, false);
+
+        let partial_at = rendered.stdout.find("0.5 < 1").unwrap();
+        let absent_at = rendered.stdout.find("absent < 1").unwrap();
+        assert!(absent_at < partial_at);
+        assert_eq!(rendered.code, 1);
     }
 }

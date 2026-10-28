@@ -62,7 +62,11 @@ fn the_sloppy_tree_gates_every_gating_rule_and_warns_on_f07() {
     assert!(stderr.is_empty(), "{stderr}");
     assert_eq!(output.status.code(), Some(1), "{stdout}");
     let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-    assert!(doc["inherited"].as_array().unwrap().is_empty(), "{stdout}");
+    let inherited = doc["inherited"].as_array().unwrap();
+    assert!(
+        !inherited.is_empty() && inherited.iter().all(|finding| finding["rule"] == "S06"),
+        "{stdout}"
+    );
     let found: BTreeSet<_> = doc["findings"]
         .as_array()
         .unwrap()
