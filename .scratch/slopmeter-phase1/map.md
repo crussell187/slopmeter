@@ -79,6 +79,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Score C++ member-init lists, function-try-block constructors, and macro-wrapped blocks](issues/54-cpp-hidden-bodies.md) — a function-try-block constructor and its member-initializer list are scored on that constructor; a nested definition with no return type and no typed parameter folds into its parent, and one with a type stays its own function ([ADR 0012](../../docs/adr/0012-cpp-scored-as-text.md)).
 - [How C++ function-like macros are surfaced or expanded](issues/55-cpp-macro-policy.md) — a file notes how many function-like `#define`s have unscored bodies, and the note does not fail the run; a C++ mutation gate may read a report and does not read `compile_commands.json` ([ADR 0012](../../docs/adr/0012-cpp-scored-as-text.md)).
 - [Note unscored C++ function-like macros](issues/68-cpp-macro-note.md) — `File::unscored_macros` counts function-like `#define`s outside a literal-`0` arm, and a count above 0 is a note that does not fail the run ([ADR 0012](../../docs/adr/0012-cpp-scored-as-text.md)).
+- [Count Rust expression-position bodies and nesting per the ADRs](issues/56-rust-lloc-and-nesting.md) — an `if`, a `match`, or a closure expression body adds a logical line only in statement position; nesting stays the deepest decision, and [Whether nesting is the deepest decision or the deepest structure](issues/69-what-nesting-counts.md) asks if that should change.
 
 ## Not yet specified
 

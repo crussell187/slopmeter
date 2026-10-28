@@ -567,7 +567,7 @@ fn classify(node: Node<'_>, source: &[u8], receiver: Option<&str>, ordinary: &[S
                 classifier.walk_block(body, 0);
             }
         }
-        "closure_expression" => classifier.walk_closure_body(node, 0),
+        "closure_expression" => classifier.walk_closure_body(node, 0, true),
         _ => {}
     }
     Body {
@@ -663,10 +663,15 @@ impl<'a> Classifier<'a> {
     }
 
     fn note_expression(&mut self, node: Node<'a>, nesting: u32) {
-        if is_control(node.kind())
-            || is_transparent(node.kind())
-            || node.kind() == "closure_expression"
-        {
+        if node.kind() == "if_expression" {
+            self.lloc += 1;
+            self.walk_if(node, nesting, false);
+        } else if node.kind() == "match_expression" {
+            self.lloc += 1;
+            self.walk_match(node, nesting);
+        } else if node.kind() == "closure_expression" {
+            self.walk_closure_body(node, nesting + 1, true);
+        } else if is_control(node.kind()) || is_transparent(node.kind()) {
             self.walk(node, nesting);
         } else {
             self.lloc += 1;
@@ -738,7 +743,6 @@ impl<'a> Classifier<'a> {
         if else_if {
             self.hybrid(line);
         } else {
-            self.lloc += 1;
             self.structural(line, nesting);
         }
         self.decision(line, nesting);
@@ -795,7 +799,6 @@ impl<'a> Classifier<'a> {
     }
 
     fn walk_match(&mut self, node: Node<'a>, nesting: u32) {
-        self.lloc += 1;
         self.structural(line_of(node), nesting);
         if let Some(value) = node.child_by_field_name("value") {
             self.walk(value, nesting);
@@ -886,17 +889,19 @@ impl<'a> Classifier<'a> {
     }
 
     fn walk_closure(&mut self, node: Node<'a>, nesting: u32) {
-        self.walk_closure_body(node, nesting + 1);
+        self.walk_closure_body(node, nesting + 1, false);
     }
 
-    fn walk_closure_body(&mut self, node: Node<'a>, nesting: u32) {
+    fn walk_closure_body(&mut self, node: Node<'a>, nesting: u32, count_expression: bool) {
         let Some(body) = node.child_by_field_name("body") else {
             return;
         };
         if body.kind() == "block" {
             self.walk_block(body, nesting);
-        } else {
+        } else if count_expression {
             self.lloc += 1;
+            self.walk(body, nesting);
+        } else {
             self.walk(body, nesting);
         }
     }
@@ -1740,6 +1745,83 @@ fn outer(a: bool) -> i32 {
         let inner = function(&file, "outer::inner");
         assert_eq!(inner.body.decisions.len(), 1);
         assert_eq!(cognitive_total(&inner.body), 2);
+    }
+
+    #[test]
+    fn an_expression_position_if_or_match_is_not_another_statement() {
+        let source = "\
+fn bound(a: bool) -> i32 {
+    let x = if a { 1 } else { 2 };
+    x
+}
+
+fn returned(a: bool) -> i32 {
+    return if a { 1 } else { 2 };
+}
+
+fn tail(a: bool) -> i32 {
+    if a { 1 } else { 2 }
+}
+
+fn chained(a: bool, b: bool) -> i32 {
+    if a {
+        1
+    } else if b {
+        2
+    } else {
+        3
+    }
+}
+
+fn matched(x: i32) -> i32 {
+    let y = match x {
+        1 => 1,
+        _ => 2,
+    };
+    y
+}
+
+fn stated(a: bool) {
+    if a {
+        ready();
+        go();
+    }
+}
+
+fn closed(a: bool) -> i32 {
+    let pick = |y| if y { 1 } else { 0 };
+    if a { pick(true) } else { 0 }
+}
+
+fn expr_closure() -> i32 {
+    let pick = |y: i32| y + 1;
+    pick(1)
+}
+
+fn closure_tail() -> impl Fn(i32) -> i32 {
+    |y| y + 1
+}
+
+fn block_closure() {
+    let pick = |_y| {
+        ready();
+        go();
+    };
+    pick(1);
+}
+";
+        let file = parse("a.rs", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0);
+        assert_eq!(function(&file, "bound").body.lloc, 4);
+        assert_eq!(function(&file, "returned").body.lloc, 3);
+        assert_eq!(function(&file, "tail").body.lloc, 3);
+        assert_eq!(function(&file, "chained").body.lloc, 4);
+        assert_eq!(function(&file, "matched").body.lloc, 4);
+        assert_eq!(function(&file, "stated").body.lloc, 3);
+        assert_eq!(function(&file, "closed").body.lloc, 6);
+        assert_eq!(function(&file, "expr_closure").body.lloc, 2);
+        assert_eq!(function(&file, "closure_tail").body.lloc, 1);
+        assert_eq!(function(&file, "block_closure").body.lloc, 4);
     }
 
     #[test]
