@@ -426,6 +426,59 @@ int more() { return 4; }
     );
 }
 
+#[test]
+fn a_function_like_macro_is_noted_and_an_object_like_macro_is_not() {
+    let root = fixture("macro-note");
+    write(
+        &root,
+        "pkg/check.hpp",
+        "\
+#define CHECK(x) if (!(x)) return false;
+bool run(int x) { CHECK(x); return true; }
+",
+    );
+    write(
+        &root,
+        "pkg/two.hpp",
+        "\
+#define CHECK(x) if (!(x)) return false;
+#define ALSO(x) if (x) return true;
+int quiet() { return 1; }
+",
+    );
+    write(
+        &root,
+        "pkg/const.hpp",
+        "\
+#define MAX 3
+int ok() { return MAX; }
+",
+    );
+    let output = run(&root, &["--strict", "--json"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(doc["verdict"], "pass");
+    let notes = doc["notes"].as_array().unwrap();
+    let filed: Vec<_> = notes
+        .iter()
+        .filter(|note| note.get("path").is_some())
+        .collect();
+    assert_eq!(filed.len(), 2, "{notes:?}");
+    assert_eq!(filed[0]["path"], "pkg/check.hpp");
+    assert_eq!(
+        filed[0]["message"],
+        "The parser left 1 function-like macro body unscored."
+    );
+    assert_eq!(filed[1]["path"], "pkg/two.hpp");
+    assert_eq!(
+        filed[1]["message"],
+        "The parser left 2 function-like macro bodies unscored."
+    );
+}
+
 fn eleven_asserts(params: u32) -> String {
     let names = (0..params)
         .map(|index| format!("a{index}: i32"))

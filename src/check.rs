@@ -89,6 +89,7 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
     };
     let report = coverage_path(coverage_root, config.coverage.as_deref());
     let mut notes = unparsed_notes(&files);
+    notes.extend(macro_notes(&files));
     notes.extend(
         cover(&mut measurements, &scored, report.as_deref()).map_err(CheckError::Coverage)?,
     );
@@ -112,6 +113,25 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
         inherited: scoped.inherited,
         notes,
     })
+}
+
+fn macro_notes(files: &[File]) -> Vec<Note> {
+    files
+        .iter()
+        .filter(|file| file.unscored_macros > 0)
+        .map(|file| Note {
+            path: Some(file.path.clone()),
+            message: macro_note(file.unscored_macros),
+        })
+        .collect()
+}
+
+fn macro_note(count: u32) -> String {
+    if count == 1 {
+        "The parser left 1 function-like macro body unscored.".to_string()
+    } else {
+        format!("The parser left {count} function-like macro bodies unscored.")
+    }
 }
 
 fn unparsed_notes(files: &[File]) -> Vec<Note> {
