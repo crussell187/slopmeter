@@ -32,7 +32,7 @@ The body span extended up through a leading decorator, non-doc attribute, and th
 _Avoid_: body span, dirty range
 
 **Pass-through**:
-A function whose body only hands its parameters, other than the receiver, unchanged to one call.
+A function whose body hands its parameters, other than the receiver, unchanged to one call, as an argument, as that call's object, or as a pack expansion of that hand-off, alongside only literal arguments. A logging statement, an assignment to a name that is never read, and a wrapping `Ok`, `Some`, or `Err` do not change that.
 _Avoid_: wrapper, delegate, pass-through module
 
 **Member chain**:

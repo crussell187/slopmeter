@@ -34,6 +34,13 @@ pub const ALLOW: &[&str] = &[
     "copy",
 ];
 
+const NOISE: &[&str] = &[
+    "log", "logger", "debug", "info", "warn", "warning", "error", "trace", "print", "println",
+    "eprintln", "dbg",
+];
+
+const RESULT: &[&str] = &["Ok", "Some", "Err"];
+
 enum Scope {
     Class(String),
     Function(String),
@@ -557,8 +564,11 @@ impl<'a> Classifier<'a> {
         if ordinary.is_empty() {
             return None;
         }
-        let (line, call) = forwarding_call(node)?;
+        let (line, call) = forwarding_call(node, self.source)?;
         if contains_call(call) {
+            return None;
+        }
+        if !arguments_allowed(call, self.source, ordinary) {
             return None;
         }
         self.skip = Some(chain_root(call).byte_range());
@@ -1016,7 +1026,7 @@ impl<'a> Classifier<'a> {
     }
 }
 
-fn forwarding_call(node: Node) -> Option<(u32, Node)> {
+fn forwarding_call<'a>(node: Node<'a>, source: &[u8]) -> Option<(u32, Node<'a>)> {
     match node.kind() {
         "function_definition" => {
             let body = node.child_by_field_name("body")?;
@@ -1024,31 +1034,215 @@ fn forwarding_call(node: Node) -> Option<(u32, Node)> {
             if statements.first().copied().is_some_and(is_docstring) {
                 statements.remove(0);
             }
-            let [statement] = statements.as_slice() else {
-                return None;
-            };
-            Some((line_of(*statement), unwrap_call(*statement)?))
+            let statement = sole_forward(&statements, source)?;
+            Some((line_of(statement), unwrap_call(statement, source)?))
         }
         "lambda" => {
             let body = node.child_by_field_name("body")?;
-            let call = unwrap_call(body)?;
+            let call = unwrap_call(body, source)?;
             Some((line_of(call), call))
         }
         _ => None,
     }
 }
 
-fn unwrap_call(node: Node) -> Option<Node> {
+fn sole_forward<'a>(statements: &[Node<'a>], source: &[u8]) -> Option<Node<'a>> {
+    let mut kept = Vec::new();
+    for (index, statement) in statements.iter().copied().enumerate() {
+        if is_dead_assignment(statement, source, &statements[index + 1..]) {
+            continue;
+        }
+        kept.push(statement);
+    }
+    let has_hand_off = kept.iter().any(|statement| !is_logging(*statement, source));
+    if has_hand_off {
+        kept.retain(|statement| !is_logging(*statement, source));
+    }
+    let [statement] = kept.as_slice() else {
+        return None;
+    };
+    Some(*statement)
+}
+
+fn is_logging(node: Node, source: &[u8]) -> bool {
+    logging_leaf(node, source).is_some_and(|leaf| NOISE.contains(&leaf.as_str()))
+}
+
+fn logging_leaf(node: Node, source: &[u8]) -> Option<String> {
     match node.kind() {
-        "call" => Some(node),
+        "expression_statement" | "return_statement" | "parenthesized_expression" | "await" => {
+            let children = named_nodes(node);
+            let [child] = children.as_slice() else {
+                return None;
+            };
+            logging_leaf(*child, source)
+        }
+        "call" => Some(callee_leaf(node.child_by_field_name("function")?, source)),
+        _ => None,
+    }
+}
+
+fn callee_leaf(node: Node, source: &[u8]) -> String {
+    match node.kind() {
+        "identifier" => node_text(node, source),
+        "attribute" => node
+            .child_by_field_name("attribute")
+            .map(|attribute| callee_leaf(attribute, source))
+            .unwrap_or_default(),
+        "call" => node
+            .child_by_field_name("function")
+            .map(|function| callee_leaf(function, source))
+            .unwrap_or_default(),
+        _ => String::new(),
+    }
+}
+
+fn is_dead_assignment(node: Node, source: &[u8], later: &[Node]) -> bool {
+    let Some(assignment) = assignment_of(node) else {
+        return false;
+    };
+    let names = assigned_names(assignment, source);
+    !names.is_empty() && !names.iter().any(|name| mentioned(later, source, name))
+}
+
+fn assignment_of(node: Node) -> Option<Node> {
+    if node.kind() == "assignment" {
+        return Some(node);
+    }
+    if node.kind() != "expression_statement" {
+        return None;
+    }
+    let children = named_nodes(node);
+    let [child] = children.as_slice() else {
+        return None;
+    };
+    if child.kind() == "assignment" {
+        return Some(*child);
+    }
+    None
+}
+
+fn assigned_names(node: Node, source: &[u8]) -> Vec<String> {
+    let Some(left) = node.child_by_field_name("left") else {
+        return Vec::new();
+    };
+    let mut names = bound_names(left, source);
+    if let Some(right) = node.child_by_field_name("right") {
+        if right.kind() == "assignment" {
+            names.extend(assigned_names(right, source));
+        }
+    }
+    names
+}
+
+fn bound_names(node: Node, source: &[u8]) -> Vec<String> {
+    match node.kind() {
+        "identifier" => vec![node_text(node, source)],
+        "pattern_list" | "tuple" | "list" | "parenthesized_list" => named_nodes(node)
+            .into_iter()
+            .flat_map(|child| bound_names(child, source))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn mentioned(nodes: &[Node], source: &[u8], name: &str) -> bool {
+    nodes.iter().any(|node| contains_name(*node, source, name))
+}
+
+fn contains_name(node: Node, source: &[u8], name: &str) -> bool {
+    if node.kind() == "identifier" && node_text(node, source) == name {
+        return true;
+    }
+    named_nodes(node)
+        .into_iter()
+        .any(|child| contains_name(child, source, name))
+}
+
+fn unwrap_call<'a>(node: Node<'a>, source: &[u8]) -> Option<Node<'a>> {
+    match node.kind() {
+        "call" => {
+            if result_wrapper(node, source) {
+                let argument = sole_argument(node)?;
+                return unwrap_call(argument, source);
+            }
+            Some(node)
+        }
         "return_statement" | "expression_statement" | "parenthesized_expression" | "await" => {
             let children = named_nodes(node);
             let [child] = children.as_slice() else {
                 return None;
             };
-            unwrap_call(*child)
+            unwrap_call(*child, source)
         }
         _ => None,
+    }
+}
+
+fn result_wrapper(node: Node, source: &[u8]) -> bool {
+    let Some(function) = node.child_by_field_name("function") else {
+        return false;
+    };
+    RESULT.contains(&callee_leaf(function, source).as_str()) && sole_argument(node).is_some()
+}
+
+fn sole_argument(node: Node) -> Option<Node> {
+    let arguments = node.child_by_field_name("arguments")?;
+    if arguments.kind() != "argument_list" {
+        return None;
+    }
+    let children = named_nodes(arguments);
+    let [argument] = children.as_slice() else {
+        return None;
+    };
+    if argument.kind() == "keyword_argument" {
+        return None;
+    }
+    Some(*argument)
+}
+
+fn arguments_allowed(call: Node, source: &[u8], ordinary: &[String]) -> bool {
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return true;
+    };
+    if arguments.kind() != "argument_list" {
+        return true;
+    }
+    named_nodes(arguments)
+        .into_iter()
+        .all(|argument| argument_allowed(argument, source, ordinary))
+}
+
+fn argument_allowed(node: Node, source: &[u8], ordinary: &[String]) -> bool {
+    let expr = if node.kind() == "keyword_argument" {
+        node.child_by_field_name("value").unwrap_or(node)
+    } else {
+        node
+    };
+    if let Some(name) = argument_name(node, source) {
+        return ordinary.iter().any(|item| item == &name);
+    }
+    is_literal(expr, source)
+}
+
+fn is_literal(node: Node, source: &[u8]) -> bool {
+    match node.kind() {
+        "integer" | "float" | "string" | "true" | "false" | "none" | "concatenated_string" => true,
+        "parenthesized_expression" => {
+            let children = named_nodes(node);
+            let [child] = children.as_slice() else {
+                return false;
+            };
+            is_literal(*child, source)
+        }
+        "unary_operator" => {
+            let text = node_text(node, source);
+            (text.starts_with('-') || text.starts_with('+'))
+                && named_nodes(node)
+                    .iter()
+                    .any(|child| matches!(child.kind(), "integer" | "float"))
+        }
+        _ => false,
     }
 }
 
@@ -1931,20 +2125,123 @@ def none():
                 .names,
             vec!["url".to_string(), "params".to_string()]
         );
+        assert!(function(&file, "field").body.forward.is_none());
+        let field = function(&file, "field");
+        assert!(field
+            .body
+            .chains
+            .iter()
+            .any(|chain| member_names(chain) == ["b"]));
+        assert!(field
+            .body
+            .chains
+            .iter()
+            .any(|chain| member_names(chain) == ["f"] && chain.members[0].call));
+        assert!(function(&file, "none").body.forward.is_none());
+    }
+
+    #[test]
+    fn a_pass_through_ignores_logging_and_a_dead_assignment() {
+        let source = "\
+def logged(a, b, c):
+    log(a)
+    return run(a, b, c)
+
+def dead(a, b):
+    unused = 1
+    return run(a, b)
+
+def alias(a):
+    tmp = a
+    return f(tmp)
+
+def wrapped(a, b):
+    return Ok(run(a, b))
+
+def layered(a, b):
+    return Ok(Some(run(a, b)))
+
+def boxed(a, b):
+    return Box.new(run(a, b))
+
+def keyed(xs):
+    return sorted(xs, key=str.lower)
+
+def keyed_lambda(xs):
+    return sorted(xs, key=lambda x: x)
+
+def literal(xs):
+    return sorted(xs, reverse=True)
+
+def negative(a):
+    return send(a, -1)
+
+def method(repo, user):
+    return repo.save(user)
+";
+        let file = parse("a.py", source.as_bytes());
         assert_eq!(
-            function(&file, "field")
+            function(&file, "logged")
                 .body
                 .forward
                 .as_ref()
                 .unwrap()
                 .names,
-            Vec::<String>::new()
+            vec!["a".to_string(), "b".to_string(), "c".to_string()]
         );
         assert_eq!(
-            member_names(&function(&file, "field").body.chains[0]),
-            vec!["b"]
+            function(&file, "dead").body.forward.as_ref().unwrap().names,
+            vec!["a".to_string(), "b".to_string()]
         );
-        assert!(function(&file, "none").body.forward.is_none());
+        assert!(function(&file, "alias").body.forward.is_none());
+        assert_eq!(
+            function(&file, "wrapped")
+                .body
+                .forward
+                .as_ref()
+                .unwrap()
+                .names,
+            vec!["a".to_string(), "b".to_string()]
+        );
+        assert_eq!(
+            function(&file, "layered")
+                .body
+                .forward
+                .as_ref()
+                .unwrap()
+                .names,
+            vec!["a".to_string(), "b".to_string()]
+        );
+        assert!(function(&file, "boxed").body.forward.is_none());
+        assert!(function(&file, "keyed").body.forward.is_none());
+        assert!(function(&file, "keyed_lambda").body.forward.is_none());
+        assert_eq!(
+            function(&file, "literal")
+                .body
+                .forward
+                .as_ref()
+                .unwrap()
+                .names,
+            vec!["xs".to_string()]
+        );
+        assert_eq!(
+            function(&file, "negative")
+                .body
+                .forward
+                .as_ref()
+                .unwrap()
+                .names,
+            vec!["a".to_string()]
+        );
+        assert_eq!(
+            function(&file, "method")
+                .body
+                .forward
+                .as_ref()
+                .unwrap()
+                .names,
+            vec!["repo".to_string(), "user".to_string()]
+        );
     }
 
     fn cognitive_total(body: &crate::ir::Body) -> u32 {

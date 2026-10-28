@@ -31,6 +31,11 @@ pub const ALLOW: &[&str] = &[
 ];
 
 const IDENTITY: &[&str] = &["move", "forward"];
+const NOISE: &[&str] = &[
+    "log", "logger", "debug", "info", "warn", "warning", "error", "trace", "print", "println",
+    "eprintln", "dbg",
+];
+const RESULT: &[&str] = &["Ok", "Some", "Err"];
 
 enum Scope {
     Namespace(String),
@@ -895,8 +900,11 @@ impl<'a> Classifier<'a> {
         if ordinary.is_empty() {
             return None;
         }
-        let (line, call) = forwarding_call(node)?;
+        let (line, call) = forwarding_call(node, self.source)?;
         if !call_is_clean(call, self.source) {
+            return None;
+        }
+        if !arguments_allowed(call, self.source, ordinary) {
             return None;
         }
         self.skip = Some(chain_root(call).byte_range());
@@ -1288,7 +1296,7 @@ impl<'a> Classifier<'a> {
     }
 }
 
-fn forwarding_call(node: Node) -> Option<(u32, Node)> {
+fn forwarding_call<'a>(node: Node<'a>, source: &[u8]) -> Option<(u32, Node<'a>)> {
     let body = match node.kind() {
         "function_definition" => written_body(node)?,
         "lambda_expression" => node.child_by_field_name("body")?,
@@ -1297,16 +1305,34 @@ fn forwarding_call(node: Node) -> Option<(u32, Node)> {
     if body.kind() != "compound_statement" {
         return None;
     }
-    let children = code_nodes(body);
-    let [statement] = children.as_slice() else {
-        return None;
-    };
-    Some((line_of(*statement), unwrap_call(*statement)?))
+    let statement = sole_forward(&code_nodes(body), source)?;
+    Some((line_of(statement), unwrap_call(statement, source)?))
 }
 
-fn unwrap_call(node: Node) -> Option<Node> {
+fn sole_forward<'a>(statements: &[Node<'a>], source: &[u8]) -> Option<Node<'a>> {
+    let mut kept = Vec::new();
+    for (index, statement) in statements.iter().copied().enumerate() {
+        if is_dead_assignment(statement, source, &statements[index + 1..]) {
+            continue;
+        }
+        kept.push(statement);
+    }
+    let has_hand_off = kept.iter().any(|statement| !is_logging(*statement, source));
+    if has_hand_off {
+        kept.retain(|statement| !is_logging(*statement, source));
+    }
+    let [statement] = kept.as_slice() else {
+        return None;
+    };
+    Some(*statement)
+}
+
+fn is_logging(node: Node, source: &[u8]) -> bool {
+    logging_leaf(node, source).is_some_and(|leaf| NOISE.contains(&leaf.as_str()))
+}
+
+fn logging_leaf(node: Node, source: &[u8]) -> Option<String> {
     match node.kind() {
-        "call_expression" => Some(node),
         "expression_statement"
         | "return_statement"
         | "co_return_statement"
@@ -1315,9 +1341,157 @@ fn unwrap_call(node: Node) -> Option<Node> {
             let [child] = children.as_slice() else {
                 return None;
             };
-            unwrap_call(*child)
+            logging_leaf(*child, source)
+        }
+        "call_expression" => Some(callee_leaf(node.child_by_field_name("function")?, source)),
+        _ => None,
+    }
+}
+
+fn is_dead_assignment(node: Node, source: &[u8], later: &[Node]) -> bool {
+    let names = match node.kind() {
+        "declaration" => declared_names(node, source),
+        "expression_statement" => {
+            let children = code_nodes(node);
+            let [child] = children.as_slice() else {
+                return false;
+            };
+            if child.kind() != "assignment_expression" {
+                return false;
+            }
+            child
+                .child_by_field_name("left")
+                .filter(|left| left.kind() == "identifier")
+                .map(|left| vec![node_text(left, source)])
+                .unwrap_or_default()
+        }
+        _ => return false,
+    };
+    !names.is_empty() && !names.iter().any(|name| mentioned(later, source, name))
+}
+
+fn declared_names(node: Node, source: &[u8]) -> Vec<String> {
+    let mut names = Vec::new();
+    if let Some(declarator) = node.child_by_field_name("declarator") {
+        names.extend(declarator_names(declarator, source));
+    }
+    for child in named_nodes(node) {
+        if child.kind() == "init_declarator"
+            && node.child_by_field_name("declarator") != Some(child)
+        {
+            names.extend(declarator_names(child, source));
+        }
+    }
+    names
+}
+
+fn declarator_names(node: Node, source: &[u8]) -> Vec<String> {
+    match node.kind() {
+        "identifier" | "field_identifier" => vec![node_text(node, source)],
+        "init_declarator" => node
+            .child_by_field_name("declarator")
+            .map(|declarator| declarator_names(declarator, source))
+            .unwrap_or_default(),
+        _ => named_nodes(node)
+            .into_iter()
+            .filter(|child| child.kind() != "number_literal" && child.kind() != "string_literal")
+            .flat_map(|child| declarator_names(child, source))
+            .collect(),
+    }
+}
+
+fn mentioned(nodes: &[Node], source: &[u8], name: &str) -> bool {
+    nodes.iter().any(|node| contains_name(*node, source, name))
+}
+
+fn contains_name(node: Node, source: &[u8], name: &str) -> bool {
+    if matches!(node.kind(), "identifier" | "field_identifier") && node_text(node, source) == name {
+        return true;
+    }
+    for index in 0..node.child_count() {
+        if let Some(child) = node.child(index) {
+            if contains_name(child, source, name) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn unwrap_call<'a>(node: Node<'a>, source: &[u8]) -> Option<Node<'a>> {
+    match node.kind() {
+        "call_expression" => {
+            if result_wrapper(node, source) {
+                let argument = sole_argument(node)?;
+                return unwrap_call(argument, source);
+            }
+            Some(node)
+        }
+        "expression_statement"
+        | "return_statement"
+        | "co_return_statement"
+        | "parenthesized_expression" => {
+            let children = code_nodes(node);
+            let [child] = children.as_slice() else {
+                return None;
+            };
+            unwrap_call(*child, source)
         }
         _ => None,
+    }
+}
+
+fn result_wrapper(node: Node, source: &[u8]) -> bool {
+    let Some(function) = node.child_by_field_name("function") else {
+        return false;
+    };
+    RESULT.contains(&callee_leaf(function, source).as_str()) && sole_argument(node).is_some()
+}
+
+fn sole_argument(node: Node) -> Option<Node> {
+    let arguments = node.child_by_field_name("arguments")?;
+    let children = code_nodes(arguments);
+    let [argument] = children.as_slice() else {
+        return None;
+    };
+    Some(*argument)
+}
+
+fn arguments_allowed(call: Node, source: &[u8], ordinary: &[String]) -> bool {
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return true;
+    };
+    code_nodes(arguments)
+        .into_iter()
+        .all(|argument| argument_allowed(argument, source, ordinary))
+}
+
+fn argument_allowed(node: Node, source: &[u8], ordinary: &[String]) -> bool {
+    if let Some(name) = bare_name(node, source) {
+        return ordinary.iter().any(|item| item == &name);
+    }
+    is_literal(node)
+}
+
+fn is_literal(node: Node) -> bool {
+    match node.kind() {
+        "number_literal"
+        | "string_literal"
+        | "char_literal"
+        | "raw_string_literal"
+        | "concatenated_string"
+        | "true"
+        | "false"
+        | "null"
+        | "nullptr" => true,
+        "parenthesized_expression" => {
+            let children = code_nodes(node);
+            let [child] = children.as_slice() else {
+                return false;
+            };
+            is_literal(*child)
+        }
+        _ => false,
     }
 }
 
@@ -1412,6 +1586,9 @@ fn bare_name(node: Node, source: &[u8]) -> Option<String> {
         "pointer_expression" if matches!(operator_text(node, source).as_str(), "&" | "*") => node
             .child_by_field_name("argument")
             .and_then(|argument| bare_name(argument, source)),
+        "parameter_pack_expansion" => node
+            .child_by_field_name("pattern")
+            .and_then(|pattern| bare_name(pattern, source)),
         "call_expression" if identity_named(node, source) => {
             node.child_by_field_name("arguments").and_then(|arguments| {
                 let children = code_nodes(arguments);
@@ -2078,6 +2255,81 @@ struct Repo {
             .chains
             .iter()
             .any(|chain| !chain.rooted && chain.members.len() == 1));
+    }
+
+    #[test]
+    fn a_pass_through_ignores_logging_a_dead_assignment_and_a_pack() {
+        let source = "\
+int logged(int a, int b, int c) {
+    log(a);
+    return run(a, b, c);
+}
+
+int dead(int a, int b) {
+    int unused = 1;
+    return run(a, b);
+}
+
+int alias(int a) {
+    int tmp = a;
+    return f(tmp);
+}
+
+int keyed(int xs) {
+    return sorted(xs, flag);
+}
+
+int literal(int xs) {
+    return sorted(xs, true);
+}
+
+template <typename... Args>
+int relay(Args&&... args) {
+    return send(std::forward<Args>(args)...);
+}
+
+template <typename... Args>
+int bare_pack(Args&&... args) {
+    return send(args...);
+}
+
+template <typename... Args>
+int mapped(Args&&... args) {
+    return send(foo(args)...);
+}
+";
+        let file = parse("a.cpp", source.as_bytes());
+        let names = |function_name: &str| {
+            file.functions
+                .iter()
+                .find(|function| function.name == function_name)
+                .map(|function| {
+                    function
+                        .body
+                        .forward
+                        .as_ref()
+                        .map(|forward| forward.names.clone())
+                })
+        };
+        assert_eq!(
+            names("logged").flatten(),
+            Some(vec!["a".to_string(), "b".to_string(), "c".to_string()]),
+            "{:?}",
+            file.functions
+                .iter()
+                .map(|function| function.name.clone())
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            names("dead").flatten(),
+            Some(vec!["a".to_string(), "b".to_string()])
+        );
+        assert_eq!(names("alias").flatten(), None);
+        assert_eq!(names("keyed").flatten(), None);
+        assert_eq!(names("literal").flatten(), Some(vec!["xs".to_string()]));
+        assert_eq!(names("relay").flatten(), Some(vec!["args".to_string()]));
+        assert_eq!(names("bare_pack").flatten(), Some(vec!["args".to_string()]));
+        assert_eq!(names("mapped").flatten(), None);
     }
 
     #[test]
