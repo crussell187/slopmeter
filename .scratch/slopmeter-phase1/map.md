@@ -76,6 +76,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 
 - [Report unparsed_ratio per file and compute it from leaf error spans](issues/52-unparsed-ratio-report.md) — a file above ratio 0 is noted and does not fail the run; the ratio counts lines whose tokens sit under an error, so fmt `format.h` is 0.069 instead of 0.993 and the split-`#if` fixture stays at 0.25 ([ADR 0012](../../docs/adr/0012-cpp-scored-as-text.md)).
 - [Finding weights and what slop_score means](issues/53-finding-weights.md) — the score stays the sum of fixed weights over physical KLOC and does not fail the run; every gate weighs 10, F03's warn weighs 3, F07 weighs 1, and a held waiver keeps that weight ([ADR 0025](../../docs/adr/0025-finding-weight-is-fixed.md)).
+- [Score C++ member-init lists, function-try-block constructors, and macro-wrapped blocks](issues/54-cpp-hidden-bodies.md) — a function-try-block constructor and its member-initializer list are scored on that constructor; a nested definition with no return type and no typed parameter folds into its parent, and one with a type stays its own function ([ADR 0012](../../docs/adr/0012-cpp-scored-as-text.md)).
 
 ## Not yet specified
 

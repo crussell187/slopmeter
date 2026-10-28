@@ -162,6 +162,10 @@ fn visit_function(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut 
         visit_children(node, source, scopes, out);
         return;
     }
+    if macro_wrapped_block(node, scopes) {
+        visit(body, source, scopes, out);
+        return;
+    }
     let name = parts.last().cloned().unwrap_or_default();
     let params = parameter_list(node);
     let qualified = qualify(scopes, global, &parts);
@@ -229,12 +233,53 @@ fn peel_lambda(node: Node<'_>) -> Option<Node<'_>> {
     }
 }
 
-fn written_body(node: Node<'_>) -> Option<Node<'_>> {
-    let body = node.child_by_field_name("body")?;
-    match body.kind() {
-        "compound_statement" | "try_statement" => Some(body),
-        _ => None,
+fn macro_wrapped_block(node: Node<'_>, scopes: &[Scope]) -> bool {
+    matches!(scopes.last(), Some(Scope::Function(_))) && folds_into_parent(node)
+}
+
+fn folds_into_parent(node: Node<'_>) -> bool {
+    node.child_by_field_name("type").is_none() && !has_typed_parameters(node)
+}
+
+fn has_typed_parameters(node: Node<'_>) -> bool {
+    let Some(params) = parameter_list(node) else {
+        return false;
+    };
+    named_nodes(params)
+        .iter()
+        .any(|param| typed_parameter(*param))
+}
+
+fn typed_parameter(param: Node<'_>) -> bool {
+    match param.kind() {
+        "explicit_object_parameter_declaration" => named_nodes(param)
+            .iter()
+            .any(|inner| typed_parameter(*inner)),
+        "parameter_declaration"
+        | "optional_parameter_declaration"
+        | "variadic_parameter_declaration" => {
+            if param.child_by_field_name("declarator").is_some() {
+                return true;
+            }
+            param
+                .child_by_field_name("type")
+                .is_some_and(|ty| ty.kind() != "type_identifier")
+        }
+        _ => false,
     }
+}
+
+fn written_body(node: Node<'_>) -> Option<Node<'_>> {
+    if let Some(body) = node.child_by_field_name("body") {
+        return match body.kind() {
+            "compound_statement" | "try_statement" => Some(body),
+            _ => None,
+        };
+    }
+    // A function-try-block constructor puts the try beside the declarator.
+    named_nodes(node)
+        .into_iter()
+        .find(|child| child.kind() == "try_statement")
 }
 
 fn push_function(
@@ -729,6 +774,11 @@ fn classify(node: Node<'_>, source: &[u8], receiver: Option<&str>, ordinary: &[S
     let forward = classifier.forwarding(node, ordinary);
     match node.kind() {
         "function_definition" => {
+            for child in code_nodes(node) {
+                if child.kind() == "field_initializer_list" {
+                    classifier.walk(child, 0);
+                }
+            }
             if let Some(body) = written_body(node) {
                 classifier.walk(body, 0);
             }
@@ -839,7 +889,14 @@ impl<'a> Classifier<'a> {
             "labeled_statement" | "attributed_statement" | "linkage_specification" => {
                 self.walk_named(node, nesting);
             }
-            "empty_statement" | "comment" | "function_definition" => {}
+            "empty_statement" | "comment" => {}
+            "function_definition" => {
+                if folds_into_parent(node) {
+                    if let Some(body) = written_body(node) {
+                        self.walk(body, nesting);
+                    }
+                }
+            }
             "class_specifier"
             | "struct_specifier"
             | "union_specifier"
@@ -986,6 +1043,11 @@ impl<'a> Classifier<'a> {
 
     fn walk_try(&mut self, node: Node<'a>, nesting: u32) {
         self.lloc += 1;
+        for child in code_nodes(node) {
+            if child.kind() == "field_initializer_list" {
+                self.walk(child, nesting);
+            }
+        }
         if let Some(body) = node.child_by_field_name("body") {
             self.walk(body, nesting);
         }
@@ -1977,6 +2039,132 @@ bool p_split_cond(int a, int b) {
 ";
         let file = parse("split.hpp", source.as_bytes());
         assert_eq!(file.unparsed_ratio, 0.25, "{}", file.unparsed_ratio);
+    }
+
+    #[test]
+    fn a_function_try_block_constructor_is_scored() {
+        let source = "\
+struct P {
+    int x, y;
+    P(int a, int b) try : x(a), y(b) { if (a) throw 1; } catch (...) {}
+};
+";
+        let file = parse("p.hpp", source.as_bytes());
+        let names: Vec<_> = file
+            .functions
+            .iter()
+            .map(|function| function.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["P::P"]);
+        let ctor = function(&file, "P::P");
+        assert_eq!(ctor.param_types, vec!["int".to_string(), "int".to_string()]);
+        assert_eq!(ctor.body.decisions.len(), 2);
+    }
+
+    #[test]
+    fn a_member_initializer_list_counts_on_the_constructor() {
+        let source = "\
+struct Q {
+    int x, y;
+    Q() : x(flag_ ? 1 : 2), y(flag_ && other_ ? 3 : 4) {}
+    Q(int a) : x([&] { if (a > 0) { if (a > 10) return 2; return 1; } return 0; }()) {}
+    Q(int a, int b) try : x(a > 0 ? a : -a) { } catch (...) {}
+};
+";
+        let file = parse("q.hpp", source.as_bytes());
+        let names: Vec<_> = file
+            .functions
+            .iter()
+            .map(|function| function.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["Q::Q", "Q::Q", "Q::Q"]);
+        let plain = file
+            .functions
+            .iter()
+            .find(|function| function.param_types.is_empty())
+            .unwrap();
+        assert_eq!(plain.body.decisions.len(), 3);
+        let hidden = file
+            .functions
+            .iter()
+            .find(|function| function.param_types == vec!["int".to_string()])
+            .unwrap();
+        let depths: Vec<_> = hidden
+            .body
+            .decisions
+            .iter()
+            .map(|decision| decision.depth)
+            .collect();
+        assert_eq!(depths, vec![2, 3]);
+        let tried = file
+            .functions
+            .iter()
+            .find(|function| function.param_types.len() == 2)
+            .unwrap();
+        assert_eq!(tried.body.decisions.len(), 2);
+    }
+
+    #[test]
+    fn a_macro_wrapped_block_stays_on_its_parent() {
+        let source = "\
+#define SECTION(n)
+#define BOOST_FOREACH(v, c) for (auto v : c)
+int ph_sections(int a) {
+    int r = 0;
+    SECTION(first) {
+        if (a > 0) r++;
+        if (a > 1) r++;
+    }
+    SECTION(\"alpha\") {
+        if (a > 2) r++;
+    }
+    return r;
+}
+int ph_foreach(int v) {
+    int r = 0;
+    BOOST_FOREACH(x, v) {
+        if (x) r++;
+    }
+    return r;
+}
+int ph_gnu(int a) {
+    int helper(int x) { if (x) return 1; return 0; }
+    if (a) return helper(a);
+    return 0;
+}
+int parent(int a) {
+    struct Local {
+        int x;
+        Local() : x(a > 0 ? 1 : 0) {}
+    };
+    return 0;
+}
+";
+        let file = parse("macros.hpp", source.as_bytes());
+        let names: Vec<_> = file
+            .functions
+            .iter()
+            .map(|function| function.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "ph_sections",
+                "ph_foreach",
+                "ph_gnu",
+                "ph_gnu::helper",
+                "parent",
+                "parent::Local::Local",
+            ]
+        );
+        assert_eq!(function(&file, "ph_sections").body.decisions.len(), 3);
+        assert_eq!(function(&file, "ph_foreach").body.decisions.len(), 1);
+        assert_eq!(function(&file, "ph_gnu").body.decisions.len(), 1);
+        assert_eq!(function(&file, "ph_gnu::helper").body.decisions.len(), 1);
+        assert_eq!(
+            function(&file, "parent::Local::Local").body.decisions.len(),
+            1
+        );
     }
 
     #[test]
