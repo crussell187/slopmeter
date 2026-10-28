@@ -4,10 +4,15 @@ pub mod rust;
 
 use crate::ir::{File, Language};
 
-pub fn parse(language: Language, path: &str, source: &[u8]) -> Result<File, String> {
+pub fn parse(
+    language: Language,
+    path: &str,
+    source: &[u8],
+    include_tests: bool,
+) -> Result<File, String> {
     match language {
         Language::Python => Ok(python::parse(path, source)),
-        Language::Rust => Ok(rust::parse(path, source)),
+        Language::Rust => Ok(rust::parse_with(path, source, include_tests)),
         Language::Cpp => Ok(cpp::parse(path, source)),
     }
 }

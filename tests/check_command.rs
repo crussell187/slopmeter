@@ -252,6 +252,28 @@ fn coverage_of_zero_gates_crap() {
 }
 
 #[test]
+fn an_inline_rust_test_is_absent_until_tests() {
+    let root = fixture("inline-test");
+    let params = Config::builtin().rust.f04_gate + 1;
+    write(&root, "src/lib.rs", &eleven_asserts(params));
+
+    let strict = run(&root, &["--strict"]);
+    let stdout = String::from_utf8(strict.stdout).unwrap();
+    let stderr = String::from_utf8(strict.stderr).unwrap();
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(strict.status.code(), Some(0), "{stdout}");
+    assert!(!stdout.contains("eleven"), "{stdout}");
+
+    let tests = run(&root, &["--strict", "--tests"]);
+    let stdout = String::from_utf8(tests.stdout).unwrap();
+    let stderr = String::from_utf8(tests.stderr).unwrap();
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(tests.status.code(), Some(1), "{stdout}");
+    assert!(stdout.contains("eleven"), "{stdout}");
+    assert!(stdout.contains("F04"), "{stdout}");
+}
+
+#[test]
 fn a_bad_config_and_a_missing_directory_exit_2() {
     let root = fixture("config");
     write(&root, "slopmeter.toml", "nope = 1\n");
@@ -267,6 +289,19 @@ fn a_bad_config_and_a_missing_directory_exit_2() {
     assert!(output.stdout.is_empty());
     assert_eq!(output.status.code(), Some(2));
     assert!(stderr.contains("is not a directory"), "{stderr}");
+}
+
+fn eleven_asserts(params: u32) -> String {
+    let names = (0..params)
+        .map(|index| format!("a{index}: i32"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let mut source = format!("fn kept() {{}}\n\n#[test]\nfn eleven({names}) {{\n");
+    for _ in 0..11 {
+        source.push_str("    assert!(true);\n");
+    }
+    source.push_str("}\n");
+    source
 }
 
 fn decisions_for_uncovered_crap(gate: u32) -> u32 {

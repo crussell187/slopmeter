@@ -143,7 +143,7 @@ fn is_protobuf(rel: &str) -> bool {
 fn is_test_file(rel: &str) -> bool {
     let mut segments = rel.split('/');
     let name = segments.next_back().unwrap_or(rel);
-    if segments.any(|segment| segment == "test" || segment == "tests") {
+    if segments.any(|segment| matches!(segment, "test" | "tests" | "fuzz" | "testing")) {
         return true;
     }
     if name == "conftest.py"
@@ -300,7 +300,33 @@ mod tests {
                 "examples/demo.py".to_string(),
                 "src/WidgetTest.cpp".to_string(),
                 "src/foo_test.rs".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn fuzz_and_testing_directories_stay_out_until_tests() {
+        let root = fixture("fuzz-testing");
+        write(&root, "src/lib.rs", "fn kept() {}\n");
+        write(&root, "src/testing.rs", "fn tool() {}\n");
+        write(&root, "fuzz/harness.rs", "fn fuzz() {}\n");
+        write(&root, "testing/wide.py", "x = 1\n");
+        write(&root, "src/testing/a.py", "x = 1\n");
+        write(&root, "pkg/fuzz/a.py", "x = 1\n");
+
+        assert_eq!(
+            paths(&root, false),
+            vec!["src/lib.rs".to_string(), "src/testing.rs".to_string()]
+        );
+        assert_eq!(
+            paths(&root, true),
+            vec![
+                "fuzz/harness.rs".to_string(),
+                "pkg/fuzz/a.py".to_string(),
+                "src/lib.rs".to_string(),
+                "src/testing.rs".to_string(),
                 "src/testing/a.py".to_string(),
+                "testing/wide.py".to_string(),
             ]
         );
     }

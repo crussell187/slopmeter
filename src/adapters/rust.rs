@@ -78,6 +78,10 @@ enum Scope {
 }
 
 pub fn parse(path: &str, source: &[u8]) -> File {
+    parse_with(path, source, false)
+}
+
+pub fn parse_with(path: &str, source: &[u8], include_tests: bool) -> File {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&tree_sitter_rust::LANGUAGE.into())
@@ -93,7 +97,7 @@ pub fn parse(path: &str, source: &[u8]) -> File {
     let root = tree.root_node();
     let mut functions = Vec::new();
     let mut scopes = Vec::new();
-    visit(root, source, &mut scopes, &mut functions);
+    visit(root, source, &mut scopes, &mut functions, include_tests);
     File {
         path: path.to_string(),
         language: Language::Rust,
@@ -102,11 +106,36 @@ pub fn parse(path: &str, source: &[u8]) -> File {
     }
 }
 
-fn visit(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut Vec<Function>) {
+fn visit(
+    node: Node,
+    source: &[u8],
+    scopes: &mut Vec<Scope>,
+    out: &mut Vec<Function>,
+    include_tests: bool,
+) {
+    if !include_tests && is_test_item(node, source) {
+        return;
+    }
     match node.kind() {
-        "function_item" => visit_function(node, source, scopes, out),
-        "impl_item" => visit_scoped(node, source, scopes, out, impl_name(node, source), true),
-        "trait_item" => visit_scoped(node, source, scopes, out, trait_name(node, source), false),
+        "function_item" => visit_function(node, source, scopes, out, include_tests),
+        "impl_item" => visit_scoped(
+            node,
+            source,
+            scopes,
+            out,
+            impl_name(node, source),
+            true,
+            include_tests,
+        ),
+        "trait_item" => visit_scoped(
+            node,
+            source,
+            scopes,
+            out,
+            trait_name(node, source),
+            false,
+            include_tests,
+        ),
         "mod_item" => {
             let Some(name) = node.child_by_field_name("name") else {
                 return;
@@ -115,23 +144,29 @@ fn visit(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut Vec<Funct
                 return;
             };
             scopes.push(Scope::Module(node_text(name, source)));
-            visit(body, source, scopes, out);
+            visit(body, source, scopes, out, include_tests);
             scopes.pop();
         }
-        "const_item" | "static_item" => visit_binding(node, source, scopes, out),
+        "const_item" | "static_item" => visit_binding(node, source, scopes, out, include_tests),
         "macro_invocation"
         | "macro_definition"
         | "attribute_item"
         | "inner_attribute_item"
         | "line_comment"
         | "block_comment" => {}
-        _ => visit_children(node, source, scopes, out),
+        _ => visit_children(node, source, scopes, out, include_tests),
     }
 }
 
-fn visit_children(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut Vec<Function>) {
+fn visit_children(
+    node: Node,
+    source: &[u8],
+    scopes: &mut Vec<Scope>,
+    out: &mut Vec<Function>,
+    include_tests: bool,
+) {
     for child in named_nodes(node) {
-        visit(child, source, scopes, out);
+        visit(child, source, scopes, out, include_tests);
     }
 }
 
@@ -142,6 +177,7 @@ fn visit_scoped(
     out: &mut Vec<Function>,
     name: String,
     inherent: bool,
+    include_tests: bool,
 ) {
     if name.is_empty() {
         return;
@@ -152,12 +188,18 @@ fn visit_scoped(
         Scope::Trait(name)
     });
     if let Some(body) = node.child_by_field_name("body") {
-        visit(body, source, scopes, out);
+        visit(body, source, scopes, out, include_tests);
     }
     scopes.pop();
 }
 
-fn visit_function(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut Vec<Function>) {
+fn visit_function(
+    node: Node,
+    source: &[u8],
+    scopes: &mut Vec<Scope>,
+    out: &mut Vec<Function>,
+    include_tests: bool,
+) {
     let Some(name_node) = node.child_by_field_name("name") else {
         return;
     };
@@ -169,12 +211,18 @@ fn visit_function(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut 
     push_function(out, scopes, source, &name, node, node, params);
     scopes.push(Scope::Function(name));
     if let Some(body) = node.child_by_field_name("body") {
-        visit(body, source, scopes, out);
+        visit(body, source, scopes, out, include_tests);
     }
     scopes.pop();
 }
 
-fn visit_binding(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut Vec<Function>) {
+fn visit_binding(
+    node: Node,
+    source: &[u8],
+    scopes: &mut Vec<Scope>,
+    out: &mut Vec<Function>,
+    include_tests: bool,
+) {
     if !in_function(scopes) {
         if let Some(closure) = bound_closure(node) {
             let Some(name_node) = node.child_by_field_name("name") else {
@@ -186,7 +234,7 @@ fn visit_binding(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut V
         }
     }
     if let Some(value) = node.child_by_field_name("value") {
-        visit(value, source, scopes, out);
+        visit(value, source, scopes, out, include_tests);
     }
 }
 
@@ -310,6 +358,42 @@ fn binding_name(node: Node, source: &[u8]) -> String {
             .unwrap_or_else(|| flat_text(node, source)),
         _ => flat_text(node, source),
     }
+}
+
+fn is_test_item(node: Node, source: &[u8]) -> bool {
+    matches!(
+        node.kind(),
+        "function_item" | "mod_item" | "impl_item" | "trait_item" | "const_item" | "static_item"
+    ) && leading_attributes(node)
+        .iter()
+        .any(|attribute| is_test_attribute(*attribute, source))
+}
+
+fn is_test_attribute(node: Node, source: &[u8]) -> bool {
+    let Some(attribute) = named_nodes(node)
+        .into_iter()
+        .find(|child| child.kind() == "attribute")
+    else {
+        return false;
+    };
+    let mut named = named_nodes(attribute);
+    if named.is_empty() {
+        return false;
+    }
+    let path = node_text(named.remove(0), source);
+    if path == "test" {
+        return attribute.child_by_field_name("arguments").is_none();
+    }
+    if path != "cfg" {
+        return false;
+    }
+    let Some(arguments) = attribute.child_by_field_name("arguments") else {
+        return false;
+    };
+    let arguments = named_nodes(arguments);
+    arguments.len() == 1
+        && arguments[0].kind() == "identifier"
+        && node_text(arguments[0], source) == "test"
 }
 
 fn leading_attributes(node: Node<'_>) -> Vec<Node<'_>> {
@@ -1797,6 +1881,67 @@ fn doubled(value: String) -> String {
         let file = parse("a.rs", b"fn (\n");
         assert!(file.unparsed_ratio > 0.0);
         assert_eq!(file.language, Language::Rust);
+    }
+
+    #[test]
+    fn a_cfg_test_module_and_a_test_function_are_not_scored() {
+        let source = b"\
+fn kept() {}
+
+#[test]
+fn eleven() {
+    assert!(true);
+    assert!(true);
+    assert!(true);
+    assert!(true);
+    assert!(true);
+    assert!(true);
+    assert!(true);
+    assert!(true);
+    assert!(true);
+    assert!(true);
+    assert!(true);
+}
+
+#[cfg(test)]
+fn hidden() {}
+
+#[cfg(test)]
+mod tests {
+    fn helper() {}
+
+    #[test]
+    fn checked() {}
+}
+
+#[cfg(not(test))]
+fn shipped() {}
+";
+        let file = parse("src/lib.rs", source);
+        let names: Vec<_> = file
+            .functions
+            .iter()
+            .map(|function| function.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["kept", "shipped"]);
+
+        let file = parse_with("src/lib.rs", source, true);
+        let names: Vec<_> = file
+            .functions
+            .iter()
+            .map(|function| function.name.as_str())
+            .collect();
+        assert_eq!(
+            names,
+            vec![
+                "kept",
+                "eleven",
+                "hidden",
+                "tests::helper",
+                "tests::checked",
+                "shipped",
+            ]
+        );
     }
 
     fn waiver(

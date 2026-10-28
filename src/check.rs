@@ -68,8 +68,8 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
         let full = root.join(&item.path);
         let source = fs::read(&full).map_err(|err| CheckError::Read(full, err))?;
         lines += source.iter().filter(|byte| **byte == b'\n').count();
-        let file =
-            adapters::parse(item.language, &item.path, &source).map_err(CheckError::Adapter)?;
+        let file = adapters::parse(item.language, &item.path, &source, options.tests)
+            .map_err(CheckError::Adapter)?;
         let start = measurements.len();
         measurements.extend(measure_file(&file, &config));
         spans.push((file.language, start, measurements.len()));
