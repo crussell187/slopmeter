@@ -70,6 +70,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [C++ adapter and its validation run](issues/43-cpp-adapter.md) — `adapters::cpp::parse` records methods, folded lambdas, both `#if` arms, and `//` waivers; C++ gates are F01 136, F03 295, F04 18, F05 8, F06 713, F08 3 and 14, F11 217; the sloppy tree gates on F01–F06, F08, and F11 and warns on F07.
 - [Stop scoring test modules, fuzz harnesses and testing directories](issues/47-scored-set-leaks.md) — `fuzz` and `testing` directories stay out until `--tests`, and `adapters::rust::parse` drops `#[cfg(test)]` items and `#[test]` functions unless that switch is set.
 - [Pin the diff header shape and resolve the repo root](issues/48-diff-shape-and-root.md) — `git diff` keeps `a/` and `b/` under `diff.noprefix` or `diff.mnemonicPrefix`; a subdirectory run uses the git root for `slopmeter.toml` and `.gitignore`, and the base falls through to `origin/main` then `origin/master`.
+- [Make deletions in Rust and C++ files touch only the functions they hit](issues/49-load-old-all-languages.md) — `load_old` parses the pre-change bytes in all three languages, so a deleted line gates only the function whose old span contains it.
 
 ## Not yet specified
 
