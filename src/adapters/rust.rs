@@ -1217,7 +1217,7 @@ fn macro_name(node: Node, source: &[u8]) -> String {
 
 fn peel(node: Node, source: &[u8]) -> Option<Peeled> {
     match node.kind() {
-        "identifier" => Some(Peeled {
+        "identifier" | "self" => Some(Peeled {
             root: Some(node_text(node, source)),
             hops: Vec::new(),
         }),
@@ -1844,8 +1844,13 @@ fn doubled(value: String) -> String {
             .iter()
             .any(|chain| { !chain.rooted && member_names(chain) == ["len", "min"] }));
 
+        let kept = function(&file, "Repo::kept");
+        assert_eq!(member_names(&kept.body.chains[0]), vec!["get", "copy"]);
+        assert!(kept.body.chains[0].rooted);
+
         let only = function(&file, "Repo::only");
         assert_eq!(member_names(&only.body.chains[0]), vec!["b", "c"]);
+        assert!(!only.body.chains[0].rooted);
         assert!(!only.body.chains[0].members[0].call);
         assert!(only.body.chains[0].members[1].call);
 

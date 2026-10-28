@@ -28,6 +28,7 @@ pub const RUST_F04_GATE: u32 = 9;
 pub const RUST_F05_GATE: u32 = 9;
 pub const RUST_F06_GATE: u32 = 581;
 pub const RUST_F08_RECEIVER_HOPS: u32 = 2;
+/// Measured while `self` chains were counted as other hops. Recalibration replaces this.
 pub const RUST_F08_OTHER_HOPS: u32 = 11;
 pub const RUST_F11_GATE: u32 = 138;
 pub const CPP_F01_GATE: u32 = 136;
