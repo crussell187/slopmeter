@@ -58,7 +58,7 @@ pub fn parse(path: &str, source: &[u8]) -> File {
     File {
         path: path.to_string(),
         language: Language::Cpp,
-        unparsed_ratio: unparsed_ratio(root, source),
+        unparsed_ratio: super::unparsed_ratio(root, source),
         functions,
     }
 }
@@ -1510,42 +1510,6 @@ fn span_of(node: Node) -> Span {
     }
 }
 
-fn unparsed_ratio(root: Node, source: &[u8]) -> f64 {
-    let lines = line_count(source);
-    if lines == 0 {
-        return 0.0;
-    }
-    let mut bad = BTreeSet::new();
-    collect_errors(root, &mut bad);
-    bad.len() as f64 / f64::from(lines)
-}
-
-fn collect_errors(node: Node, lines: &mut BTreeSet<u32>) {
-    if node.kind() == "ERROR" || node.is_missing() {
-        let span = span_of(node);
-        for line in span.start..=span.end {
-            lines.insert(line);
-        }
-    }
-    for index in 0..node.child_count() {
-        if let Some(child) = node.child(index) {
-            collect_errors(child, lines);
-        }
-    }
-}
-
-fn line_count(source: &[u8]) -> u32 {
-    if source.is_empty() {
-        return 0;
-    }
-    let newlines = source.iter().filter(|byte| **byte == b'\n').count() as u32;
-    if source.last() == Some(&b'\n') {
-        newlines
-    } else {
-        newlines + 1
-    }
-}
-
 fn named_nodes(node: Node<'_>) -> Vec<Node<'_>> {
     let mut children = Vec::new();
     for index in 0..node.named_child_count() {
@@ -1981,6 +1945,38 @@ class App {
             function(&file, "App::count").span.end - function(&file, "App::count").span.start,
             0
         );
+    }
+
+    #[test]
+    fn a_wrapping_error_counts_only_the_broken_line() {
+        let source = "\
+int ok() { return 1; }
+int bad( { return 2; }
+int also() { return 3; }
+int more() { return 4; }
+";
+        let file = parse("wrap.hpp", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.25, "{}", file.unparsed_ratio);
+    }
+
+    #[test]
+    fn a_split_if_reports_a_nonzero_ratio() {
+        let source = "\
+bool p_split_cond(int a, int b) {
+    if (a > 0 &&
+#ifdef X
+        b > 0
+#else
+        b < 0
+#endif
+    ) {
+        return true;
+    }
+    return false;
+}
+";
+        let file = parse("split.hpp", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.25, "{}", file.unparsed_ratio);
     }
 
     #[test]

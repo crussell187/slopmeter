@@ -392,6 +392,40 @@ fn a_bad_config_and_a_missing_directory_exit_2() {
     assert!(stderr.contains("is not a directory"), "{stderr}");
 }
 
+#[test]
+fn an_unparsed_file_is_noted_and_a_clean_file_is_not() {
+    let root = fixture("unparsed");
+    write(
+        &root,
+        "pkg/wrap.hpp",
+        "\
+int ok() { return 1; }
+int bad( { return 2; }
+int also() { return 3; }
+int more() { return 4; }
+",
+    );
+    write(&root, "pkg/ok.py", "def ok():\n    return 1\n");
+    let output = run(&root, &["--strict", "--json"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(doc["verdict"], "pass");
+    let notes = doc["notes"].as_array().unwrap();
+    let unparsed: Vec<_> = notes
+        .iter()
+        .filter(|note| note.get("path").is_some())
+        .collect();
+    assert_eq!(unparsed.len(), 1, "{notes:?}");
+    assert_eq!(unparsed[0]["path"], "pkg/wrap.hpp");
+    assert_eq!(
+        unparsed[0]["message"],
+        "The parser left 0.250 of the lines unscored."
+    );
+}
+
 fn eleven_asserts(params: u32) -> String {
     let names = (0..params)
         .map(|index| format!("a{index}: i32"))

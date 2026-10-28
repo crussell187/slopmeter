@@ -61,7 +61,7 @@ pub fn parse(path: &str, source: &[u8]) -> File {
     File {
         path: path.to_string(),
         language: Language::Python,
-        unparsed_ratio: unparsed_ratio(root, source),
+        unparsed_ratio: super::unparsed_ratio(root, source),
         functions,
     }
 }
@@ -434,42 +434,6 @@ fn span_of(node: Node) -> Span {
     Span {
         start,
         end: end.max(start),
-    }
-}
-
-fn unparsed_ratio(root: Node, source: &[u8]) -> f64 {
-    let lines = line_count(source);
-    if lines == 0 {
-        return 0.0;
-    }
-    let mut bad = BTreeSet::new();
-    collect_errors(root, &mut bad);
-    bad.len() as f64 / f64::from(lines)
-}
-
-fn collect_errors(node: Node, lines: &mut BTreeSet<u32>) {
-    if node.kind() == "ERROR" || node.is_missing() {
-        let span = span_of(node);
-        for line in span.start..=span.end {
-            lines.insert(line);
-        }
-    }
-    for index in 0..node.child_count() {
-        if let Some(child) = node.child(index) {
-            collect_errors(child, lines);
-        }
-    }
-}
-
-fn line_count(source: &[u8]) -> u32 {
-    if source.is_empty() {
-        return 0;
-    }
-    let newlines = source.iter().filter(|byte| **byte == b'\n').count() as u32;
-    if source.last() == Some(&b'\n') {
-        newlines
-    } else {
-        newlines + 1
     }
 }
 
@@ -1411,6 +1375,21 @@ def foo(x):
         let broken = parse("a.py", b"def f(\n");
         assert!(broken.unparsed_ratio > 0.0);
         assert_eq!(broken.language, Language::Python);
+    }
+
+    #[test]
+    fn a_broken_line_does_not_mark_the_functions_after_it() {
+        let source = "\
+def ok():
+    return (
+def also():
+    return 1
+def more():
+    return 2
+";
+        let file = parse("wrap.py", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 1.0 / 6.0);
+        assert_eq!(file.functions.len(), 3);
     }
 
     #[test]

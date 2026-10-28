@@ -8,7 +8,7 @@ use crate::inputs::{
     SelectOptions,
 };
 use crate::ir::{File, Language};
-use crate::reporters::Report;
+use crate::reporters::{Note, Report};
 use crate::rules::{evaluate, Finding};
 use crate::scope::{partition, ScopeError, ScopeOptions};
 
@@ -88,8 +88,10 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
         repo.as_path()
     };
     let report = coverage_path(coverage_root, config.coverage.as_deref());
-    let mut notes =
-        cover(&mut measurements, &scored, report.as_deref()).map_err(CheckError::Coverage)?;
+    let mut notes = unparsed_notes(&files);
+    notes.extend(
+        cover(&mut measurements, &scored, report.as_deref()).map_err(CheckError::Coverage)?,
+    );
     let findings = evaluate_spans(&measurements, &spans, &config);
     let scoped = partition(
         root,
@@ -110,6 +112,20 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
         inherited: scoped.inherited,
         notes,
     })
+}
+
+fn unparsed_notes(files: &[File]) -> Vec<Note> {
+    files
+        .iter()
+        .filter(|file| file.unparsed_ratio > 0.0)
+        .map(|file| Note {
+            path: Some(file.path.clone()),
+            message: format!(
+                "The parser left {:.3} of the lines unscored.",
+                file.unparsed_ratio
+            ),
+        })
+        .collect()
 }
 
 fn repo_relative(prefix: &str, path: &str) -> String {
