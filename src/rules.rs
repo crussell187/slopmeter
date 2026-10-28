@@ -269,6 +269,17 @@ fn worse_chain(left: Hit, right: Hit) -> Hit {
     }
 }
 
+fn finding_weight(rule: &str, level: Level) -> u32 {
+    match level {
+        Level::Gate => 10,
+        Level::Warn => match rule {
+            "F03" => 3,
+            "F07" => 1,
+            _ => 0,
+        },
+    }
+}
+
 fn metric_finding(measurement: &Measurement, breach: &Breach, waiver: Option<Waiver>) -> Finding {
     Finding {
         rule: breach.rule.to_string(),
@@ -280,7 +291,7 @@ fn metric_finding(measurement: &Measurement, breach: &Breach, waiver: Option<Wai
         line: breach.line,
         measured_value: Some(breach.measured),
         threshold: Some(breach.threshold),
-        weight: 0,
+        weight: finding_weight(breach.rule, breach.level),
         principle: principle(breach.rule),
         fix_shape: fix_shape(breach, &measurement.name),
         anti_fix: anti_fix(breach.rule),
@@ -639,7 +650,7 @@ mod tests {
         assert_eq!(f01.line, 30);
         assert_eq!(f01.measured_value, Some(9.0));
         assert_eq!(f01.threshold, Some(8.0));
-        assert_eq!(f01.weight, 0);
+        assert_eq!(f01.weight, 10);
         assert_eq!(
             f01.principle,
             "A function should have few independent paths. McCabe."
@@ -673,6 +684,7 @@ mod tests {
 
         let f03 = &findings[2];
         assert_eq!(f03.level, Level::Gate);
+        assert_eq!(f03.weight, 10);
         assert_eq!(f03.line, 30);
         assert_eq!(f03.measured_value, Some(16.0));
         assert_eq!(f03.threshold, Some(15.0));
@@ -742,6 +754,7 @@ mod tests {
 
         let f07 = &findings[6];
         assert_eq!(f07.level, Level::Warn);
+        assert_eq!(f07.weight, 1);
         assert_eq!(f07.line, 47);
         assert_eq!(f07.measured_value, Some(100.0));
         assert_eq!(f07.threshold, Some(80.0));
@@ -809,6 +822,7 @@ mod tests {
 
         assert_eq!(findings.len(), 3);
         assert_eq!(findings[0].level, Level::Warn);
+        assert_eq!(findings[0].weight, 3);
         assert_eq!(findings[0].threshold, Some(10.0));
         assert_eq!(findings[0].measured_value, Some(11.0));
         assert_eq!(
@@ -820,6 +834,7 @@ mod tests {
         assert_eq!(findings[1].threshold, Some(10.0));
         assert_eq!(findings[2].name, "deep");
         assert_eq!(findings[2].level, Level::Gate);
+        assert_eq!(findings[2].weight, 10);
         assert_eq!(findings[2].threshold, Some(15.0));
     }
 
@@ -876,6 +891,7 @@ mod tests {
         assert_eq!(findings[0].name, "paint");
         assert_eq!(findings[0].measured_value, Some(80.0));
         assert_eq!(findings[0].level, Level::Warn);
+        assert_eq!(findings[0].weight, 1);
     }
 
     #[test]
@@ -931,6 +947,7 @@ mod tests {
         );
         assert!(held.rejection.is_none());
         assert_eq!(f01.level, Level::Gate);
+        assert_eq!(f01.weight, 10);
         assert_eq!(f01.threshold, Some(8.0));
         assert_eq!(f01.line, 10);
 
@@ -993,7 +1010,7 @@ mod tests {
 
         assert_eq!(findings.len(), 1);
         assert_eq!(findings[0].line, 10);
-        assert_eq!(findings[0].weight, 0);
+        assert_eq!(findings[0].weight, 10);
         let attached = findings[0].waiver.as_ref().unwrap();
         assert!(!attached.holds);
         assert_eq!(
@@ -1125,6 +1142,7 @@ mod tests {
 
         assert_eq!(findings.len(), 2);
         assert_eq!(findings[0].level, Level::Gate);
+        assert_eq!(findings[0].weight, 0);
         assert_eq!(findings[0].line, 3);
         assert_eq!(findings[0].measured_value, Some(12.0));
         assert_eq!(findings[0].threshold, Some(15.0));
@@ -1134,6 +1152,7 @@ mod tests {
         );
         assert_eq!(findings[1].name, "noted");
         assert_eq!(findings[1].level, Level::Warn);
+        assert_eq!(findings[1].weight, 3);
         assert_eq!(findings[1].line, 10);
         assert!(!findings[1].waiver.as_ref().unwrap().holds);
         assert_eq!(findings[1].waiver.as_ref().unwrap().excused, Some(30.0));

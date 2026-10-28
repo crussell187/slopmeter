@@ -1,7 +1,7 @@
 {
   "verdict": "fail",
   "scope": "strict",
-  "slop_score": 0.0,
+  "slop_score": 349.13793103448273,
   "kloc": 0.232,
   "tool_version": "0.0.0",
   "findings": [
@@ -17,7 +17,7 @@
       "line": 1,
       "measured_value": 12,
       "threshold": 8,
-      "weight": 0,
+      "weight": 10,
       "principle": "Untested complexity is where defects hide. Change Risk Anti-Patterns.",
       "fix_shape": "Cover or split uncovered. Its CRAP is 12, and the gate is 8.",
       "anti_fix": "Extracting an uncovered branch leaves that branch's score in place."
@@ -34,7 +34,7 @@
       "line": 2,
       "measured_value": 4,
       "threshold": 3,
-      "weight": 0,
+      "weight": 10,
       "principle": "A member chain that does not start at the receiver may be one deep, and a chain that starts at the receiver may be two deep. Law of Demeter.",
       "fix_shape": "Break the chain at line 2 in city. It is 4 deep, and the limit is 3.",
       "anti_fix": "Saving the chain in locals leaves the finding in place."
@@ -51,7 +51,7 @@
       "line": 2,
       "measured_value": 7,
       "threshold": 6,
-      "weight": 0,
+      "weight": 10,
       "principle": "A reader should not hold three decisions at once.",
       "fix_shape": "Flatten the decision at line 2 in deep. Nesting is 7, and the gate is 6.",
       "anti_fix": "Indenting the inner condition less leaves the depth in place."
@@ -68,7 +68,7 @@
       "line": 1,
       "measured_value": 63,
       "threshold": 58,
-      "weight": 0,
+      "weight": 10,
       "principle": "Nested structure costs more to understand than a path count. SonarSource Cognitive Complexity.",
       "fix_shape": "Simplify tangled. Its cognitive complexity is 63, and the gate is 58.",
       "anti_fix": "Adding a comment inside the nested block leaves the score in place."
@@ -85,7 +85,7 @@
       "line": 1,
       "measured_value": 20,
       "threshold": 19,
-      "weight": 0,
+      "weight": 10,
       "principle": "A function with many ordinary parameters is doing more than one job.",
       "fix_shape": "Group the parameters of paint. It has 20 ordinary parameters, and the gate is 19.",
       "anti_fix": "Giving a parameter a default leaves the count in place."
@@ -102,7 +102,7 @@
       "line": 1,
       "measured_value": 49,
       "threshold": 48,
-      "weight": 0,
+      "weight": 10,
       "principle": "A function should have few independent paths. McCabe.",
       "fix_shape": "Split paths. Its cyclomatic complexity is 49, and the gate is 48.",
       "anti_fix": "Splitting one condition onto two lines leaves the path count in place."
@@ -119,7 +119,7 @@
       "line": 1,
       "measured_value": 65,
       "threshold": 64,
-      "weight": 0,
+      "weight": 10,
       "principle": "A function should say little. The count is statements, not wrapped lines.",
       "fix_shape": "Split packed. It has 65 logical lines, and the gate is 64.",
       "anti_fix": "Breaking one statement across more lines leaves the count in place."
@@ -136,7 +136,7 @@
       "line": 1,
       "measured_value": 197,
       "threshold": 196,
-      "weight": 0,
+      "weight": 10,
       "principle": "A function's body should stay short enough to read at once.",
       "fix_shape": "Shorten long. Its body is 197 lines, and the gate is 196.",
       "anti_fix": "Breaking one statement across more lines makes the count larger."
@@ -153,7 +153,7 @@
       "line": 2,
       "measured_value": 100,
       "threshold": 80,
-      "weight": 0,
+      "weight": 1,
       "principle": "A function that only hands its parameters to one call adds a hop and no behavior.",
       "fix_shape": "Inline get. It forwards 100 percent of its ordinary parameters, and the limit is 80.",
       "anti_fix": "Renaming the forwarded parameters leaves the ratio in place."

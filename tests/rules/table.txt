@@ -16,4 +16,4 @@ note  tests/rules/F06.py  No coverage record matches this file.
 note  tests/rules/F07.py  No coverage record matches this file.
 note  tests/rules/F08.py  No coverage record matches this file.
 note  tests/rules/F11.py  No coverage record matches this file.
-slop_score 0.0  fail
+slop_score 349.13793103448273  fail

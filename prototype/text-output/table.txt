@@ -5,4 +5,4 @@ inherited
 F03  gate  CLI::detail::join                  include/CLI/StringTools.hpp:54  18 > 15
 
 note  No coverage report was given. CRAP was not computed.
-slop_score 150.0  fail
+slop_score 525.0  fail

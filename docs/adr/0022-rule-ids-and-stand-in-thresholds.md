@@ -27,5 +27,5 @@ A value greater than the gate fails. The gate number itself passes. F03 keeps it
 - F08 stays the member-chain gate, 2 hops from the receiver and 1 otherwise, with no warn.
 - F11 is logical lines. The gate is 19, so 19 statements pass and 20 fail.
 - A `warn` key is legal only on a rule that ships one. Today that is F03. F07's ratio and F08's depths stay as already decided, and F08's only config key is `allow`.
-- These numbers are the built-in profile. Per-language calibration waits on the validation run. Weights stay unset.
+- These numbers are the built-in profile. Per-language calibration waits on the validation run. Weights are [A finding's weight is fixed for its rule and level](0025-finding-weight-is-fixed.md).
 - A waiver for any gate is [A waiver excuses one gate up to a stated measurement](0023-a-waiver-excuses-one-gate.md). The rule engine reads the lines the adapter recorded. It does not grow a private escape hatch per rule.

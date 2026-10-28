@@ -25,5 +25,5 @@ A finding carries `rule`, `level`, `symbol` (`path`, `name`, `param_types`, `qua
 
 - This document is a finished check. The process exits 0 on pass and 1 on fail. A run that produces no check exits 2 and does not print it. The text rendering is [The text table is the check a person reads](0019-text-table-and-explain.md).
 - A gate a waiver holds stays in its list and does not fail the verdict. A rejected waiver line does. [A waiver excuses one gate up to a stated measurement](0023-a-waiver-excuses-one-gate.md).
-- The sample is `prototype/report-schema/report.json`. Its weights, sentences, version, and cognitive-complexity number are stand-ins.
-- Weight numbers and the logical-line count remain open.
+- The sample is `prototype/report-schema/report.json`. Its sentences, version, and cognitive-complexity number are stand-ins. Its weights are [A finding's weight is fixed for its rule and level](0025-finding-weight-is-fixed.md).
+- The logical-line count is [A logical line is a statement](0021-logical-line-is-a-statement.md).

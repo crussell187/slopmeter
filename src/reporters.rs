@@ -461,7 +461,7 @@ mod tests {
             Metric {
                 measured: 2.0,
                 threshold: 1.0,
-                weight: 2,
+                weight: 10,
             },
         );
         chain.principle =
@@ -499,7 +499,7 @@ mod tests {
             Metric {
                 measured: 18.0,
                 threshold: 15.0,
-                weight: 3,
+                weight: 10,
             },
         );
         inherited.param_types = vec!["const T &".to_string(), "std::string".to_string()];

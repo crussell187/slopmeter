@@ -1,7 +1,7 @@
 {
   "verdict": "fail",
   "scope": "changed",
-  "slop_score": 150.0,
+  "slop_score": 525.0,
   "kloc": 0.04,
   "tool_version": "0.0.0",
   "findings": [
@@ -17,7 +17,7 @@
       "line": 170,
       "measured_value": 2,
       "threshold": 1,
-      "weight": 2,
+      "weight": 10,
       "principle": "A member chain that does not start at the receiver may be one deep. Law of Demeter.",
       "fix_shape": "Break the chain len().min at line 170 in <Take<T> as Buf>::chunks_vectored. It is 2 deep, and the limit is 1.",
       "anti_fix": "Saving the chain in locals leaves the finding in place."
@@ -53,7 +53,7 @@
       "line": 54,
       "measured_value": 18,
       "threshold": 15,
-      "weight": 3,
+      "weight": 10,
       "principle": "Nested control flow costs more than a flat branch. SonarSource cognitive complexity.",
       "fix_shape": "Simplify CLI::detail::join. Its cognitive complexity is 18, and the gate is 15.",
       "anti_fix": "Extracting the body into a lambda leaves the finding in place."
