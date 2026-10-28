@@ -72,6 +72,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Pin the diff header shape and resolve the repo root](issues/48-diff-shape-and-root.md) — `git diff` keeps `a/` and `b/` under `diff.noprefix` or `diff.mnemonicPrefix`; a subdirectory run uses the git root for `slopmeter.toml` and `.gitignore`, and the base falls through to `origin/main` then `origin/master`.
 - [Make deletions in Rust and C++ files touch only the functions they hit](issues/49-load-old-all-languages.md) — `load_old` parses the pre-change bytes in all three languages, so a deleted line gates only the function whose old span contains it.
 - [Root Rust member chains on the self node](issues/50-rust-self-chain-root.md) — a `self` node roots the chain, so F08 uses the receiver hop limit; the other-hop limit of 11 stays until recalibration.
+- [What slopmeter scores inside a Rust macro invocation](issues/51-rust-macro-bodies.md) — a Rust macro is scored from its tokens on the function that contains it; `|` adds nothing; a module-level invocation is not a function; a `macro_rules!` outside any function is a function ([ADR 0024](../../docs/adr/0024-rust-macro-tokens.md)).
 
 ## Not yet specified
 

@@ -20,7 +20,7 @@ The claimed files a run measures. Tests are out of it unless a run turns them on
 _Avoid_: codebase, sources
 
 **Function**:
-A named definition with a body the programmer wrote, including one nested inside another, or a lambda or closure bound to a name outside any function. Declarations, compiler-generated bodies, decorators, and attributes sit outside it; a generic or template counts once, and any other lambda or closure belongs to the function that contains it.
+A named definition with a body the programmer wrote, including one nested inside another, or a lambda or closure bound to a name outside any function. Declarations, compiler-generated bodies, decorators, and attributes sit outside it; a generic or template counts once, and any other lambda or closure belongs to the function that contains it. The contents of a macro invocation written inside a function belong to that function. A macro invocation outside any function is not a function. A macro definition written outside any function is itself a function; one written inside a function belongs to that function.
 _Avoid_: method, lambda, closure, callable, declaration, prototype, decorator, attribute
 
 **Body span**:
