@@ -74,6 +74,8 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Root Rust member chains on the self node](issues/50-rust-self-chain-root.md) — a `self` node roots the chain, so F08 uses the receiver hop limit; the other-hop limit of 11 stays until recalibration.
 - [What slopmeter scores inside a Rust macro invocation](issues/51-rust-macro-bodies.md) — a Rust macro is scored from its tokens on the function that contains it; `|` adds nothing; a module-level invocation is not a function; a `macro_rules!` outside any function is a function ([ADR 0024](../../docs/adr/0024-rust-macro-tokens.md)).
 
+- [Report unparsed_ratio per file and compute it from leaf error spans](issues/52-unparsed-ratio-report.md) — a file above ratio 0 is noted and does not fail the run; the ratio counts lines whose tokens sit under an error, so fmt `format.h` is 0.069 instead of 0.993 and the split-`#if` fixture stays at 0.25 ([ADR 0012](../../docs/adr/0012-cpp-scored-as-text.md)).
+
 ## Not yet specified
 
 - **Mutation report readers.** One per language once [Mutation testing as a slopmeter gate](issues/61-mutation-testing.md) is decided: cargo-mutants `outcomes.json`, mutmut's store or stats export, and mull's mutation-testing-elements JSON if C++ gets a build input. Each is a build slice with a fixture report and a sloppy-corpus run.

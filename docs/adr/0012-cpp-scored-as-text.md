@@ -7,7 +7,7 @@ date: 2026-10-26
 
 Phase 1 does not run the preprocessor and does not read `compile_commands.json`. A header is scored once, and the same header is often built with different defines, so one compile command would hide the other builds. Each file is parsed once. `#include` is not followed, and `import` is not resolved.
 
-Every arm of `#if`, `#ifdef`, `#ifndef`, `#elif`, and `#else` counts. The condition adds nothing. The one ignored arm is a condition that is the token `0`, parentheses allowed. A `#define` body is a raw token and is not a function. Source at the use site is scored when it parses. The adapter scores the tree it recovered, including a function that contains an error. `unparsed_ratio` is the fraction of lines an `ERROR` or `MISSING` node touches. It is reported for every language. It does not drop the file or fail the run.
+Every arm of `#if`, `#ifdef`, `#ifndef`, `#elif`, and `#else` counts. The condition adds nothing. The one ignored arm is a condition that is the token `0`, parentheses allowed. A `#define` body is a raw token and is not a function. Source at the use site is scored when it parses. The adapter scores the tree it recovered, including a function that contains an error. `unparsed_ratio` is the fraction of lines whose tokens sit directly under an `ERROR` or `MISSING` node. An error whose children are recovered items does not contribute its own span. It is reported for every language, as a note on that file when the ratio is above 0. It does not drop the file or fail the run.
 
 ## Considered options
 
