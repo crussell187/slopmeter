@@ -196,11 +196,9 @@ fn load_old(root: &Path, base: &str, language: Language, old_path: &str) -> Opti
     if !out.status.success() {
         return None;
     }
-    match language {
-        Language::Python => Some(crate::adapters::python::parse(old_path, &out.stdout).functions),
-        // Those adapters are later sessions. Until they exist, a deletion touches the whole file.
-        Language::Rust | Language::Cpp => None,
-    }
+    crate::adapters::parse(language, old_path, &out.stdout, false)
+        .ok()
+        .map(|file| file.functions)
 }
 
 fn contains(line: u32, span: Span) -> bool {
@@ -1630,26 +1628,102 @@ def other():
         assert_eq!(names(&scoped.inherited), vec!["touched", "other"]);
     }
 
-    #[test]
-    fn a_deletion_in_an_unparsed_language_touches_the_file() {
-        let root = repo("rust-delete", "main");
-        write(&root, "src/a.rs", "fn touched() {\n    let n = 1;\n}\n");
+    fn delete_lang(
+        name: &str,
+        rel: &str,
+        before: &str,
+        after: &str,
+        language: Language,
+    ) -> (PathBuf, File) {
+        let root = repo(name, "main");
+        write(&root, rel, before);
         commit_all(&root, "base");
-        write(&root, "src/a.rs", "fn touched() {\n}\n");
-        let mut file = source_file("src/a.rs", vec![function("touched", 1, 2)]);
-        file.language = Language::Rust;
+        write(&root, rel, after);
+        let file = crate::adapters::parse(language, rel, &fs::read(root.join(rel)).unwrap(), false)
+            .unwrap();
+        (root, file)
+    }
 
+    fn assert_only_touched(root: &Path, file: File) {
+        let findings: Vec<Finding> = file
+            .functions
+            .iter()
+            .map(|function| {
+                let mut finding = gate(&file.path, &function.name);
+                finding.param_types.clone_from(&function.param_types);
+                finding.qualifier.clone_from(&function.qualifier);
+                finding
+            })
+            .collect();
         let scoped = partition(
-            &root,
+            root,
             &[file],
-            &[gate("src/a.rs", "touched")],
+            &findings,
             ScopeOptions {
                 changed: None,
                 strict: false,
             },
         )
         .unwrap();
-
         assert_eq!(names(&scoped.findings), vec!["touched"]);
+        assert_eq!(names(&scoped.inherited), vec!["other"]);
+    }
+
+    #[test]
+    fn deleting_a_line_in_one_rust_function_touches_only_that_function() {
+        let (root, file) = delete_lang(
+            "rust-delete",
+            "src/a.rs",
+            "\
+fn touched() {
+    let n = 1;
+    let _ = n;
+}
+
+fn other() {
+    let _ = 0;
+}
+",
+            "\
+fn touched() {
+    let _ = n;
+}
+
+fn other() {
+    let _ = 0;
+}
+",
+            Language::Rust,
+        );
+        assert_only_touched(&root, file);
+    }
+
+    #[test]
+    fn deleting_a_line_in_one_cpp_function_touches_only_that_function() {
+        let (root, file) = delete_lang(
+            "cpp-delete",
+            "src/a.cpp",
+            "\
+int touched() {
+    int n = 1;
+    return n;
+}
+
+int other() {
+    return 0;
+}
+",
+            "\
+int touched() {
+    return n;
+}
+
+int other() {
+    return 0;
+}
+",
+            Language::Cpp,
+        );
+        assert_only_touched(&root, file);
     }
 }
