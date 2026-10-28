@@ -28,7 +28,7 @@ fn recorded() -> Vec<Row> {
 }
 
 #[test]
-fn the_recorded_delta_matches_the_parser_and_only_the_or_pattern_differs() {
+fn the_recorded_delta_matches_the_parser_and_lists_the_known_gaps() {
     let source = include_str!("cc/decisions.py");
     let file = parse("tests/cc/decisions.py", source.as_bytes());
     let rows = recorded();
@@ -53,5 +53,5 @@ fn the_recorded_delta_matches_the_parser_and_only_the_or_pattern_differs() {
         .filter(|row| row.delta != 0)
         .map(|row| row.name)
         .collect();
-    assert_eq!(nonzero, vec!["or_pattern"]);
+    assert_eq!(nonzero, vec!["loop_else", "or_pattern"]);
 }

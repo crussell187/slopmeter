@@ -664,7 +664,10 @@ fn waivers_above(node: Node, source: &[u8]) -> Vec<WaiverLine> {
             break;
         }
         let span = span_of(sibling);
-        if span.start != span.end || span.start + 1 != next_line {
+        if span.start != span.end
+            || span.start + 1 != next_line
+            || shares_code_line(sibling, source)
+        {
             break;
         }
         let Some(waiver) = waiver_from_comment(&node_text(sibling, source), span.start) else {
@@ -680,6 +683,31 @@ fn waivers_above(node: Node, source: &[u8]) -> Vec<WaiverLine> {
 
 fn is_line_comment(node: Node, source: &[u8]) -> bool {
     node.kind() == "comment" && node_text(node, source).trim_start().starts_with("//")
+}
+
+fn shares_code_line(comment: Node, source: &[u8]) -> bool {
+    let line = comment.start_position().row;
+    let mut cursor = comment.prev_sibling();
+    while let Some(sibling) = cursor {
+        if is_line_comment(sibling, source) {
+            if occupied_end(sibling) < line {
+                return false;
+            }
+            cursor = sibling.prev_sibling();
+            continue;
+        }
+        return sibling.start_position().row <= line && occupied_end(sibling) >= line;
+    }
+    false
+}
+
+fn occupied_end(node: Node) -> usize {
+    let end = node.end_position();
+    if end.column == 0 && end.row > node.start_position().row {
+        end.row - 1
+    } else {
+        end.row
+    }
 }
 
 fn waiver_from_comment(text: &str, line: u32) -> Option<WaiverLine> {
@@ -1792,6 +1820,31 @@ int kept() { return 1; }
 ";
         let file = parse("kept.hpp", source.as_bytes());
         assert!(function(&file, "kept").waivers.is_empty());
+    }
+
+    #[test]
+    fn a_trailing_comment_on_a_code_line_is_not_a_waiver() {
+        let source = "\
+int earlier() { return 1; } // slopmeter: waive F01 9 measured on purpose
+int later() { return 2; }
+
+// slopmeter: waive F01 9 measured on purpose
+int whole_line() { return 3; }
+";
+        let file = parse("kept.hpp", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+        let later = function(&file, "later");
+        assert!(later.waivers.is_empty());
+        assert_eq!(later.touch.start, later.span.start);
+        assert_eq!(
+            function(&file, "whole_line").waivers,
+            vec![waiver(
+                4,
+                Some("F01"),
+                Some("9"),
+                Some("measured on purpose")
+            )]
+        );
     }
 
     #[test]

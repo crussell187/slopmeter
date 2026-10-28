@@ -80,6 +80,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [How C++ function-like macros are surfaced or expanded](issues/55-cpp-macro-policy.md) — a file notes how many function-like `#define`s have unscored bodies, and the note does not fail the run; a C++ mutation gate may read a report and does not read `compile_commands.json` ([ADR 0012](../../docs/adr/0012-cpp-scored-as-text.md)).
 - [Note unscored C++ function-like macros](issues/68-cpp-macro-note.md) — `File::unscored_macros` counts function-like `#define`s outside a literal-`0` arm, and a count above 0 is a note that does not fail the run ([ADR 0012](../../docs/adr/0012-cpp-scored-as-text.md)).
 - [Count Rust expression-position bodies and nesting per the ADRs](issues/56-rust-lloc-and-nesting.md) — an `if`, a `match`, or a closure expression body adds a logical line only in statement position; nesting stays the deepest decision, and [Whether nesting is the deepest decision or the deepest structure](issues/69-what-nesting-counts.md) asks if that should change.
+- [Align the Python adapter with ADR 0003 and 0009](issues/57-python-adapter-alignment.md) — a bare call is a hop only when it is the whole chain; a loop or `try` `else` adds no decision and is a radon delta; a lambda in a default or decorator counts on that function; a waiver comment has to occupy its line alone. C++ still counts a bare call that starts a chain ([Drop a C++ bare call that only starts a member chain](issues/70-cpp-bare-call-chain.md)).
 
 ## Not yet specified
 

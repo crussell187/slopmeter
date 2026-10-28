@@ -1,6 +1,7 @@
 # name slopmeter radon delta
 # radon 6.0.1, Python 3.12, radon cc -s.
 # or_pattern differs because radon counts case 1 | 2 | 3 as one case.
+# loop_else differs because radon counts the residual else and ADR 0003 does not.
 # with_block's delta is 0: radon's code adds nothing for with, and neither do we.
 plain 1 1 0
 decision 2 2 0
@@ -10,7 +11,7 @@ loop 2 2 0
 handler 2 2 0
 ternary 2 2 0
 comprehension 3 3 0
-loop_else 3 3 0
+loop_else 2 3 -1
 final 1 1 0
 with_block 1 1 0
 or_pattern 4 2 2

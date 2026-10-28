@@ -433,7 +433,7 @@ fn consume_waiver_comments(
             return false;
         }
         let span = span_of(sibling);
-        if span.start != span.end || span.start + 1 != *next_line {
+        if span.start != span.end || span.start + 1 != *next_line || shares_code_line(sibling) {
             return false;
         }
         let Some(waiver) = waiver_from_comment(&node_text(sibling, source), span.start) else {
@@ -1252,6 +1252,12 @@ fn peel(node: Node, source: &[u8]) -> Option<Peeled> {
         "call_expression" => {
             let function = node.child_by_field_name("function")?;
             if let Some(name) = bare_call_name(function, source) {
+                if bare_call_roots_a_chain(node) {
+                    return Some(Peeled {
+                        root: None,
+                        hops: Vec::new(),
+                    });
+                }
                 return Some(Peeled {
                     root: None,
                     hops: vec![Hop {
@@ -1304,6 +1310,65 @@ fn chain_root(node: Node) -> Node {
         }
     }
     current
+}
+
+fn shares_code_line(comment: Node) -> bool {
+    let line = comment.start_position().row;
+    let mut cursor = comment.prev_sibling();
+    while let Some(sibling) = cursor {
+        if sibling.kind() == "line_comment" {
+            if occupied_end(sibling) < line {
+                return false;
+            }
+            cursor = sibling.prev_sibling();
+            continue;
+        }
+        return sibling.start_position().row <= line && occupied_end(sibling) >= line;
+    }
+    false
+}
+
+fn occupied_end(node: Node) -> usize {
+    let end = node.end_position();
+    if end.column == 0 && end.row > node.start_position().row {
+        end.row - 1
+    } else {
+        end.row
+    }
+}
+
+fn bare_call_roots_a_chain(node: Node) -> bool {
+    let mut current = node;
+    loop {
+        let Some(parent) = current.parent() else {
+            return false;
+        };
+        match parent.kind() {
+            "field_expression" => {
+                return parent.child_by_field_name("value") == Some(current);
+            }
+            "index_expression" => {
+                if code_nodes(parent).first() != Some(&current) {
+                    return false;
+                }
+                current = parent;
+            }
+            "parenthesized_expression" | "await_expression" | "try_expression" => {
+                let children = code_nodes(parent);
+                if children.len() != 1 || children.first() != Some(&current) {
+                    return false;
+                }
+                current = parent;
+            }
+            "call_expression" | "generic_function" => {
+                if parent.child_by_field_name("function") != Some(current) {
+                    return false;
+                }
+                current = parent;
+            }
+            _ => return false,
+        }
+    }
 }
 
 fn chain_continues(node: Node) -> bool {
@@ -2040,6 +2105,72 @@ fn shipped() {}
                 CognitiveKind::Hybrid | CognitiveKind::Fundamental => 1,
             })
             .sum()
+    }
+
+    #[test]
+    fn a_bare_call_that_starts_a_member_chain_is_not_a_hop() {
+        let source = "\
+fn call_result() -> i32 {
+    make().a.b.c
+}
+
+fn wrapped() -> i32 {
+    (make()).a.b
+}
+
+fn method_call(obj: Obj) -> i32 {
+    obj.method().extra
+}
+
+fn calls() {
+    send();
+}
+";
+        let file = parse("a.rs", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+        assert_eq!(
+            member_names(&function(&file, "call_result").body.chains[0]),
+            vec!["a", "b", "c"]
+        );
+        assert_eq!(
+            member_names(&function(&file, "wrapped").body.chains[0]),
+            vec!["a", "b"]
+        );
+        let method_call = function(&file, "method_call");
+        assert_eq!(
+            member_names(&method_call.body.chains[0]),
+            vec!["method", "extra"]
+        );
+        assert!(method_call.body.chains[0].members[0].call);
+        assert_eq!(
+            member_names(&function(&file, "calls").body.chains[0]),
+            vec!["send"]
+        );
+    }
+
+    #[test]
+    fn a_trailing_comment_on_a_code_line_is_not_a_waiver() {
+        let source = "\
+fn earlier() -> i32 { 1 } // slopmeter: waive F01 9 measured on purpose
+fn later() -> i32 { 2 }
+
+// slopmeter: waive F01 9 measured on purpose
+fn whole_line() -> i32 { 3 }
+";
+        let file = parse("a.rs", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+        let later = function(&file, "later");
+        assert!(later.waivers.is_empty());
+        assert_eq!(later.touch.start, later.span.start);
+        assert_eq!(
+            function(&file, "whole_line").waivers,
+            vec![waiver(
+                4,
+                Some("F01"),
+                Some("9"),
+                Some("measured on purpose")
+            )]
+        );
     }
 
     fn member_names(chain: &Chain) -> Vec<&str> {

@@ -13,6 +13,6 @@ The cross-check tools agree on a core and disagree at the edges, and some of the
 
 ## Consequences
 
-- A Python or-pattern, a Rust `_` arm, a bare `loop`, `with`, `finally`, `#if`, and `default` are allowed deltas against at least one tool.
+- A Python or-pattern, a Rust `_` arm, a bare `loop`, `with`, `finally`, `#if`, and `default` are allowed deltas against at least one tool. A Python `for`, `while`, or `try` `else` is a delta against radon, which counts that residual arm.
 - F03 is a different metric. Its increments are [Cognitive complexity follows the white paper](0020-cognitive-complexity-increments.md).
 - Preprocessor conditions add nothing here. How those directives parse stays on [C++ preprocessor and template handling](../../.scratch/slopmeter-phase1/issues/16-cpp-preprocessor.md).

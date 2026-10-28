@@ -260,7 +260,7 @@ fn consume_waiver_comments(
             return false;
         }
         let span = span_of(sibling);
-        if span.start != span.end || span.start + 1 != *next_line {
+        if span.start != span.end || span.start + 1 != *next_line || shares_code_line(sibling) {
             return false;
         }
         let Some(waiver) = waiver_from_comment(&node_text(sibling, source), span.start) else {
@@ -503,6 +503,7 @@ fn classify(node: Node, source: &[u8], receiver: Option<&str>, ordinary: &[Strin
     let forward = found.forwarding(node, ordinary);
     match node.kind() {
         "function_definition" => {
+            found.walk_signature(node);
             if let Some(body) = node.child_by_field_name("body") {
                 found.walk_block(body, 0, true);
             }
@@ -679,7 +680,7 @@ impl<'a> Classifier<'a> {
             self.walk_block(body, nesting + 1, false);
         }
         for alternative in field_nodes(node, "alternative") {
-            self.walk_alternative(alternative, nesting, false);
+            self.walk_alternative(alternative, nesting);
         }
     }
 
@@ -694,7 +695,7 @@ impl<'a> Classifier<'a> {
             self.walk_block(body, nesting + 1, false);
         }
         for alternative in field_nodes(node, "alternative") {
-            self.walk_alternative(alternative, nesting, true);
+            self.walk_alternative(alternative, nesting);
         }
     }
 
@@ -709,11 +710,11 @@ impl<'a> Classifier<'a> {
             self.walk_block(body, nesting + 1, false);
         }
         for alternative in field_nodes(node, "alternative") {
-            self.walk_alternative(alternative, nesting, true);
+            self.walk_alternative(alternative, nesting);
         }
     }
 
-    fn walk_alternative(&mut self, node: Node<'a>, nesting: u32, decides: bool) {
+    fn walk_alternative(&mut self, node: Node<'a>, nesting: u32) {
         if node.kind() == "elif_clause" {
             self.decision(line_of(node), nesting);
             self.hybrid(line_of(node));
@@ -724,9 +725,6 @@ impl<'a> Classifier<'a> {
                 self.walk_block(body, nesting + 1, false);
             }
             return;
-        }
-        if decides {
-            self.decision(line_of(node), nesting);
         }
         self.hybrid(line_of(node));
         if let Some(body) = node.child_by_field_name("body") {
@@ -742,7 +740,7 @@ impl<'a> Classifier<'a> {
         for child in named_nodes(node) {
             match child.kind() {
                 "except_clause" => self.walk_except(child, nesting),
-                "else_clause" => self.walk_alternative(child, nesting, true),
+                "else_clause" => self.walk_alternative(child, nesting),
                 "finally_clause" => self.walk_suite(child, nesting),
                 _ => {}
             }
@@ -808,9 +806,8 @@ impl<'a> Classifier<'a> {
         }
     }
 
-    fn walk_nested_def(&mut self, node: Node<'a>, nesting: u32) {
+    fn walk_nested_def(&mut self, _node: Node<'a>, _nesting: u32) {
         self.lloc += 1;
-        self.walk_header(node, nesting);
     }
 
     fn walk_nested_class(&mut self, node: Node<'a>, nesting: u32) {
@@ -820,11 +817,48 @@ impl<'a> Classifier<'a> {
 
     fn walk_decorated(&mut self, node: Node<'a>, nesting: u32) {
         self.lloc += 1;
-        for child in named_nodes(node) {
-            if matches!(child.kind(), "function_definition" | "class_definition") {
+        let children = named_nodes(node);
+        if children
+            .iter()
+            .any(|child| child.kind() == "function_definition")
+        {
+            return;
+        }
+        for child in children {
+            if child.kind() == "class_definition" {
                 self.walk_header(child, nesting);
             } else {
                 self.walk(child, nesting);
+            }
+        }
+    }
+
+    fn walk_signature(&mut self, node: Node<'a>) {
+        for decorator in decorator_nodes(node) {
+            self.walk_decorator_arguments(decorator);
+        }
+        let Some(parameters) = node.child_by_field_name("parameters") else {
+            return;
+        };
+        for child in named_nodes(parameters) {
+            if matches!(
+                child.kind(),
+                "default_parameter" | "typed_default_parameter"
+            ) {
+                if let Some(value) = child.child_by_field_name("value") {
+                    self.walk(value, 0);
+                }
+            }
+        }
+    }
+
+    fn walk_decorator_arguments(&mut self, node: Node<'a>) {
+        for child in named_nodes(node) {
+            if child.kind() != "call" {
+                continue;
+            }
+            if let Some(arguments) = child.child_by_field_name("arguments") {
+                self.walk(arguments, 0);
             }
         }
     }
@@ -1143,6 +1177,63 @@ fn chain_root(node: Node) -> Node {
     current
 }
 
+fn shares_code_line(comment: Node) -> bool {
+    let line = comment.start_position().row;
+    let mut cursor = comment.prev_sibling();
+    while let Some(sibling) = cursor {
+        if sibling.kind() == "comment" {
+            if occupied_end(sibling) < line {
+                return false;
+            }
+            cursor = sibling.prev_sibling();
+            continue;
+        }
+        return sibling.start_position().row <= line && occupied_end(sibling) >= line;
+    }
+    false
+}
+
+fn occupied_end(node: Node) -> usize {
+    let end = node.end_position();
+    if end.column == 0 && end.row > node.start_position().row {
+        end.row - 1
+    } else {
+        end.row
+    }
+}
+
+fn bare_call_roots_a_chain(node: Node) -> bool {
+    let mut current = node;
+    loop {
+        let Some(parent) = current.parent() else {
+            return false;
+        };
+        match parent.kind() {
+            "attribute" => return parent.child_by_field_name("object") == Some(current),
+            "subscript" => {
+                if parent.child_by_field_name("value") != Some(current) {
+                    return false;
+                }
+                current = parent;
+            }
+            "parenthesized_expression" | "await" => {
+                let children = named_nodes(parent);
+                if children.len() != 1 || children.first() != Some(&current) {
+                    return false;
+                }
+                current = parent;
+            }
+            "call" => {
+                if parent.child_by_field_name("function") != Some(current) {
+                    return false;
+                }
+                current = parent;
+            }
+            _ => return false,
+        }
+    }
+}
+
 fn chain_continues(node: Node) -> bool {
     let Some(parent) = node.parent() else {
         return false;
@@ -1182,6 +1273,12 @@ fn peel(node: Node, source: &[u8]) -> Option<Peeled> {
         "call" => {
             let function = node.child_by_field_name("function")?;
             if let Some(name) = bare_name(function, source) {
+                if bare_call_roots_a_chain(node) {
+                    return Some(Peeled {
+                        root: None,
+                        hops: Vec::new(),
+                    });
+                }
                 return Some(Peeled {
                     root: None,
                     hops: vec![Hop {
@@ -1584,16 +1681,17 @@ def bits(a, b, c):
             vec![
                 Decision { line: 2, depth: 1 },
                 Decision { line: 3, depth: 2 },
-                Decision { line: 5, depth: 1 },
                 Decision { line: 6, depth: 2 },
                 Decision { line: 10, depth: 1 },
                 Decision { line: 12, depth: 1 },
-                Decision { line: 14, depth: 1 },
                 Decision { line: 18, depth: 1 },
                 Decision { line: 18, depth: 2 },
                 Decision { line: 18, depth: 2 },
             ]
         );
+        assert!(paths.body.cognitive.iter().any(|item| {
+            item.kind == CognitiveKind::Hybrid && (item.line == 5 || item.line == 14)
+        }));
         assert_eq!(cognitive_total(&paths.body), 8);
         assert!(function(&file, "bits").body.decisions.is_empty());
         assert!(function(&file, "bits").body.cognitive.is_empty());
@@ -1857,6 +1955,113 @@ def none():
                 CognitiveKind::Hybrid | CognitiveKind::Fundamental => 1,
             })
             .sum()
+    }
+
+    #[test]
+    fn a_bare_call_that_starts_a_member_chain_is_not_a_hop() {
+        let source = "\
+def call_result():
+    return make().a.b.c
+
+def wrapped():
+    return (make()).a.b
+
+def method_call(obj):
+    return obj.method().extra
+
+def calls(a):
+    send()
+    return a
+";
+        let file = parse("a.py", source.as_bytes());
+        let call_result = function(&file, "call_result");
+        assert_eq!(
+            member_names(&call_result.body.chains[0]),
+            vec!["a", "b", "c"]
+        );
+        assert!(call_result.body.chains[0]
+            .members
+            .iter()
+            .all(|member| !member.call));
+        assert_eq!(
+            member_names(&function(&file, "wrapped").body.chains[0]),
+            vec!["a", "b"]
+        );
+        let method_call = function(&file, "method_call");
+        assert_eq!(
+            member_names(&method_call.body.chains[0]),
+            vec!["method", "extra"]
+        );
+        assert!(method_call.body.chains[0].members[0].call);
+        assert!(!method_call.body.chains[0].members[1].call);
+        assert_eq!(
+            member_names(&function(&file, "calls").body.chains[0]),
+            vec!["send"]
+        );
+    }
+
+    #[test]
+    fn a_lambda_in_a_default_or_decorator_counts_on_that_function() {
+        let source = "\
+def defaults(a, key=lambda x: x if x and x > 1 else 0):
+    return a
+
+@register(lambda x: x if x else 0, when=a and b)
+def decorated(a):
+    return a
+
+def outer():
+    def inner(key=lambda x: x if x else 0):
+        return key
+    return inner
+";
+        let file = parse("a.py", source.as_bytes());
+        let defaults = function(&file, "defaults");
+        assert_eq!(defaults.body.lloc, 2);
+        assert_eq!(
+            defaults.body.decisions,
+            vec![
+                Decision { line: 1, depth: 2 },
+                Decision { line: 1, depth: 3 },
+            ]
+        );
+        let decorated = function(&file, "decorated");
+        assert_eq!(decorated.body.lloc, 2);
+        assert_eq!(
+            decorated.body.decisions,
+            vec![
+                Decision { line: 4, depth: 2 },
+                Decision { line: 4, depth: 1 },
+            ]
+        );
+        assert!(decorated.body.chains.is_empty());
+        let outer = function(&file, "outer");
+        assert_eq!(outer.body.lloc, 2);
+        assert!(outer.body.decisions.is_empty());
+        let inner = function(&file, "outer.inner");
+        assert_eq!(inner.body.lloc, 2);
+        assert_eq!(inner.body.decisions, vec![Decision { line: 9, depth: 2 }]);
+    }
+
+    #[test]
+    fn a_trailing_comment_on_a_code_line_is_not_a_waiver() {
+        let source = "\
+x = 1  # slopmeter: waive F01 12 trailing on code line
+def after_trailing(a):
+    return a
+
+# slopmeter: waive F01 12 ok
+def whole_line(a):
+    return a
+";
+        let file = parse("a.py", source.as_bytes());
+        let after = function(&file, "after_trailing");
+        assert!(after.waivers.is_empty());
+        assert_eq!(after.touch.start, after.span.start);
+        assert_eq!(
+            function(&file, "whole_line").waivers,
+            vec![waiver(5, Some("F01"), Some("12"), Some("ok"))]
+        );
     }
 
     fn member_names(chain: &crate::ir::Chain) -> Vec<&str> {
