@@ -71,6 +71,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Stop scoring test modules, fuzz harnesses and testing directories](issues/47-scored-set-leaks.md) — `fuzz` and `testing` directories stay out until `--tests`, and `adapters::rust::parse` drops `#[cfg(test)]` items and `#[test]` functions unless that switch is set.
 - [Pin the diff header shape and resolve the repo root](issues/48-diff-shape-and-root.md) — `git diff` keeps `a/` and `b/` under `diff.noprefix` or `diff.mnemonicPrefix`; a subdirectory run uses the git root for `slopmeter.toml` and `.gitignore`, and the base falls through to `origin/main` then `origin/master`.
 - [Make deletions in Rust and C++ files touch only the functions they hit](issues/49-load-old-all-languages.md) — `load_old` parses the pre-change bytes in all three languages, so a deleted line gates only the function whose old span contains it.
+- [Root Rust member chains on the self node](issues/50-rust-self-chain-root.md) — a `self` node roots the chain, so F08 uses the receiver hop limit; the other-hop limit of 11 stays until recalibration.
 
 ## Not yet specified
 
