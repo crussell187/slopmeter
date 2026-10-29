@@ -155,12 +155,13 @@ fn visit(
             scopes.pop();
         }
         "const_item" | "static_item" => visit_binding(node, source, scopes, out, include_tests),
-        "macro_invocation"
-        | "macro_definition"
-        | "attribute_item"
-        | "inner_attribute_item"
-        | "line_comment"
-        | "block_comment" => {}
+        "macro_invocation" => {
+            if in_function(scopes) {
+                push_token_fns(node, source, scopes, out);
+            }
+        }
+        "macro_definition" => visit_macro_definition(node, source, scopes, out),
+        "attribute_item" | "inner_attribute_item" | "line_comment" | "block_comment" => {}
         _ => visit_children(node, source, scopes, out, include_tests),
     }
 }
@@ -527,6 +528,79 @@ fn qualify(scopes: &[Scope], name: &str) -> String {
     parts.join("::")
 }
 
+fn visit_macro_definition(
+    node: Node,
+    source: &[u8],
+    scopes: &mut Vec<Scope>,
+    out: &mut Vec<Function>,
+) {
+    if in_function(scopes) {
+        push_token_fns(node, source, scopes, out);
+        return;
+    }
+    let Some(name_node) = node.child_by_field_name("name") else {
+        return;
+    };
+    let name = node_text(name_node, source);
+    push_function(out, scopes, source, &name, node, node, None);
+    scopes.push(Scope::Function(name));
+    push_token_fns(node, source, scopes, out);
+    scopes.pop();
+}
+
+fn push_token_fns(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut Vec<Function>) {
+    for (name, body) in fns_in_tokens(node, source) {
+        push_function(out, scopes, source, &name, body, body, None);
+        scopes.push(Scope::Function(name));
+        push_token_fns(body, source, scopes, out);
+        scopes.pop();
+    }
+}
+
+fn fns_in_tokens<'a>(node: Node<'a>, source: &[u8]) -> Vec<(String, Node<'a>)> {
+    let mut found = Vec::new();
+    collect_fns(node, source, &mut found);
+    found
+}
+
+fn collect_fns<'a>(node: Node<'a>, source: &[u8], found: &mut Vec<(String, Node<'a>)>) {
+    let children = all_children(node);
+    let mut skip = BTreeSet::new();
+    for (index, child) in children.iter().copied().enumerate() {
+        if skip.contains(&range_key(child)) {
+            continue;
+        }
+        if anonymous_token(child, source).as_deref() == Some("fn") {
+            if let Some((name, body)) = fn_after(&children, index, source) {
+                skip.insert(range_key(body));
+                found.push((name, body));
+                continue;
+            }
+        }
+        if child.child_count() > 0 {
+            collect_fns(child, source, found);
+        }
+    }
+}
+
+fn fn_body_after<'a>(siblings: &[Node<'a>], index: usize, source: &[u8]) -> Option<Node<'a>> {
+    fn_after(siblings, index, source).map(|(_, body)| body)
+}
+
+fn fn_after<'a>(siblings: &[Node<'a>], index: usize, source: &[u8]) -> Option<(String, Node<'a>)> {
+    let mut name = None;
+    for child in &siblings[index + 1..] {
+        if name.is_none() && child.kind() == "identifier" {
+            name = Some(node_text(*child, source));
+            continue;
+        }
+        if name.is_some() && opens_with(*child, "{") {
+            return name.map(|name| (name, *child));
+        }
+    }
+    None
+}
+
 fn in_function(scopes: &[Scope]) -> bool {
     scopes
         .iter()
@@ -573,6 +647,8 @@ fn classify(node: Node<'_>, source: &[u8], receiver: Option<&str>, ordinary: &[S
             }
         }
         "closure_expression" => classifier.walk_closure_body(node, 0, true),
+        "macro_definition" => classifier.walk_macro_definition(node, 0),
+        "token_tree" => classifier.walk_tokens(node, 0),
         _ => {}
     }
     Body {
@@ -588,6 +664,13 @@ fn classify(node: Node<'_>, source: &[u8], receiver: Option<&str>, ordinary: &[S
 enum BoolOp {
     And,
     Or,
+}
+
+struct TokenChain {
+    rooted: bool,
+    members: Vec<Member>,
+    line: u32,
+    after_dot: bool,
 }
 
 struct Hop {
@@ -659,6 +742,10 @@ impl<'a> Classifier<'a> {
             "macro_invocation" => {
                 self.lloc += 1;
                 self.walk_macro(node, nesting);
+            }
+            "macro_definition" => {
+                self.lloc += 1;
+                self.walk_macro_definition(node, nesting);
             }
             "const_item" | "static_item" => {
                 self.lloc += 1;
@@ -962,6 +1049,211 @@ impl<'a> Classifier<'a> {
     fn walk_macro(&mut self, node: Node<'a>, nesting: u32) {
         if ASSERTS.contains(&macro_name(node, self.source).as_str()) {
             self.decision(line_of(node), nesting);
+        }
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() == "token_tree" {
+                self.walk_tokens(child, nesting);
+            }
+        }
+    }
+
+    fn walk_tokens(&mut self, node: Node<'a>, nesting: u32) {
+        let mut last_bool = None;
+        let mut skipped = BTreeSet::new();
+        let mut chain = None;
+        self.walk_token_children(node, nesting, &mut last_bool, &mut skipped, &mut chain);
+    }
+
+    fn walk_token_children(
+        &mut self,
+        node: Node<'a>,
+        nesting: u32,
+        last_bool: &mut Option<BoolOp>,
+        skipped: &mut BTreeSet<(usize, usize)>,
+        chain: &mut Option<TokenChain>,
+    ) {
+        let children = all_children(node);
+        for (index, child) in children.iter().copied().enumerate() {
+            if child.kind() == "token_tree" && skipped.contains(&range_key(child)) {
+                continue;
+            }
+            self.walk_token(&children, index, nesting, last_bool, skipped, chain);
+        }
+        self.finish_token_chain(chain);
+    }
+
+    fn walk_token(
+        &mut self,
+        siblings: &[Node<'a>],
+        index: usize,
+        nesting: u32,
+        last_bool: &mut Option<BoolOp>,
+        skipped: &mut BTreeSet<(usize, usize)>,
+        chain: &mut Option<TokenChain>,
+    ) {
+        let node = siblings[index];
+        if node.kind() == "token_tree" || node.kind() == "token_repetition" {
+            if opens_with(node, "{") {
+                self.finish_token_chain(chain);
+            }
+            let mut inner_chain = None;
+            if opens_with(node, "(") || opens_with(node, "{") {
+                let mut inner_bool = None;
+                let mut inner_skipped = BTreeSet::new();
+                self.walk_token_children(
+                    node,
+                    nesting,
+                    &mut inner_bool,
+                    &mut inner_skipped,
+                    &mut inner_chain,
+                );
+            } else {
+                self.walk_token_children(node, nesting, last_bool, skipped, &mut inner_chain);
+            }
+            return;
+        }
+        if self.consume_chain(siblings, index, chain) {
+            return;
+        }
+        self.finish_token_chain(chain);
+        let Some(token) = control_token(node, self.source) else {
+            return;
+        };
+        match token.as_str() {
+            "if" | "while" | "for" | "loop" => {
+                let line = line_of(node);
+                let guard = token == "if" && is_guard(siblings, index, self.source);
+                let else_if = token == "if" && previous_is_else(siblings, index, self.source);
+                if guard {
+                    self.decision(line, nesting);
+                } else if else_if {
+                    self.decision(line, nesting);
+                    self.walk_brace_body(siblings, index, nesting + 1, skipped);
+                } else {
+                    self.structural(line, nesting);
+                    self.decision(line, nesting);
+                    self.walk_brace_body(siblings, index, nesting + 1, skipped);
+                }
+            }
+            "match" => {
+                self.structural(line_of(node), nesting);
+                self.walk_brace_body(siblings, index, nesting, skipped);
+            }
+            "else" => {
+                self.hybrid(line_of(node));
+                if else_body(siblings, index, self.source).is_some() {
+                    self.walk_brace_body(siblings, index, nesting + 1, skipped);
+                }
+            }
+            "&&" => self.bool_token(node, nesting, BoolOp::And, last_bool),
+            "||" => self.bool_token(node, nesting, BoolOp::Or, last_bool),
+            "|" => {}
+            "fn" => {
+                if let Some(body) = fn_body_after(siblings, index, self.source) {
+                    skipped.insert(range_key(body));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn walk_macro_definition(&mut self, node: Node<'a>, nesting: u32) {
+        let mut cursor = node.walk();
+        for child in node.children(&mut cursor) {
+            if child.kind() != "macro_rule" {
+                continue;
+            }
+            if let Some(right) = child.child_by_field_name("right") {
+                self.walk_tokens(right, nesting);
+            }
+        }
+    }
+
+    fn walk_brace_body(
+        &mut self,
+        siblings: &[Node<'a>],
+        index: usize,
+        nesting: u32,
+        skipped: &mut BTreeSet<(usize, usize)>,
+    ) {
+        let Some(body) = brace_after(siblings, index) else {
+            return;
+        };
+        skipped.insert(range_key(body));
+        self.walk_tokens(body, nesting);
+    }
+
+    fn consume_chain(
+        &mut self,
+        siblings: &[Node<'a>],
+        index: usize,
+        chain: &mut Option<TokenChain>,
+    ) -> bool {
+        let node = siblings[index];
+        if anonymous_token(node, self.source).as_deref() == Some(".") {
+            if let Some(built) = chain.as_mut() {
+                built.after_dot = true;
+            }
+            return true;
+        }
+        let Some((name, rooted)) = chain_name(node, self.source) else {
+            return false;
+        };
+        if chain.as_ref().is_some_and(|built| built.after_dot) {
+            let call = siblings
+                .get(index + 1)
+                .is_some_and(|next| opens_with(*next, "("));
+            let built = chain.as_mut().expect("dot started a chain");
+            if built.members.is_empty() {
+                built.line = line_of(node);
+            }
+            built.members.push(Member { name, call });
+            built.after_dot = false;
+            return true;
+        }
+        let followed_by_dot = siblings
+            .get(index + 1)
+            .is_some_and(|next| anonymous_token(*next, self.source).as_deref() == Some("."));
+        if !followed_by_dot {
+            return false;
+        }
+        self.finish_token_chain(chain);
+        *chain = Some(TokenChain {
+            rooted,
+            members: Vec::new(),
+            line: line_of(node),
+            after_dot: false,
+        });
+        true
+    }
+
+    fn finish_token_chain(&mut self, chain: &mut Option<TokenChain>) {
+        let Some(built) = chain.take() else {
+            return;
+        };
+        if built.members.is_empty() {
+            return;
+        }
+        self.chains.push(Chain {
+            line: built.line,
+            rooted: built.rooted,
+            members: built.members,
+        });
+    }
+
+    fn bool_token(
+        &mut self,
+        node: Node<'a>,
+        nesting: u32,
+        operator: BoolOp,
+        last_bool: &mut Option<BoolOp>,
+    ) {
+        let line = line_of(node);
+        self.decision(line, nesting);
+        if *last_bool != Some(operator) {
+            self.fundamental(line);
+            *last_bool = Some(operator);
         }
     }
 
@@ -1382,6 +1674,81 @@ fn count_specified(node: Node, source: &[u8]) -> u32 {
         "identifier" if node_text(node, source) == "_" => 0,
         _ => 1,
     }
+}
+
+fn all_children(node: Node<'_>) -> Vec<Node<'_>> {
+    let mut cursor = node.walk();
+    node.children(&mut cursor).collect()
+}
+
+fn range_key(node: Node<'_>) -> (usize, usize) {
+    let range = node.byte_range();
+    (range.start, range.end)
+}
+
+fn anonymous_token(node: Node<'_>, source: &[u8]) -> Option<String> {
+    if node.is_named() {
+        None
+    } else {
+        Some(node_text(node, source))
+    }
+}
+
+fn chain_name(node: Node<'_>, source: &[u8]) -> Option<(String, bool)> {
+    match node.kind() {
+        "self" => Some((node_text(node, source), true)),
+        "identifier" if node_text(node, source) != "else" => Some((node_text(node, source), false)),
+        _ => None,
+    }
+}
+
+fn control_token(node: Node<'_>, source: &[u8]) -> Option<String> {
+    if let Some(token) = anonymous_token(node, source) {
+        return Some(token);
+    }
+    if node.kind() == "identifier" && node_text(node, source) == "else" {
+        return Some("else".to_string());
+    }
+    None
+}
+
+fn opens_with(node: Node<'_>, token: &str) -> bool {
+    node.kind() == "token_tree" && node.child(0).is_some_and(|child| child.kind() == token)
+}
+
+fn brace_after<'a>(siblings: &[Node<'a>], index: usize) -> Option<Node<'a>> {
+    siblings[index + 1..]
+        .iter()
+        .copied()
+        .find(|child| opens_with(*child, "{"))
+}
+
+fn previous_is_else(siblings: &[Node<'_>], index: usize, source: &[u8]) -> bool {
+    index > 0 && control_token(siblings[index - 1], source).as_deref() == Some("else")
+}
+
+fn is_guard(siblings: &[Node<'_>], index: usize, source: &[u8]) -> bool {
+    for child in &siblings[index + 1..] {
+        if anonymous_token(*child, source).as_deref() == Some("=>") {
+            return true;
+        }
+        if opens_with(*child, "{") {
+            return false;
+        }
+    }
+    false
+}
+
+fn else_body<'a>(siblings: &[Node<'a>], index: usize, source: &[u8]) -> Option<Node<'a>> {
+    for child in &siblings[index + 1..] {
+        if anonymous_token(*child, source).as_deref() == Some("if") {
+            return None;
+        }
+        if opens_with(*child, "{") {
+            return Some(*child);
+        }
+    }
+    None
 }
 
 fn macro_name(node: Node, source: &[u8]) -> String {
@@ -2381,6 +2748,122 @@ fn shipped() {}
             .iter()
             .find(|function| function.name == name)
             .unwrap_or_else(|| panic!("missing {name}"))
+    }
+
+    #[test]
+    fn a_macro_invocation_scores_on_the_enclosing_function() {
+        let source = "\
+fn check(a: i32) -> bool {
+    dbg!(if a > 0 { true } else { false })
+}
+
+fn bits(a: i32) -> i32 {
+    dbg!(a | 1)
+}
+
+fn asserted(a: bool, b: bool) {
+    assert!(a && b);
+}
+
+lazy_static! {
+    static ref FLAG: bool = if ready() { true } else { false };
+}
+";
+        let file = parse("a.rs", source.as_bytes());
+        let check = function(&file, "check");
+        assert_eq!(check.body.decisions.len(), 1);
+        assert_eq!(cognitive_total(&check.body), 2);
+        assert_eq!(function(&file, "bits").body.decisions.len(), 0);
+        assert_eq!(function(&file, "asserted").body.decisions.len(), 2);
+        assert!(file
+            .functions
+            .iter()
+            .all(|function| function.name != "lazy_static"));
+    }
+
+    #[test]
+    fn else_if_match_and_parentheses_follow_the_walker() {
+        let source = "\
+fn branched(a: bool, b: bool) -> i32 {
+    dbg!(if a { 1 } else if b { 2 } else { 3 })
+}
+
+fn guarded(a: i32) -> i32 {
+    dbg!(match a { 1 if a > 0 => 1, _ => 0 })
+}
+
+fn grouped(a: bool, b: bool, c: bool) -> bool {
+    dbg!((a && b) && c)
+}
+";
+        let file = parse("a.rs", source.as_bytes());
+        let branched = function(&file, "branched");
+        assert_eq!(branched.body.decisions.len(), 2);
+        assert_eq!(cognitive_total(&branched.body), 3);
+        let guarded = function(&file, "guarded");
+        assert_eq!(guarded.body.decisions.len(), 1);
+        assert_eq!(cognitive_total(&guarded.body), 1);
+        let grouped = function(&file, "grouped");
+        assert_eq!(grouped.body.decisions.len(), 2);
+        assert_eq!(cognitive_total(&grouped.body), 2);
+    }
+
+    #[test]
+    fn a_dot_run_inside_a_macro_is_a_member_chain() {
+        let source = "\
+impl Repo {
+    fn check(&self) {
+        dbg!(self.a.b.c());
+        let _ = vec![self.a.b, other.c.d];
+    }
+}
+";
+        let file = parse("a.rs", source.as_bytes());
+        let check = function(&file, "Repo::check");
+        assert_eq!(check.body.chains.len(), 3);
+        assert!(check.body.chains[0].rooted);
+        assert_eq!(member_names(&check.body.chains[0]), vec!["a", "b", "c"]);
+        assert!(check.body.chains[0].members[2].call);
+        assert_eq!(member_names(&check.body.chains[1]), vec!["a", "b"]);
+        assert_eq!(member_names(&check.body.chains[2]), vec!["c", "d"]);
+    }
+
+    #[test]
+    fn a_macro_rules_body_is_scored_where_it_is_written() {
+        let source = "\
+macro_rules! hide {
+    ($e:expr) => { if $e > 0 { true } else { false } };
+}
+
+fn check(a: i32) -> bool {
+    hide!(a)
+}
+
+fn outer() {
+    macro_rules! local {
+        () => { if ready() { 1 } else { 0 } };
+    }
+    wrap!(fn inner(a: i32) -> i32 {
+        if a > 0 { 1 } else { 0 }
+    });
+}
+";
+        let file = parse("a.rs", source.as_bytes());
+        let hide = function(&file, "hide");
+        assert_eq!(hide.body.decisions.len(), 1);
+        assert_eq!(cognitive_total(&hide.body), 2);
+        assert_eq!(function(&file, "check").body.decisions.len(), 0);
+        let outer = function(&file, "outer");
+        assert_eq!(outer.body.decisions.len(), 1);
+        assert_eq!(cognitive_total(&outer.body), 2);
+        let inner = function(&file, "outer::inner");
+        assert_eq!(inner.body.decisions.len(), 1);
+        assert_eq!(cognitive_total(&inner.body), 2);
+        assert!(!outer
+            .body
+            .decisions
+            .iter()
+            .any(|decision| decision.line == inner.body.decisions[0].line));
     }
 
     fn cognitive_total(body: &Body) -> u32 {
