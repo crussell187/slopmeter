@@ -1,0 +1,2 @@
+# The validation trees are scored by the corpus tests, not by a check of this repo.
+exclude = ["corpus"]

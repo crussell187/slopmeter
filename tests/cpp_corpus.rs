@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use slopmeter::inputs::Config;
@@ -51,7 +51,7 @@ fn the_seed_names_no_rule_and_no_threshold() {
 
 #[test]
 fn the_sloppy_tree_gates_every_gating_rule_and_warns_on_f07() {
-    let root = corpus().join("sloppy");
+    let root = sloppy_outside_this_repo("cpp");
     let output = Command::new(env!("CARGO_BIN_EXE_slopmeter"))
         .args(["--strict", "--json", "--coverage=coverage.lcov"])
         .arg(&root)
@@ -94,6 +94,29 @@ fn the_sloppy_tree_gates_every_gating_rule_and_warns_on_f07() {
     ]);
     assert_eq!(found, expected, "{stdout}");
     assert_wide_margin(&doc, &stdout);
+}
+
+fn sloppy_outside_this_repo(language: &str) -> PathBuf {
+    let dest = std::env::temp_dir().join(format!(
+        "slopmeter-{language}-sloppy-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dest);
+    copy_tree(&corpus().join("sloppy"), &dest);
+    dest
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let dest = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &dest);
+        } else {
+            std::fs::copy(entry.path(), &dest).unwrap();
+        }
+    }
 }
 
 fn assert_wide_margin(doc: &serde_json::Value, stdout: &str) {

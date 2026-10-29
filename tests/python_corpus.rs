@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use slopmeter::inputs::Config;
@@ -50,8 +50,25 @@ fn the_seed_names_no_rule_and_no_threshold() {
 }
 
 #[test]
-fn the_sloppy_tree_gates_every_gating_rule_and_warns_on_f07() {
+fn the_repo_config_leaves_the_corpus_unscored() {
     let root = corpus().join("sloppy");
+    let output = Command::new(env!("CARGO_BIN_EXE_slopmeter"))
+        .args(["--strict", "--json"])
+        .arg(&root)
+        .output()
+        .expect("run slopmeter");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(doc["findings"].as_array().unwrap().is_empty(), "{stdout}");
+    assert!(doc["inherited"].as_array().unwrap().is_empty(), "{stdout}");
+}
+
+#[test]
+fn the_sloppy_tree_gates_every_gating_rule_and_warns_on_f07() {
+    let root = sloppy_outside_this_repo("python");
     let output = Command::new(env!("CARGO_BIN_EXE_slopmeter"))
         .args(["--strict", "--json", "--coverage=coverage.lcov"])
         .arg(&root)
@@ -94,6 +111,29 @@ fn the_sloppy_tree_gates_every_gating_rule_and_warns_on_f07() {
     ]);
     assert_eq!(found, expected, "{stdout}");
     assert_wide_margin(&doc, &stdout);
+}
+
+fn sloppy_outside_this_repo(language: &str) -> PathBuf {
+    let dest = std::env::temp_dir().join(format!(
+        "slopmeter-{language}-sloppy-{}",
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&dest);
+    copy_tree(&corpus().join("sloppy"), &dest);
+    dest
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for entry in std::fs::read_dir(from).unwrap() {
+        let entry = entry.unwrap();
+        let dest = to.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &dest);
+        } else {
+            std::fs::copy(entry.path(), &dest).unwrap();
+        }
+    }
 }
 
 fn assert_wide_margin(doc: &serde_json::Value, stdout: &str) {
