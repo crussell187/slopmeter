@@ -92,6 +92,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Drop a C++ bare call that only starts a member chain](issues/70-cpp-bare-call-chain.md) — `make().a.b.c`, `(make()).a.b`, and `make()->a.b` are the members after the call; `send()` stays one hop.
 - [Read a cargo-mutants report into S07](issues/71-cargo-mutants-report.md) — `score_rust` reads `outcomes.json`; caught and timeout are detected, missed is undetected, and unviable is left out; S07 gates at 1, a missing report fails a touched Rust function, and a waiver for S07 fails the run.
 - [Read a mutmut store into S07](issues/72-mutmut-store.md) — `score_python` reads `mutants/<file>.meta`; killed and timeout are detected, survived and no-tests are undetected, and a type-check rejection is left out; the start line comes from the orig copy, and an unfinished mutant fails the file.
+- [Read a mull report into S07](issues/73-mull-report.md) — `score_cpp` reads mull's mutation-testing-elements JSON; killed and timeout are detected, survived and no coverage are undetected, and a compile error or a runtime error is left out; a pending or ignored mutant fails the file.
 
 ## Not yet specified
 

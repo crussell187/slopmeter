@@ -12,7 +12,11 @@ Caught and timeout are detected, missed is undetected, and
 unviable is left out. Python reads a mutmut mutants
 directory. Killed and timeout are detected, survived and
 no tests are undetected, and a type-check rejection is
-left out. The report's function name is
+left out. C++ reads mull's mutation-testing-elements
+JSON. Killed and timeout are detected, survived and
+no coverage are undetected, and a compile error or a
+runtime error is left out. A pending or ignored mutant
+is unfinished. The report's function name is
 ignored. A nested function keeps its own line. A function
 with no valid mutants stays off the gate. A file the
 report does not match, and a tie between records, fail

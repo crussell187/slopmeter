@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use crate::adapters;
 use crate::analyzers::{measure, Measurement};
 use crate::inputs::{
-    cover, coverage_path, load_config, mutation_path, score_python, score_rust, select, Config,
-    ConfigError, LcovError, MutationError, SelectError, SelectOptions,
+    cover, coverage_path, load_config, mutation_path, score_cpp, score_python, score_rust, select,
+    Config, ConfigError, LcovError, MutationError, SelectError, SelectOptions,
 };
 use crate::ir::{File, Language};
 use crate::reporters::{Note, Report};
@@ -19,6 +19,7 @@ pub struct CheckOptions {
     pub coverage: Option<String>,
     pub mutation_rust: Option<String>,
     pub mutation_python: Option<String>,
+    pub mutation_cpp: Option<String>,
 }
 
 #[derive(Debug)]
@@ -61,6 +62,9 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
     }
     if let Some(mutation) = &options.mutation_python {
         config.set_mutation_python_override(mutation.clone());
+    }
+    if let Some(mutation) = &options.mutation_cpp {
+        config.set_mutation_cpp_override(mutation.clone());
     }
     let python_root = if options.mutation_python.is_some() {
         root
@@ -146,6 +150,21 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
             root,
         )
         .map_err(CheckError::Mutation)?,
+    );
+    let cpp_root = if options.mutation_cpp.is_some() {
+        root
+    } else {
+        repo.as_path()
+    };
+    let cpp_report = mutation_path(cpp_root, config.mutation_cpp.as_deref());
+    let cpp_ranges: Vec<(usize, usize)> = spans
+        .iter()
+        .filter(|(language, _, _)| *language == Language::Cpp)
+        .map(|(_, start, end)| (*start, *end))
+        .collect();
+    notes.extend(
+        score_cpp(&mut measurements, &cpp_ranges, cpp_report.as_deref())
+            .map_err(CheckError::Mutation)?,
     );
     let findings = evaluate_spans(&measurements, &spans, &config);
     let scoped = partition(

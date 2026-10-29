@@ -54,6 +54,7 @@ fn parse_check(cwd: &Path, args: &[String]) -> Result<Parsed, String> {
         coverage: None,
         mutation_rust: None,
         mutation_python: None,
+        mutation_cpp: None,
     };
     let mut json = false;
     let mut path = None;
@@ -65,6 +66,10 @@ fn parse_check(cwd: &Path, args: &[String]) -> Result<Parsed, String> {
         }
         if let Some(value) = arg.strip_prefix("--mutation-python=") {
             options.mutation_python = Some(required(value, "mutation-python needs a path")?);
+            continue;
+        }
+        if let Some(value) = arg.strip_prefix("--mutation-cpp=") {
+            options.mutation_cpp = Some(required(value, "mutation-cpp needs a path")?);
             continue;
         }
         if let Some(value) = arg.strip_prefix("--coverage=") {
@@ -88,6 +93,9 @@ fn parse_check(cwd: &Path, args: &[String]) -> Result<Parsed, String> {
             "--mutation-python" => {
                 options.mutation_python =
                     Some(next_value(&mut rest, "mutation-python needs a path")?)
+            }
+            "--mutation-cpp" => {
+                options.mutation_cpp = Some(next_value(&mut rest, "mutation-cpp needs a path")?)
             }
             "--changed" => options.changed = Some(next_value(&mut rest, "changed needs a ref")?),
             other if other.starts_with('-') => return Err(format!("unknown argument {other}")),

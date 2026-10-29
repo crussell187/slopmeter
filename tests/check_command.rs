@@ -151,6 +151,11 @@ fn a_wrong_argument_exits_2() {
     assert!(python.stdout.is_empty());
     assert_eq!(python.stderr, b"mutation-python needs a path\n");
 
+    let cpp = invoke(&["--mutation-cpp"]);
+    assert_eq!(cpp.status.code(), Some(2));
+    assert!(cpp.stdout.is_empty());
+    assert_eq!(cpp.stderr, b"mutation-cpp needs a path\n");
+
     let root = fixture("two");
     let extra = root.join("other");
     let both = invoke(&["--strict", root.to_str().unwrap(), extra.to_str().unwrap()]);
@@ -839,6 +844,170 @@ fn a_missing_python_mutation_store_fails_the_touch_and_a_bad_store_exits_2() {
     write_mutmut(
         &root,
         r#"{"pkg.a.x_classify__mutmut_1": 36, "pkg.a.x_classify__mutmut_2": 5}"#,
+    );
+    let output = run(&root, &["--json"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(s07_rows(&doc, "findings").len(), 1, "{stdout}");
+    assert_eq!(s07_rows(&doc, "findings")[0]["measured_value"], 0.5);
+}
+
+const CPP_CLASSIFY: &str = "int classify(int n) {\n    return n > 1;\n}\n";
+
+fn elements(file: &str, statuses: &[(&str, u32)]) -> String {
+    let rows: Vec<String> = statuses
+        .iter()
+        .enumerate()
+        .map(|(index, (status, line))| {
+            format!(
+                r#"{{"id":"{index}","mutatorName":"cxx_eq_to_ne","replacement":"!=","location":{{"start":{{"line":{line},"column":1}},"end":{{"line":{line},"column":3}}}},"status":"{status}"}}"#
+            )
+        })
+        .collect();
+    format!(
+        r#"{{"schemaVersion":"1.7","thresholds":{{"high":80,"low":60}},"files":{{"{file}":{{"language":"cpp","source":"","mutants":[{}]}}}}}}"#,
+        rows.join(",")
+    )
+}
+
+fn touched_cpp(name: &str) -> PathBuf {
+    let root = fixture(name);
+    git(&root, &["init", "-b", "main"]);
+    write(
+        &root,
+        "src/classify.cpp",
+        "int classify(int n) {\n    return n > 0;\n}\n",
+    );
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-m", "base"]);
+    write(&root, "src/classify.cpp", CPP_CLASSIFY);
+    root
+}
+
+#[test]
+fn a_mull_report_gates_a_touched_cpp_function_at_the_survived_mutant() {
+    let root = touched_cpp("mull");
+    write(
+        &root,
+        "mull.json",
+        &elements(
+            "src/classify.cpp",
+            &[
+                ("Timeout", 1),
+                ("Survived", 2),
+                ("CompileError", 2),
+                ("RuntimeError", 2),
+            ],
+        ),
+    );
+
+    let output = run(&root, &["--json", "--mutation-cpp=mull.json"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let rows = s07_rows(&doc, "findings");
+    assert_eq!(rows.len(), 1, "{stdout}");
+    assert_eq!(rows[0]["symbol"]["name"], "classify");
+    assert_eq!(rows[0]["line"], 2);
+    assert_eq!(rows[0]["measured_value"], 0.5);
+    assert_eq!(rows[0]["threshold"], 1.0);
+    assert_eq!(rows[0]["weight"], 10);
+    assert!(s07_rows(&doc, "inherited").is_empty(), "{stdout}");
+
+    let strict = run(&root, &["--strict", "--json", "--mutation-cpp=mull.json"]);
+    let stdout = String::from_utf8(strict.stdout).unwrap();
+    assert_eq!(strict.status.code(), Some(0), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(s07_rows(&doc, "findings").is_empty(), "{stdout}");
+    let inherited = s07_rows(&doc, "inherited");
+    assert_eq!(inherited.len(), 1, "{stdout}");
+    assert_eq!(inherited[0]["measured_value"], 0.5);
+}
+
+#[test]
+fn a_missing_cpp_mutation_report_fails_the_touch_and_a_bad_report_exits_2() {
+    let root = touched_cpp("missing-mull");
+    let missing = run(&root, &["--json", "--mutation-cpp=mull.json"]);
+    let stdout = String::from_utf8(missing.stdout).unwrap();
+    assert_eq!(missing.status.code(), Some(1), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let rows = s07_rows(&doc, "findings");
+    assert_eq!(rows.len(), 1, "{stdout}");
+    assert!(rows[0]["measured_value"].is_null(), "{stdout}");
+    assert_eq!(rows[0]["line"], 1);
+    assert!(
+        doc["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|note| note["message"].as_str().unwrap().contains("mull.json")),
+        "{stdout}"
+    );
+
+    let strict = run(&root, &["--strict", "--json", "--mutation-cpp=mull.json"]);
+    let stdout = String::from_utf8(strict.stdout).unwrap();
+    assert_eq!(strict.status.code(), Some(0), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(s07_rows(&doc, "findings").is_empty(), "{stdout}");
+    assert!(s07_rows(&doc, "inherited").is_empty(), "{stdout}");
+
+    write(&root, "mull.json", "{");
+    let output = run(&root, &["--strict", "--mutation-cpp=mull.json"]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("cannot be parsed"), "{stderr}");
+
+    write(
+        &root,
+        "src/classify.cpp",
+        &format!("// slopmeter: waive S07 0 later\n{CPP_CLASSIFY}"),
+    );
+    write(
+        &root,
+        "mull.json",
+        &elements("src/classify.cpp", &[("Killed", 2), ("Pending", 2)]),
+    );
+    let output = run(&root, &["--json", "--mutation-cpp=mull.json"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(
+        s07_rows(&doc, "findings")
+            .iter()
+            .any(|row| row["waiver"]["rejection"] == "S07 cannot be waived."),
+        "{stdout}"
+    );
+    assert!(
+        s07_rows(&doc, "findings")
+            .iter()
+            .all(|row| row["measured_value"].is_null()),
+        "{stdout}"
+    );
+
+    let root = fixture("outside-mull");
+    write(&root, "src/classify.cpp", CPP_CLASSIFY);
+    write(
+        &root,
+        "mull.json",
+        &elements("src/classify.cpp", &[("NoCoverage", 2)]),
+    );
+    let output = run(&root, &["--json", "--mutation-cpp=mull.json"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(s07_rows(&doc, "findings").is_empty(), "{stdout}");
+    assert_eq!(s07_rows(&doc, "inherited").len(), 1, "{stdout}");
+    assert_eq!(s07_rows(&doc, "inherited")[0]["measured_value"], 0.0);
+
+    let root = touched_cpp("config-mull");
+    write(&root, "slopmeter.toml", "[mutation]\ncpp = \"mull.json\"\n");
+    write(
+        &root,
+        "mull.json",
+        &elements("src/classify.cpp", &[("Killed", 1), ("Survived", 2)]),
     );
     let output = run(&root, &["--json"]);
     let stdout = String::from_utf8(output.stdout).unwrap();

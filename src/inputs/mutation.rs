@@ -119,6 +119,42 @@ pub fn score_python(
     Ok(apply(measurements, python, &records))
 }
 
+pub fn score_cpp(
+    measurements: &mut [Measurement],
+    cpp: &[(usize, usize)],
+    report: Option<&Path>,
+) -> Result<Vec<Note>, MutationError> {
+    for (start, end) in cpp {
+        for measurement in &mut measurements[*start..*end] {
+            measurement.mutation = None;
+        }
+    }
+    let Some(report) = report else {
+        if cpp.is_empty() {
+            return Ok(Vec::new());
+        }
+        mark_unshown(measurements, cpp);
+        return Ok(vec![Note {
+            path: None,
+            message: NO_REPORT.to_string(),
+        }]);
+    };
+    if !report.is_file() {
+        if !cpp.is_empty() {
+            mark_unshown(measurements, cpp);
+        }
+        return Ok(vec![Note {
+            path: None,
+            message: format!("No mutation report at {}.", report.display()),
+        }]);
+    }
+    let records = read_elements(report)?;
+    if cpp.is_empty() {
+        return Ok(Vec::new());
+    }
+    Ok(apply(measurements, cpp, &records))
+}
+
 fn read_outcomes(path: &Path) -> Result<Vec<Record>, MutationError> {
     let text =
         fs::read_to_string(path).map_err(|err| MutationError::Read(path.to_path_buf(), err))?;
@@ -165,6 +201,63 @@ fn record(value: &Value) -> Result<Option<Record>, ()> {
 fn start_line(mutant: &Value) -> Option<u32> {
     let line = mutant.pointer("/span/start/line")?.as_u64()?;
     u32::try_from(line).ok().filter(|line| *line >= 1)
+}
+
+fn read_elements(path: &Path) -> Result<Vec<Record>, MutationError> {
+    let text =
+        fs::read_to_string(path).map_err(|err| MutationError::Read(path.to_path_buf(), err))?;
+    let value: Value =
+        serde_json::from_str(&text).map_err(|_| MutationError::BadReport(path.to_path_buf()))?;
+    let files = value
+        .get("files")
+        .and_then(Value::as_object)
+        .ok_or_else(|| MutationError::BadReport(path.to_path_buf()))?;
+    let mut records = Vec::new();
+    for (file, body) in files {
+        let mutants = body
+            .get("mutants")
+            .and_then(Value::as_array)
+            .ok_or_else(|| MutationError::BadReport(path.to_path_buf()))?;
+        for mutant in mutants {
+            records.push(element_record(path, file, mutant)?);
+        }
+    }
+    Ok(records)
+}
+
+fn element_record(path: &Path, file: &str, mutant: &Value) -> Result<Record, MutationError> {
+    let status = mutant
+        .get("status")
+        .and_then(Value::as_str)
+        .ok_or_else(|| MutationError::BadReport(path.to_path_buf()))?;
+    let file = normalize(file);
+    if file.is_empty() {
+        return Err(MutationError::BadReport(path.to_path_buf()));
+    }
+    let line = element_line(mutant);
+    Ok(Record {
+        file,
+        line,
+        kind: element_kind(status, line),
+        locator: None,
+    })
+}
+
+fn element_line(mutant: &Value) -> Option<u32> {
+    let line = mutant.pointer("/location/start/line")?.as_u64()?;
+    u32::try_from(line).ok().filter(|line| *line >= 1)
+}
+
+fn element_kind(status: &str, line: Option<u32>) -> Kind {
+    if line.is_none() {
+        return Kind::Unfinished;
+    }
+    match status {
+        "Killed" | "Timeout" => Kind::Detected,
+        "Survived" | "NoCoverage" => Kind::Undetected,
+        "CompileError" | "RuntimeError" => Kind::LeftOut,
+        _ => Kind::Unfinished,
+    }
 }
 
 fn kind(summary: &str, line: Option<u32>) -> Kind {
@@ -783,7 +876,7 @@ fn find_block(source: &str, block: &[String]) -> Option<u32> {
 
 #[cfg(test)]
 mod tests {
-    use super::{mutation_path, score_python, score_rust, MutationError};
+    use super::{mutation_path, score_cpp, score_python, score_rust, MutationError};
     use crate::analyzers::{Measurement, Mutation};
     use crate::ir::Span;
     use std::fs;
@@ -1350,5 +1443,203 @@ class Box:
         let notes = score_python(&mut measurements, &[(0, 1)], Some(&mutants), &root).unwrap();
         assert_eq!(measurements[0].mutation, Some(Mutation::Unshown));
         assert_eq!(notes[0].message, "Mutation records tie for this file.");
+    }
+
+    fn element(file: &str, mutants: &[(&str, u32)]) -> String {
+        let rows: Vec<String> = mutants
+            .iter()
+            .enumerate()
+            .map(|(index, (status, line))| {
+                format!(
+                    r#"{{"id":"{index}","mutatorName":"cxx_eq_to_ne","replacement":"!=","location":{{"start":{{"line":{line},"column":1}},"end":{{"line":{line},"column":3}}}},"status":"{status}"}}"#
+                )
+            })
+            .collect();
+        format!(
+            r#"{{"schemaVersion":"1.7","thresholds":{{"high":80,"low":60}},"files":{{"{file}":{{"language":"cpp","source":"","mutants":[{}]}}}}}}"#,
+            rows.join(",")
+        )
+    }
+
+    fn write_elements(root: &Path, body: &str) -> PathBuf {
+        let path = root.join("mull.json");
+        fs::write(&path, body).unwrap();
+        path
+    }
+
+    #[test]
+    fn a_killed_mutant_and_a_survived_mutant_score_one_half_at_the_survived_line() {
+        let root = fixture("mull-half");
+        let path = write_elements(
+            &root,
+            &element(
+                "src/classify.cpp",
+                &[("Killed", 4), ("Survived", 8), ("Survived", 6)],
+            ),
+        );
+        let mut measurements = vec![measured("src/classify.cpp", "classify", 1, 12)];
+
+        let notes = score_cpp(&mut measurements, &[(0, 1)], Some(&path)).unwrap();
+
+        assert!(notes.is_empty());
+        assert_eq!(
+            measurements[0].mutation,
+            Some(Mutation::Score {
+                score: 1.0 / 3.0,
+                line: 6
+            })
+        );
+    }
+
+    #[test]
+    fn timeout_is_detected_no_coverage_is_undetected_and_errors_are_left_out() {
+        let root = fixture("mull-status");
+        let path = write_elements(
+            &root,
+            &element(
+                "src/classify.cpp",
+                &[
+                    ("Timeout", 2),
+                    ("NoCoverage", 3),
+                    ("CompileError", 4),
+                    ("RuntimeError", 5),
+                    ("Killed", 6),
+                ],
+            ),
+        );
+        let mut measurements = vec![measured("src/classify.cpp", "classify", 1, 8)];
+
+        let notes = score_cpp(&mut measurements, &[(0, 1)], Some(&path)).unwrap();
+
+        assert!(notes.is_empty());
+        assert_eq!(
+            measurements[0].mutation,
+            Some(Mutation::Score {
+                score: 2.0 / 3.0,
+                line: 3
+            })
+        );
+    }
+
+    #[test]
+    fn a_pending_or_ignored_mutant_fails_every_function_in_the_file() {
+        let root = fixture("mull-unfinished");
+        let path = write_elements(
+            &root,
+            &element(
+                "src/classify.cpp",
+                &[
+                    ("Killed", 2),
+                    ("Pending", 3),
+                    ("Ignored", 4),
+                    ("Survived", 5),
+                ],
+            ),
+        );
+        let mut measurements = vec![
+            measured("src/classify.cpp", "one", 1, 3),
+            measured("src/classify.cpp", "two", 4, 6),
+        ];
+
+        let notes = score_cpp(&mut measurements, &[(0, 2)], Some(&path)).unwrap();
+
+        assert_eq!(measurements[0].mutation, Some(Mutation::Unshown));
+        assert_eq!(measurements[1].mutation, Some(Mutation::Unshown));
+        assert_eq!(
+            notes[0].message,
+            "A mutant in this file has no finished outcome."
+        );
+    }
+
+    #[test]
+    fn a_mutant_with_no_start_line_fails_the_file() {
+        let root = fixture("mull-noline");
+        let body = r#"{"files":{"src/classify.cpp":{"language":"cpp","source":"","mutants":[{"id":"1","mutatorName":"cxx_eq_to_ne","location":{"end":{"line":2,"column":1}},"status":"Killed"},{"id":"2","mutatorName":"cxx_eq_to_ne","location":{"start":{"line":0,"column":1},"end":{"line":2,"column":1}},"status":"Survived"}]}}}"#;
+        let path = write_elements(&root, body);
+        let mut measurements = vec![measured("src/classify.cpp", "classify", 1, 4)];
+
+        let notes = score_cpp(&mut measurements, &[(0, 1)], Some(&path)).unwrap();
+
+        assert_eq!(measurements[0].mutation, Some(Mutation::Unshown));
+        assert_eq!(
+            notes[0].message,
+            "A mutant in this file has no finished outcome."
+        );
+    }
+
+    #[test]
+    fn the_report_joins_on_the_file_and_the_start_line() {
+        let root = fixture("mull-join");
+        let path = write_elements(
+            &root,
+            &element("/repo/src/classify.cpp", &[("Survived", 3), ("Killed", 8)]),
+        );
+        let mut measurements = vec![
+            measured("src/classify.cpp", "outer", 1, 10),
+            measured("src/classify.cpp", "inner", 6, 9),
+        ];
+        score_cpp(&mut measurements, &[(0, 2)], Some(&path)).unwrap();
+        assert_eq!(
+            measurements[0].mutation,
+            Some(Mutation::Score {
+                score: 0.0,
+                line: 3
+            })
+        );
+        assert_eq!(measurements[1].mutation, None);
+
+        let path = write_elements(
+            &root,
+            &format!(
+                r#"{{"files":{{"src/classify.cpp":{{"mutants":[{}]}},"other/classify.cpp":{{"mutants":[{}]}}}}}}"#,
+                element_row("Killed", 2, 0),
+                element_row("Survived", 2, 1),
+            ),
+        );
+        let mut measurements = vec![measured("classify.cpp", "classify", 1, 4)];
+        let notes = score_cpp(&mut measurements, &[(0, 1)], Some(&path)).unwrap();
+        assert_eq!(measurements[0].mutation, Some(Mutation::Unshown));
+        assert_eq!(notes[0].message, "Mutation records tie for this file.");
+    }
+
+    fn element_row(status: &str, line: u32, id: u32) -> String {
+        format!(
+            r#"{{"id":"{id}","mutatorName":"cxx_eq_to_ne","location":{{"start":{{"line":{line},"column":1}},"end":{{"line":{line},"column":2}}}},"status":"{status}"}}"#
+        )
+    }
+
+    #[test]
+    fn a_missing_elements_report_names_the_path_and_a_bad_report_is_an_error() {
+        let root = fixture("mull-missing");
+        let mut measurements = vec![measured("src/classify.cpp", "classify", 1, 3)];
+        let notes = score_cpp(&mut measurements, &[(0, 1)], None).unwrap();
+        assert_eq!(measurements[0].mutation, Some(Mutation::Unshown));
+        assert_eq!(notes[0].message, "No mutation report was given.");
+
+        let missing = root.join("mull.json");
+        let mut measurements = vec![measured("src/classify.cpp", "classify", 1, 3)];
+        let notes = score_cpp(&mut measurements, &[(0, 1)], Some(&missing)).unwrap();
+        assert_eq!(measurements[0].mutation, Some(Mutation::Unshown));
+        assert!(notes[0].message.contains(&missing.display().to_string()));
+
+        let path = write_elements(&root, "{");
+        let mut measurements = vec![measured("src/classify.cpp", "classify", 1, 3)];
+        let err = score_cpp(&mut measurements, &[(0, 1)], Some(&path)).unwrap_err();
+        assert!(matches!(err, MutationError::BadReport(_)));
+
+        let database = root.join("compile_commands.json");
+        fs::write(
+            &database,
+            r#"[{"directory":"/tmp","command":"c++","file":"src/classify.cpp"}]"#,
+        )
+        .unwrap();
+        let err = score_cpp(&mut measurements, &[(0, 1)], Some(&database)).unwrap_err();
+        assert!(matches!(err, MutationError::BadReport(_)));
+
+        let path = write_elements(&root, &element("src/a.rs", &[("Survived", 2)]));
+        let mut measurements = vec![measured("src/a.rs", "classify", 1, 3)];
+        let notes = score_cpp(&mut measurements, &[], Some(&path)).unwrap();
+        assert!(notes.is_empty());
+        assert_eq!(measurements[0].mutation, None);
     }
 }

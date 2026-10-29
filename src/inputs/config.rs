@@ -61,6 +61,7 @@ pub struct Config {
     pub coverage: Option<String>,
     pub mutation_rust: Option<String>,
     pub mutation_python: Option<String>,
+    pub mutation_cpp: Option<String>,
     pub include: Option<Vec<String>>,
     pub exclude: Option<Vec<String>>,
     pub python: LanguageProfile,
@@ -117,6 +118,7 @@ impl Config {
             coverage: None,
             mutation_rust: None,
             mutation_python: None,
+            mutation_cpp: None,
             include: None,
             exclude: None,
             python: LanguageProfile::builtin(Language::Python),
@@ -143,6 +145,10 @@ impl Config {
 
     pub fn set_mutation_python_override(&mut self, path: impl Into<String>) {
         self.mutation_python = Some(path.into());
+    }
+
+    pub fn set_mutation_cpp_override(&mut self, path: impl Into<String>) {
+        self.mutation_cpp = Some(path.into());
     }
 
     pub fn retains(&self, path: &str) -> bool {
@@ -263,6 +269,7 @@ fn apply_mutation(config: &mut Config, value: &toml::Value) -> Result<(), Config
         match key.as_str() {
             "rust" => config.mutation_rust = Some(report_path(item, "mutation.rust")?),
             "python" => config.mutation_python = Some(report_path(item, "mutation.python")?),
+            "cpp" => config.mutation_cpp = Some(report_path(item, "mutation.cpp")?),
             other => return Err(ConfigError::UnknownKey(format!("mutation.{other}"))),
         }
     }
@@ -783,5 +790,15 @@ allow = ["with_timeout"]
         assert_eq!(config.mutation_python.as_deref(), Some("mutants"));
         config.set_mutation_python_override("/tmp/mutants");
         assert_eq!(config.mutation_python.as_deref(), Some("/tmp/mutants"));
+    }
+
+    #[test]
+    fn a_mutation_cpp_path_loads_and_the_flag_replaces_it() {
+        let root = fixture("mutation-cpp");
+        write_config(&root, "[mutation]\ncpp = \"mull.json\"\n");
+        let mut config = load_config(&root).unwrap();
+        assert_eq!(config.mutation_cpp.as_deref(), Some("mull.json"));
+        config.set_mutation_cpp_override("/tmp/mull.json");
+        assert_eq!(config.mutation_cpp.as_deref(), Some("/tmp/mull.json"));
     }
 }
