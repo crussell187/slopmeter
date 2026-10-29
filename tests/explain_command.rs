@@ -17,7 +17,7 @@ fn explain_prints_the_shipped_threshold_when_the_config_raises_a_gate() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("slopmeter.toml"),
-        "[profile.python.F04]\ngate = 38\n",
+        "[profile.python.F04]\ngate = 20\n",
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_slopmeter"))
@@ -28,8 +28,8 @@ fn explain_prints_the_shipped_threshold_when_the_config_raises_a_gate() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(output.status.code(), Some(0), "{stdout}");
     assert!(output.stderr.is_empty());
-    assert!(stdout.contains("Python gate at 19."));
-    assert!(!stdout.contains("38"));
+    assert!(stdout.contains("Python gate at 10."));
+    assert!(!stdout.contains("gate = 20"));
 }
 
 #[test]

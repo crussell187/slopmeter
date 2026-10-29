@@ -95,12 +95,12 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Read a mull report into S07](issues/73-mull-report.md) — `score_cpp` reads mull's mutation-testing-elements JSON; killed and timeout are detected, survived and no coverage are undetected, and a compile error or a runtime error is left out; a pending or ignored mutant fails the file.
 - [Accept a bounded count gate and note the departure](issues/74-bounded-gate-overrides.md) — a count gate may be 0 through twice that language's built-in, F03's warn tops out at 20 and its gate floor is 1, and each departure is a run-level note that does not fail the run.
 - [Count nesting as the deepest structural level](issues/75-structural-nesting.md) — an `if`, a loop, a `match` or `switch`, a ternary, and a `catch` each add one, and the finding sits on the deepest of those lines.
+- [Recalibrate the gates by percentile on a production-only set](issues/46-recalibrate-gates.md) — each count gate is the nearest-rank percentile of that language's three pinned commits, measured 2026-10-29, and a later measurement may replace the integers; a clean-repo function over the gate fails ([ADR 0031](../../docs/adr/0031-count-gates-are-a-percentile.md)).
 
 ## Not yet specified
 
 - **Assertion density (spec S05).** S07 fails a changed function when a test runs it and asserts nothing, because the mutant survives. An assertion-per-test floor would still score the tests themselves, which are out of the scored set today.
 - **Multi-package repos.** Cargo workspaces, Python monorepos, C++ projects with several targets: how source selection, `--changed` and the KLOC denominator treat them.
-- **Secondary-language files inside a repo.** 188 `.py` files inside the C++ corpus repos were scored under the Python profile. Whether a repo declares its languages, or every claimed extension counts everywhere, waits on the recalibration.
 
 ## Out of scope
 

@@ -16,7 +16,7 @@ A project can loosen a noisy count without a release of slopmeter, and an agent 
 
 ## Consequences
 
-- The ceiling is that language's shipped gate. Python's cognitive-complexity gate of 58 may rise to 116. The generic stand-in of 15 is not the ceiling. An omitted `warn` stays 10. An omitted `gate` stays the language's built-in, so a warn-only table does not reset the gate to 15.
+- The ceiling is that language's shipped gate. Python's cognitive-complexity gate of 12 may rise to 24. The generic stand-in of 15 is not the ceiling. An omitted `warn` stays that language's built-in. An omitted `gate` stays the language's built-in, so a warn-only table does not reset the gate to 15. The shipped integers are [Count gates are a percentile of the pinned clean repos](0031-count-gates-are-a-percentile.md).
 - A value written equal to the built-in is not a departure. Coverage, include, exclude, and the mutation paths are not departures.
 - One note per changed level, and one note per language for the allow-list names that were added. The note has no path. The messages are `{language} {rule} gate is {value}, built-in {builtin}`, `{language} F03 warn is {value}, built-in {builtin}`, and `{language} F08 allow adds {names}` with the names in file order. Notes come out in language order, Python then Rust then C++, and within a language in the order F01, F02, F03 warn, F03 gate, F04, F05, F06, F08, F11. They precede the notes the run already emits. A departure is named even when that language contributes no file.
 - A finding uses the value in effect. `explain` still prints the shipped threshold, because it does not read the repo. Weights stay fixed.

@@ -22,11 +22,11 @@ sequence inside a comprehension still counts. The finding is that
 total, at the def or fn line.
 
 Threshold
-Shipped stand-in: warn above 10 and gate above 15.
-10 and 15 pass those levels. Python warns above 10 and
-gates above 58. Rust warns above 10 and gates above 192.
-C++ warns above 10 and gates above 295. 10 and 295 pass
-those levels. A waived gate does not also
+Shipped stand-in: warn at the p90 and gate at the p95.
+Python warns above 8 and gates above 12.
+Rust warns above 3 and gates above 6.
+C++ warns above 7 and gates above 15.
+8 and 12 pass those levels. A waived gate does not also
 appear as the warn.
 A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
 above the function excuses this gate in Python, and the same tokens

@@ -89,7 +89,7 @@ fn each_file_trips_only_its_rule_and_the_goldens_match() {
             .filter(|finding| finding.path == path)
             .map(|finding| finding.rule.as_str())
             .collect();
-        // Seven structural levels are also an F03 warn. The same forms make both counts.
+        // Seven structural levels are also an F03 gate. The same forms make both counts.
         let expected = if rule == "F05" {
             vec!["F03", "F05"]
         } else {

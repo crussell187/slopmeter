@@ -84,13 +84,13 @@ mod tests {
     #[test]
     fn python_thresholds_are_the_calibrated_gates() {
         let pages = [
-            ("F01", "Python gate at 48."),
-            ("F03", "gates above 58."),
-            ("F04", "Python gate at 19."),
-            ("F05", "Python gate at 6."),
-            ("F06", "Python gate at 196."),
-            ("F08", "Python gates at 3 hops from the"),
-            ("F11", "Python gate at 64."),
+            ("F01", "Python gate at 10."),
+            ("F03", "gates above 12."),
+            ("F04", "Python gate at 10."),
+            ("F05", "gate at 3 in every language."),
+            ("F06", "Python gate at 51."),
+            ("F08", "1 otherwise, in every language."),
+            ("F11", "Python gate at 19."),
         ];
         for (rule, phrase) in pages {
             assert!(page(rule).unwrap().contains(phrase), "{rule}");
@@ -104,35 +104,33 @@ mod tests {
     #[test]
     fn rust_thresholds_are_the_calibrated_gates() {
         let pages = [
-            ("F01", "Rust gate at 94."),
-            ("F03", "gates above 192."),
-            ("F04", "Rust gate at 9."),
-            ("F05", "Rust gate at 9."),
-            ("F06", "Rust gate at"),
-            ("F08", "Rust gates at 2 hops from the receiver"),
-            ("F11", "Rust gate at 138."),
+            ("F01", "Rust gate at 10."),
+            ("F03", "gates above 6."),
+            ("F04", "Rust gate at 3."),
+            ("F05", "gate at 3 in every language."),
+            ("F06", "Rust gate at 45."),
+            ("F08", "2 hops from the receiver"),
+            ("F11", "Rust gate at 17."),
         ];
         for (rule, phrase) in pages {
             assert!(page(rule).unwrap().contains(phrase), "{rule}");
         }
-        assert!(page("F06").unwrap().contains("581."));
     }
 
     #[test]
     fn cpp_thresholds_are_the_calibrated_gates() {
         let pages = [
-            ("F01", "C++ gate at 136."),
-            ("F03", "gates above 295."),
-            ("F04", "C++ gate at 18."),
-            ("F05", "C++ gate at 8."),
-            ("F06", "C++ gate at 713."),
-            ("F08", "C++ gates at 3 hops from the receiver"),
-            ("F11", "C++ gate at 217."),
+            ("F01", "C++ gate at 12."),
+            ("F03", "gates above 15."),
+            ("F04", "C++ gate at 4."),
+            ("F05", "gate at 3 in every language."),
+            ("F06", "C++ gate at 41."),
+            ("F08", "1 otherwise, in every language."),
+            ("F11", "C++ gate at 25."),
         ];
         for (rule, phrase) in pages {
             assert!(page(rule).unwrap().contains(phrase), "{rule}");
         }
-        assert!(page("F08").unwrap().contains("14 otherwise."));
     }
 
     #[test]

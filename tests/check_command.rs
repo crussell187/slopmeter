@@ -1033,7 +1033,7 @@ fn a_departure_is_noted_before_the_run_notes_and_the_finding_uses_it() {
 gate = {f01}
 
 [profile.python.F03]
-warn = 8
+warn = 7
 
 [profile.python.F04]
 gate = {gate}
@@ -1069,7 +1069,7 @@ gate = 0
     assert_eq!(
         messages,
         vec![
-            "Python F03 warn is 8, built-in 10".to_string(),
+            "Python F03 warn is 7, built-in 8".to_string(),
             format!("Python F04 gate is {gate}, built-in {}", python.f04_gate),
             "Python F08 allow adds builder, with_timeout".to_string(),
             format!(

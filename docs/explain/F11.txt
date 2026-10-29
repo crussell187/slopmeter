@@ -17,10 +17,10 @@ Both arms of `#if` contribute their statements, and a literal `#if 0`
 drops that arm. The finding is that count, at the function line.
 
 Threshold
-Shipped stand-in: gate at 19. 19 passes and 20 fails.
-Python gate at 64. 64 passes and 65 fails. Rust gate at 138.
-138 passes and 139 fails. C++ gate at 217. 217 passes and
-218 fails.
+Shipped stand-in: gate at the p95 of that language's clean
+repos. Python gate at 19. 19 passes and 20 fails.
+Rust gate at 17. 17 passes and 18 fails.
+C++ gate at 25. 25 passes and 26 fails.
 No warn level.
 A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
 above the function excuses this gate in Python, and the same tokens

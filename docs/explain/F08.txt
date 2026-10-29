@@ -10,12 +10,9 @@ adds none. The finding is the chain that crossed its depth, at the
 line where that chain starts.
 
 Threshold
-Shipped stand-in: gate at 2 hops from the receiver, and at 1
-otherwise. Python gates at 3 hops from the receiver and at
-3 otherwise. Rust gates at 2 hops from the receiver and at
-11 otherwise. C++ gates at 3 hops from the receiver and at
-14 otherwise. No warn level. A project adds
-allow-list names and cannot move the depths.
+Shipped stand-in: gate at 2 hops from the receiver, and at
+1 otherwise, in every language. No warn level. A project
+adds allow-list names and cannot move the depths.
 A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
 above the function excuses this gate in Python, and the same tokens
 after `//` do so in Rust and C++, with a whole number except on F02,

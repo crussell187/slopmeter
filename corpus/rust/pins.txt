@@ -1,11 +1,11 @@
 serde-rs/serde 0db9b3b504bcb0a7fa9cf001429869519afd3e9a
 rust-lang/regex ad23cc29c535caf05c4050d9e4f7401d27d2d7fa
 tokio-rs/bytes c08f87663a04eac3b9ab2dfa1976852d9b525a8c
-F01 94
+F01 10
 F02 8
-F03 192
-F04 9
-F05 9
-F06 581
-F08 2 11
-F11 138
+F03 3 6
+F04 3
+F05 3
+F06 45
+F08 2 1
+F11 17

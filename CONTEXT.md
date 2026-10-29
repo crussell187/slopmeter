@@ -48,7 +48,7 @@ The physical lines of the body span, from the `def` or `fn` line through the end
 _Avoid_: logical line, NLOC
 
 **Parameter count**:
-The ordinary parameters of a function. The receiver is not one.
+The ordinary parameters of a function, including one with a default and a varargs or keyword pack. The receiver is not one.
 _Avoid_: arity
 
 **Cyclomatic complexity**:
@@ -148,14 +148,14 @@ Member names that add no hop on a member chain. The adapter publishes the langua
 _Avoid_: exemption, ignore list
 
 **Profile**:
-One language's thresholds. The tool ships the table, including the pass-through ratio and the two chain depths. The config file may change a gate on a count rule, a warn only on cognitive complexity, and names on that language's allow-list. The coverage gate and the mutation gate are not in the profile.
+One language's thresholds. A count gate and the cognitive warn are that language's recorded percentile of its clean repos, replaced only by a later measurement. The tool ships the table, including the pass-through ratio and the two chain depths. The config file may change a gate on a count rule, a warn only on cognitive complexity, and names on that language's allow-list. The coverage gate and the mutation gate are not in the profile.
 
 **Departure**:
 A profile value set to something other than that language's built-in. The run names it, and it does not fail the run.
 _Avoid_: override, customization
 
 **Validation run**:
-A `--strict` score of the per-language corpus once thresholds have been tuned. Clean repos have no gate findings. The sloppy repo fails each gating rule, and shows the F07 warn.
+A `--strict` score of the per-language corpus once thresholds have been tuned. The clean repos show the functions over those gates. The sloppy repo fails each gating rule, and shows the F07 warn.
 _Avoid_: acceptance test (that is the separate with-tool vs without-tool agent experiment, out of scope for Phase 1)
 
 **Sloppy repo**:

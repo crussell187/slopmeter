@@ -15,31 +15,33 @@ pub const F07_PASS_THROUGH_PERCENT: u32 = 80;
 pub const F08_RECEIVER_HOPS: u32 = 2;
 pub const F08_OTHER_HOPS: u32 = 1;
 pub const F11_GATE: u32 = 19;
-pub const PYTHON_F01_GATE: u32 = 48;
-pub const PYTHON_F03_GATE: u32 = 58;
-pub const PYTHON_F04_GATE: u32 = 19;
-pub const PYTHON_F05_GATE: u32 = 6;
-pub const PYTHON_F06_GATE: u32 = 196;
-pub const PYTHON_F08_RECEIVER_HOPS: u32 = 3;
-pub const PYTHON_F08_OTHER_HOPS: u32 = 3;
-pub const PYTHON_F11_GATE: u32 = 64;
-pub const RUST_F01_GATE: u32 = 94;
-pub const RUST_F03_GATE: u32 = 192;
-pub const RUST_F04_GATE: u32 = 9;
-pub const RUST_F05_GATE: u32 = 9;
-pub const RUST_F06_GATE: u32 = 581;
-pub const RUST_F08_RECEIVER_HOPS: u32 = 2;
-/// Measured while `self` chains were counted as other hops. Recalibration replaces this.
-pub const RUST_F08_OTHER_HOPS: u32 = 11;
-pub const RUST_F11_GATE: u32 = 138;
-pub const CPP_F01_GATE: u32 = 136;
-pub const CPP_F03_GATE: u32 = 295;
-pub const CPP_F04_GATE: u32 = 18;
-pub const CPP_F05_GATE: u32 = 8;
-pub const CPP_F06_GATE: u32 = 713;
-pub const CPP_F08_RECEIVER_HOPS: u32 = 3;
-pub const CPP_F08_OTHER_HOPS: u32 = 14;
-pub const CPP_F11_GATE: u32 = 217;
+pub const PYTHON_F01_GATE: u32 = 10;
+pub const PYTHON_F03_WARN: u32 = 8;
+pub const PYTHON_F03_GATE: u32 = 12;
+pub const PYTHON_F04_GATE: u32 = 10;
+pub const PYTHON_F05_GATE: u32 = 3;
+pub const PYTHON_F06_GATE: u32 = 51;
+pub const PYTHON_F08_RECEIVER_HOPS: u32 = F08_RECEIVER_HOPS;
+pub const PYTHON_F08_OTHER_HOPS: u32 = F08_OTHER_HOPS;
+pub const PYTHON_F11_GATE: u32 = 19;
+pub const RUST_F01_GATE: u32 = 10;
+pub const RUST_F03_WARN: u32 = 3;
+pub const RUST_F03_GATE: u32 = 6;
+pub const RUST_F04_GATE: u32 = 3;
+pub const RUST_F05_GATE: u32 = 3;
+pub const RUST_F06_GATE: u32 = 45;
+pub const RUST_F08_RECEIVER_HOPS: u32 = F08_RECEIVER_HOPS;
+pub const RUST_F08_OTHER_HOPS: u32 = F08_OTHER_HOPS;
+pub const RUST_F11_GATE: u32 = 17;
+pub const CPP_F01_GATE: u32 = 12;
+pub const CPP_F03_WARN: u32 = 7;
+pub const CPP_F03_GATE: u32 = 15;
+pub const CPP_F04_GATE: u32 = 4;
+pub const CPP_F05_GATE: u32 = 3;
+pub const CPP_F06_GATE: u32 = 41;
+pub const CPP_F08_RECEIVER_HOPS: u32 = F08_RECEIVER_HOPS;
+pub const CPP_F08_OTHER_HOPS: u32 = F08_OTHER_HOPS;
+pub const CPP_F11_GATE: u32 = 25;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LanguageProfile {
@@ -171,9 +173,10 @@ impl Config {
 
 impl LanguageProfile {
     fn builtin(language: Language) -> Self {
-        let (f01, f03, f04, f05, f06, f08_receiver, f08_other, f11) = match language {
+        let (f01, f03_warn, f03, f04, f05, f06, f08_receiver, f08_other, f11) = match language {
             Language::Python => (
                 PYTHON_F01_GATE,
+                PYTHON_F03_WARN,
                 PYTHON_F03_GATE,
                 PYTHON_F04_GATE,
                 PYTHON_F05_GATE,
@@ -184,6 +187,7 @@ impl LanguageProfile {
             ),
             Language::Rust => (
                 RUST_F01_GATE,
+                RUST_F03_WARN,
                 RUST_F03_GATE,
                 RUST_F04_GATE,
                 RUST_F05_GATE,
@@ -194,6 +198,7 @@ impl LanguageProfile {
             ),
             Language::Cpp => (
                 CPP_F01_GATE,
+                CPP_F03_WARN,
                 CPP_F03_GATE,
                 CPP_F04_GATE,
                 CPP_F05_GATE,
@@ -206,7 +211,7 @@ impl LanguageProfile {
         Self {
             f01_gate: f01,
             f02_gate: F02_GATE,
-            f03_warn: F03_WARN,
+            f03_warn,
             f03_gate: f03,
             f04_gate: f04,
             f05_gate: f05,
@@ -431,8 +436,9 @@ fn apply_f03(
     if warn.is_none() && gate.is_none() {
         return Err(ConfigError::EmptyOverride(format!("profile.{label}.F03")));
     }
-    let warn = warn.unwrap_or(F03_WARN);
-    let builtin = builtin_gate(language, "F03");
+    let builtin_profile = LanguageProfile::builtin(language);
+    let warn = warn.unwrap_or(builtin_profile.f03_warn);
+    let builtin = builtin_profile.f03_gate;
     let gate = gate.unwrap_or(builtin);
     if warn > F03_WARN_MAX {
         return Err(ConfigError::OutOfRange(format!("profile.{label}.F03.warn")));
@@ -702,7 +708,7 @@ mod tests {
         let python = config.profile(Language::Python);
         assert_eq!(python.f01_gate, PYTHON_F01_GATE);
         assert_eq!(python.f02_gate, F02_GATE);
-        assert_eq!(python.f03_warn, F03_WARN);
+        assert_eq!(python.f03_warn, PYTHON_F03_WARN);
         assert_eq!(python.f03_gate, PYTHON_F03_GATE);
         assert_eq!(python.f04_gate, PYTHON_F04_GATE);
         assert_eq!(python.f05_gate, PYTHON_F05_GATE);
@@ -714,6 +720,7 @@ mod tests {
         assert_eq!(python.f11_gate, PYTHON_F11_GATE);
         let rust = config.profile(Language::Rust);
         assert_eq!(rust.f01_gate, RUST_F01_GATE);
+        assert_eq!(rust.f03_warn, RUST_F03_WARN);
         assert_eq!(rust.f03_gate, RUST_F03_GATE);
         assert_eq!(rust.f04_gate, RUST_F04_GATE);
         assert_eq!(rust.f05_gate, RUST_F05_GATE);
@@ -724,7 +731,7 @@ mod tests {
         let cpp = config.profile(Language::Cpp);
         assert_eq!(cpp.f01_gate, CPP_F01_GATE);
         assert_eq!(cpp.f02_gate, F02_GATE);
-        assert_eq!(cpp.f03_warn, F03_WARN);
+        assert_eq!(cpp.f03_warn, CPP_F03_WARN);
         assert_eq!(cpp.f03_gate, CPP_F03_GATE);
         assert_eq!(cpp.f04_gate, CPP_F04_GATE);
         assert_eq!(cpp.f05_gate, CPP_F05_GATE);
@@ -763,7 +770,7 @@ allow = ["with_timeout"]
         assert!(!config.retains("src/a.py"));
         assert!(!config.retains("crates/xtask/src/main.rs"));
         assert!(!config.retains("Crates/slopmeter/src/lib.rs"));
-        assert_eq!(config.profile(Language::Python).f03_warn, F03_WARN);
+        assert_eq!(config.profile(Language::Python).f03_warn, PYTHON_F03_WARN);
         assert_eq!(config.profile(Language::Python).f03_gate, 12);
         assert_eq!(config.profile(Language::Rust).f03_gate, RUST_F03_GATE);
         assert_eq!(config.profile(Language::Cpp).f03_gate, CPP_F03_GATE);
@@ -811,29 +818,29 @@ allow = ["with_timeout"]
             ConfigError::EmptyOverride(_)
         ));
 
-        write_config(&root, "[profile.python.F03]\ngate = 10\n");
+        write_config(&root, "[profile.python.F03]\ngate = 8\n");
         assert!(matches!(
             load_config(&root).unwrap_err(),
             ConfigError::WarnNotBelowGate {
-                warn: 10,
-                gate: 10,
+                warn: 8,
+                gate: 8,
                 ..
             }
         ));
 
-        write_config(&root, "[profile.python.F03]\ngate = 9\n");
+        write_config(&root, "[profile.python.F03]\ngate = 7\n");
         assert!(load_config(&root).is_err());
     }
 
     #[test]
     fn a_warn_only_table_keeps_the_language_gate() {
         let root = fixture("warn-only");
-        write_config(&root, "[profile.python.F03]\nwarn = 12\n");
+        write_config(&root, "[profile.python.F03]\nwarn = 11\n");
         let python = load_config(&root)
             .unwrap()
             .profile(Language::Python)
             .clone();
-        assert_eq!(python.f03_warn, 12);
+        assert_eq!(python.f03_warn, 11);
         assert_eq!(python.f03_gate, PYTHON_F03_GATE);
         assert_eq!(python.f01_gate, PYTHON_F01_GATE);
     }
@@ -850,26 +857,26 @@ allow = ["with_timeout"]
             0
         );
 
-        write_config(&root, "[profile.python.F01]\ngate = 96\n");
+        write_config(&root, "[profile.python.F01]\ngate = 20\n");
         assert_eq!(
             load_config(&root)
                 .unwrap()
                 .profile(Language::Python)
                 .f01_gate,
-            96
+            20
         );
 
         write_config(
             &root,
-            "[profile.rust.F04]\ngate = 0\n\n[profile.cpp.F06]\ngate = 1426\n\n[profile.python.F02]\ngate = 16\n",
+            "[profile.rust.F04]\ngate = 0\n\n[profile.cpp.F06]\ngate = 82\n\n[profile.python.F02]\ngate = 16\n",
         );
         let config = load_config(&root).unwrap();
         assert_eq!(config.profile(Language::Rust).f04_gate, 0);
-        assert_eq!(config.profile(Language::Cpp).f06_gate, 1426);
+        assert_eq!(config.profile(Language::Cpp).f06_gate, 82);
         assert_eq!(config.profile(Language::Python).f02_gate, 16);
         assert_eq!(config.profile(Language::Python).f04_gate, PYTHON_F04_GATE);
 
-        write_config(&root, "[profile.python.F01]\ngate = 97\n");
+        write_config(&root, "[profile.python.F01]\ngate = 21\n");
         let err = load_config(&root).unwrap_err().to_string();
         assert!(err.contains("profile.python.F01.gate"), "{err}");
 
@@ -881,13 +888,13 @@ allow = ["with_timeout"]
         assert_eq!(python.f03_warn, 0);
         assert_eq!(python.f03_gate, 1);
 
-        write_config(&root, "[profile.python.F03]\nwarn = 20\n");
+        write_config(&root, "[profile.python.F03]\nwarn = 20\ngate = 24\n");
         let python = load_config(&root)
             .unwrap()
             .profile(Language::Python)
             .clone();
         assert_eq!(python.f03_warn, 20);
-        assert_eq!(python.f03_gate, PYTHON_F03_GATE);
+        assert_eq!(python.f03_gate, 24);
 
         write_config(&root, "[profile.python.F03]\ngate = 0\nwarn = 0\n");
         let err = load_config(&root).unwrap_err().to_string();
@@ -897,12 +904,12 @@ allow = ["with_timeout"]
         let err = load_config(&root).unwrap_err().to_string();
         assert!(err.contains("profile.python.F03.warn"), "{err}");
 
-        write_config(&root, "[profile.rust.F03]\ngate = 384\nwarn = 20\n");
+        write_config(&root, "[profile.rust.F03]\ngate = 12\nwarn = 5\n");
         let rust_profile = load_config(&root).unwrap().profile(Language::Rust).clone();
-        assert_eq!(rust_profile.f03_gate, 384);
-        assert_eq!(rust_profile.f03_warn, 20);
+        assert_eq!(rust_profile.f03_gate, 12);
+        assert_eq!(rust_profile.f03_warn, 5);
 
-        write_config(&root, "[profile.rust.F03]\ngate = 385\nwarn = 20\n");
+        write_config(&root, "[profile.rust.F03]\ngate = 13\nwarn = 5\n");
         let err = load_config(&root).unwrap_err().to_string();
         assert!(err.contains("profile.rust.F03.gate"), "{err}");
     }
@@ -1012,10 +1019,10 @@ include = ["pkg/**"]
 rust = "outcomes.json"
 
 [profile.python.F01]
-gate = 48
+gate = 10
 
 [profile.python.F03]
-warn = 8
+warn = 7
 
 [profile.python.F04]
 gate = 20
@@ -1024,7 +1031,7 @@ gate = 20
 allow = ["builder", "with_timeout"]
 
 [profile.rust.F01]
-gate = 95
+gate = 11
 
 [profile.cpp.F02]
 gate = 8
@@ -1038,11 +1045,11 @@ gate = 0
         assert_eq!(
             notes,
             vec![
-                "Python F03 warn is 8, built-in 10".to_string(),
-                "Python F04 gate is 20, built-in 19".to_string(),
+                "Python F03 warn is 7, built-in 8".to_string(),
+                "Python F04 gate is 20, built-in 10".to_string(),
                 "Python F08 allow adds builder, with_timeout".to_string(),
-                "Rust F01 gate is 95, built-in 94".to_string(),
-                "C++ F11 gate is 0, built-in 217".to_string(),
+                "Rust F01 gate is 11, built-in 10".to_string(),
+                "C++ F11 gate is 0, built-in 25".to_string(),
             ]
         );
     }

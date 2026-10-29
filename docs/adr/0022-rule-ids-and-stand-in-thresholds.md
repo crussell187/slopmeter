@@ -5,6 +5,8 @@ date: 2026-10-27
 
 # Each function rule has one metric and a hard stand-in
 
+The numbers below were the stand-ins, and the validation run then raised each language to its worst function. [Count gates are a percentile of the pinned clean repos](0031-count-gates-are-a-percentile.md) replaces both. The metric each rule measures still stands.
+
 F03, F07, and F08 already had metrics. The remaining function rules are cyclomatic complexity, CRAP, parameter count, nesting, function length, and logical lines. The design spec's defaults (CC > 10, 40 logical lines, 4 parameters) were for typed class-based code and were not measured here. crap4java publishes no cyclomatic-complexity threshold. Its only failing line is CRAP greater than 8.0. The stand-ins below ship in every language. The validation run may loosen one. It may not switch a gate off.
 
 A value greater than the gate fails. The gate number itself passes. F03 keeps its warn. The other rules decided here have no warn level.

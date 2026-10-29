@@ -23,7 +23,7 @@ fn pins_record_the_clean_repos_and_the_python_gates() {
     let gates = [
         ("F01", profile.f01_gate.to_string()),
         ("F02", profile.f02_gate.to_string()),
-        ("F03", profile.f03_gate.to_string()),
+        ("F03", format!("{} {}", profile.f03_warn, profile.f03_gate)),
         ("F04", profile.f04_gate.to_string()),
         ("F05", profile.f05_gate.to_string()),
         ("F06", profile.f06_gate.to_string()),

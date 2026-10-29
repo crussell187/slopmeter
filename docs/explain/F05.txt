@@ -15,9 +15,8 @@ of these has nesting 0. The finding is that depth, at the deepest of
 these lines, and at the earlier line when two share that depth.
 
 Threshold
-Shipped stand-in: gate at 2. 2 passes and 3 fails.
-Python gate at 6. 6 passes and 7 fails. Rust gate at 9.
-9 passes and 10 fails. C++ gate at 8. 8 passes and 9 fails.
+Shipped stand-in: gate at 3 in every language. 3 passes
+and 4 fails.
 No warn level.
 A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
 above the function excuses this gate in Python, and the same tokens
