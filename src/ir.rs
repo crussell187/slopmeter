@@ -60,6 +60,7 @@ pub struct Forward {
 pub struct Body {
     pub lloc: u32,
     pub decisions: Vec<Decision>,
+    pub levels: Vec<Decision>,
     pub cognitive: Vec<Cognitive>,
     pub chains: Vec<Chain>,
     pub forward: Option<Forward>,
@@ -124,6 +125,7 @@ mod tests {
             body: Body {
                 lloc: 1,
                 decisions: vec![],
+                levels: vec![],
                 cognitive: vec![],
                 chains: vec![],
                 forward: Some(Forward {

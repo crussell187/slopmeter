@@ -692,6 +692,7 @@ def other():
             body: Body {
                 lloc: 1,
                 decisions: vec![],
+                levels: vec![],
                 cognitive: vec![],
                 chains: vec![],
                 forward: None,

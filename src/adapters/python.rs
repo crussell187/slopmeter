@@ -503,7 +503,9 @@ fn classify(node: Node, source: &[u8], receiver: Option<&str>, ordinary: &[Strin
         receiver,
         skip: None,
         lloc: 0,
+        structure: 0,
         decisions: Vec::new(),
+        levels: Vec::new(),
         cognitive: Vec::new(),
         chains: Vec::new(),
     };
@@ -526,6 +528,7 @@ fn classify(node: Node, source: &[u8], receiver: Option<&str>, ordinary: &[Strin
     Body {
         lloc: found.lloc,
         decisions: found.decisions,
+        levels: found.levels,
         cognitive: found.cognitive,
         chains: found.chains,
         forward,
@@ -537,7 +540,9 @@ struct Classifier<'a> {
     receiver: Option<&'a str>,
     skip: Option<std::ops::Range<usize>>,
     lloc: u32,
+    structure: u32,
     decisions: Vec<Decision>,
+    levels: Vec<Decision>,
     cognitive: Vec<Cognitive>,
     chains: Vec<Chain>,
 }
@@ -687,10 +692,10 @@ impl<'a> Classifier<'a> {
             self.walk(condition, nesting);
         }
         if let Some(body) = node.child_by_field_name("consequence") {
-            self.walk_block(body, nesting + 1, false);
+            self.inside(|this| this.walk_block(body, nesting + 1, false));
         }
         for alternative in field_nodes(node, "alternative") {
-            self.walk_alternative(alternative, nesting);
+            self.walk_alternative(alternative, nesting, true);
         }
     }
 
@@ -702,10 +707,10 @@ impl<'a> Classifier<'a> {
             self.walk(right, nesting);
         }
         if let Some(body) = node.child_by_field_name("body") {
-            self.walk_block(body, nesting + 1, false);
+            self.inside(|this| this.walk_block(body, nesting + 1, false));
         }
         for alternative in field_nodes(node, "alternative") {
-            self.walk_alternative(alternative, nesting);
+            self.walk_alternative(alternative, nesting, true);
         }
     }
 
@@ -717,14 +722,14 @@ impl<'a> Classifier<'a> {
             self.walk(condition, nesting);
         }
         if let Some(body) = node.child_by_field_name("body") {
-            self.walk_block(body, nesting + 1, false);
+            self.inside(|this| this.walk_block(body, nesting + 1, false));
         }
         for alternative in field_nodes(node, "alternative") {
-            self.walk_alternative(alternative, nesting);
+            self.walk_alternative(alternative, nesting, true);
         }
     }
 
-    fn walk_alternative(&mut self, node: Node<'a>, nesting: u32) {
+    fn walk_alternative(&mut self, node: Node<'a>, nesting: u32, inside: bool) {
         if node.kind() == "elif_clause" {
             self.decision(line_of(node), nesting);
             self.hybrid(line_of(node));
@@ -732,13 +737,13 @@ impl<'a> Classifier<'a> {
                 self.walk(condition, nesting);
             }
             if let Some(body) = node.child_by_field_name("consequence") {
-                self.walk_block(body, nesting + 1, false);
+                self.descend(inside, |this| this.walk_block(body, nesting + 1, false));
             }
             return;
         }
         self.hybrid(line_of(node));
         if let Some(body) = node.child_by_field_name("body") {
-            self.walk_block(body, nesting + 1, false);
+            self.descend(inside, |this| this.walk_block(body, nesting + 1, false));
         }
     }
 
@@ -750,7 +755,7 @@ impl<'a> Classifier<'a> {
         for child in named_nodes(node) {
             match child.kind() {
                 "except_clause" => self.walk_except(child, nesting),
-                "else_clause" => self.walk_alternative(child, nesting),
+                "else_clause" => self.walk_alternative(child, nesting, false),
                 "finally_clause" => self.walk_suite(child, nesting),
                 _ => {}
             }
@@ -762,7 +767,7 @@ impl<'a> Classifier<'a> {
         self.structural(line_of(node), nesting);
         for child in named_nodes(node) {
             if child.kind() == "block" {
-                self.walk_block(child, nesting + 1, false);
+                self.inside(|this| this.walk_block(child, nesting + 1, false));
             } else {
                 self.walk(child, nesting);
             }
@@ -812,7 +817,7 @@ impl<'a> Classifier<'a> {
             self.walk_named(guard, nesting);
         }
         if let Some(body) = node.child_by_field_name("consequence") {
-            self.walk_block(body, nesting + 1, false);
+            self.inside(|this| this.walk_block(body, nesting + 1, false));
         }
     }
 
@@ -929,8 +934,12 @@ impl<'a> Classifier<'a> {
         let line = token_line(node, self.source, "if");
         self.decision(line, nesting);
         self.structural(line, nesting);
-        for child in named_nodes(node) {
-            self.walk(child, nesting + 1);
+        for (index, child) in named_nodes(node).iter().copied().enumerate() {
+            if index == 1 {
+                self.walk(child, nesting + 1);
+            } else {
+                self.inside(|this| this.walk(child, nesting + 1));
+            }
         }
     }
 
@@ -1007,6 +1016,24 @@ impl<'a> Classifier<'a> {
             kind: CognitiveKind::Structural,
             depth: nesting,
         });
+        self.levels.push(Decision {
+            line,
+            depth: self.structure + 1,
+        });
+    }
+
+    fn inside(&mut self, f: impl FnOnce(&mut Self)) {
+        self.descend(true, f);
+    }
+
+    fn descend(&mut self, inside: bool, f: impl FnOnce(&mut Self)) {
+        if inside {
+            self.structure += 1;
+        }
+        f(self);
+        if inside {
+            self.structure -= 1;
+        }
     }
 
     fn hybrid(&mut self, line: u32) {
@@ -2242,6 +2269,330 @@ def method(repo, user):
                 .names,
             vec!["repo".to_string(), "user".to_string()]
         );
+    }
+
+    #[test]
+    fn nesting_is_the_deepest_structural_level() {
+        let cases = [
+            (
+                "\
+def boolean(a, b):
+    return a and b
+",
+                "boolean",
+                0,
+                None,
+            ),
+            (
+                "\
+def conditional(a, b):
+    if a and b:
+        return 1
+",
+                "conditional",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+def ternary_bool(a, b):
+    return 1 if a and b else 0
+",
+                "ternary_bool",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+def in_lambda(a):
+    return lambda y: y if a else 0
+",
+                "in_lambda",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+def nested_keeps_its_own(a):
+    def inner(x):
+        if x:
+            return x
+    return a
+",
+                "nested_keeps_its_own",
+                0,
+                None,
+            ),
+            (
+                "\
+def nested_keeps_its_own(a):
+    def inner(x):
+        if x:
+            return x
+    return a
+",
+                "nested_keeps_its_own.inner",
+                1,
+                Some(3),
+            ),
+            (
+                "\
+def chained(a, b):
+    return 1 if a else (
+        2 if b else 3
+    )
+",
+                "chained",
+                2,
+                Some(3),
+            ),
+            (
+                "\
+def in_condition(a):
+    if 1 if a else 0:
+        return 1
+",
+                "in_condition",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+def operand(a):
+    return 1 if (2 if a else 0) else 3
+",
+                "operand",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+def in_body(a, b):
+    if a:
+        return 1 if b else 0
+",
+                "in_body",
+                2,
+                Some(3),
+            ),
+            (
+                "\
+def if_else(a):
+    if a:
+        return 1
+    else:
+        return 0
+",
+                "if_else",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+def if_elif(a, b):
+    if a:
+        return 1
+    elif b:
+        return 2
+    else:
+        return 0
+",
+                "if_elif",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+def else_holds_if(a, b):
+    if a:
+        return 1
+    else:
+        if b:
+            return 2
+",
+                "else_holds_if",
+                2,
+                Some(5),
+            ),
+            (
+                "\
+def guard(x):
+    match x:
+        case y if y > 0:
+            return 1
+",
+                "guard",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+def arm_if(x):
+    match x:
+        case y:
+            if y:
+                return 1
+",
+                "arm_if",
+                2,
+                Some(4),
+            ),
+            (
+                "\
+def comprehension(xs):
+    return [y for y in xs if y > 0]
+",
+                "comprehension",
+                0,
+                None,
+            ),
+            (
+                "\
+def comprehension_ternary(xs):
+    return [1 if y else 0 for y in xs]
+",
+                "comprehension_ternary",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+def try_if(a):
+    try:
+        if a:
+            return 1
+    except Exception:
+        return 0
+",
+                "try_if",
+                1,
+                Some(3),
+            ),
+            (
+                "\
+def except_if(a):
+    try:
+        return 0
+    except Exception:
+        if a:
+            return 1
+",
+                "except_if",
+                2,
+                Some(5),
+            ),
+            (
+                "\
+def with_if(a):
+    with a:
+        if a:
+            return 1
+",
+                "with_if",
+                1,
+                Some(3),
+            ),
+            (
+                "\
+def finally_if(a):
+    try:
+        return 0
+    finally:
+        if a:
+            return 1
+",
+                "finally_if",
+                1,
+                Some(5),
+            ),
+            (
+                "\
+def two_handlers(a):
+    try:
+        return 0
+    except TypeError:
+        return 1
+    except ValueError:
+        if a:
+            return 2
+",
+                "two_handlers",
+                2,
+                Some(7),
+            ),
+            (
+                "\
+def nested_handlers(a):
+    try:
+        return 0
+    except Exception:
+        try:
+            return 1
+        except Exception:
+            if a:
+                return 2
+",
+                "nested_handlers",
+                3,
+                Some(8),
+            ),
+            (
+                "\
+def try_else(a):
+    try:
+        return 0
+    except Exception:
+        return 1
+    else:
+        if a:
+            return 2
+",
+                "try_else",
+                1,
+                Some(4),
+            ),
+            (
+                "\
+def loop_else(xs):
+    for x in xs:
+        return x
+    else:
+        if xs:
+            return 0
+",
+                "loop_else",
+                2,
+                Some(5),
+            ),
+            (
+                "\
+def tied(a, b):
+    if a:
+        if b:
+            return 1
+    else:
+        if b:
+            return 2
+",
+                "tied",
+                2,
+                Some(3),
+            ),
+        ];
+        for (source, name, depth, line) in cases {
+            assert_eq!(structural_nesting(source, name), (depth, line), "{name}");
+        }
+    }
+
+    fn structural_nesting(source: &str, name: &str) -> (u32, Option<u32>) {
+        let file = parse("nesting.py", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{name}\n{source}");
+        let measured = crate::analyzers::measure(&file, &[]);
+        let found = measured
+            .iter()
+            .find(|item| item.name == name)
+            .unwrap_or_else(|| panic!("missing {name}"));
+        (found.nesting, found.nesting_line)
     }
 
     fn cognitive_total(body: &crate::ir::Body) -> u32 {

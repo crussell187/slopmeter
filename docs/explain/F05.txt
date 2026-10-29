@@ -1,12 +1,18 @@
 F05  nesting
 
-A reader should not hold three decisions at once.
+A reader should not hold three levels at once.
 
 Counting
-Nesting is the deepest decision. A decision outside any other is depth
-1. A function with no decisions has nesting 0. The decisions are the
-same ones cyclomatic complexity counts. The finding is that depth, at
-the deepest decision.
+Nesting is the deepest structural level. An if, a loop, a match or
+switch, a ternary, and a catch each add one inside the body or a
+ternary's value operand. A condition, an else, an elif, an else if, a
+boolean operator, a lambda, a guard, a comprehension clause, a try, a
+finally, a with, and a #if add none. Handlers on one try share one
+level, and so do the arms of one match and the cases of one switch. A
+structural form inside a lambda counts on the enclosing function. A
+nested function's nesting stays on that function. A function with none
+of these has nesting 0. The finding is that depth, at the deepest of
+these lines, and at the earlier line when two share that depth.
 
 Threshold
 Shipped stand-in: gate at 2. 2 passes and 3 fails.
@@ -35,5 +41,5 @@ def pick(rows, flag):
 
 Anti-fixes
 Indenting the inner condition less leaves the depth in place.
-A blank line between the decisions does not lower the depth.
-Moving the inner decision into a lambda here still counts it.
+A blank line between the levels does not lower the depth.
+Moving the inner form into a lambda here still counts it.

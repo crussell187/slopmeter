@@ -635,7 +635,9 @@ fn classify(node: Node<'_>, source: &[u8], receiver: Option<&str>, ordinary: &[S
         receiver,
         skip: None,
         lloc: 0,
+        structure: 0,
         decisions: Vec::new(),
+        levels: Vec::new(),
         cognitive: Vec::new(),
         chains: Vec::new(),
     };
@@ -654,6 +656,7 @@ fn classify(node: Node<'_>, source: &[u8], receiver: Option<&str>, ordinary: &[S
     Body {
         lloc: classifier.lloc,
         decisions: classifier.decisions,
+        levels: classifier.levels,
         cognitive: classifier.cognitive,
         chains: classifier.chains,
         forward,
@@ -689,7 +692,9 @@ struct Classifier<'a> {
     receiver: Option<&'a str>,
     skip: Option<std::ops::Range<usize>>,
     lloc: u32,
+    structure: u32,
     decisions: Vec<Decision>,
+    levels: Vec<Decision>,
     cognitive: Vec<Cognitive>,
     chains: Vec<Chain>,
 }
@@ -845,7 +850,7 @@ impl<'a> Classifier<'a> {
             self.walk_condition(condition, nesting);
         }
         if let Some(body) = node.child_by_field_name("consequence") {
-            self.walk_block(body, nesting + 1);
+            self.inside(|this| this.walk_block(body, nesting + 1));
         }
         if let Some(alternative) = node.child_by_field_name("alternative") {
             let inner = code_nodes(alternative);
@@ -854,7 +859,7 @@ impl<'a> Classifier<'a> {
                     self.walk_if(*child, nesting, true);
                 } else {
                     self.hybrid(line_of(alternative));
-                    self.walk_block(*child, nesting + 1);
+                    self.inside(|this| this.walk_block(*child, nesting + 1));
                 }
             }
         }
@@ -868,7 +873,7 @@ impl<'a> Classifier<'a> {
             self.walk_condition(condition, nesting);
         }
         if let Some(body) = node.child_by_field_name("body") {
-            self.walk_block(body, nesting + 1);
+            self.inside(|this| this.walk_block(body, nesting + 1));
         }
     }
 
@@ -877,7 +882,7 @@ impl<'a> Classifier<'a> {
         self.decision(line_of(node), nesting);
         self.structural(line_of(node), nesting);
         if let Some(body) = node.child_by_field_name("body") {
-            self.walk_block(body, nesting + 1);
+            self.inside(|this| this.walk_block(body, nesting + 1));
         }
     }
 
@@ -889,7 +894,7 @@ impl<'a> Classifier<'a> {
             self.walk(value, nesting);
         }
         if let Some(body) = node.child_by_field_name("body") {
-            self.walk_block(body, nesting + 1);
+            self.inside(|this| this.walk_block(body, nesting + 1));
         }
     }
 
@@ -924,9 +929,9 @@ impl<'a> Classifier<'a> {
         }
         if let Some(value) = node.child_by_field_name("value") {
             if value.kind() == "block" || is_transparent(value.kind()) {
-                self.walk(value, nesting + 1);
+                self.inside(|this| this.walk(value, nesting + 1));
             } else {
-                self.note_expression(value, nesting + 1);
+                self.inside(|this| this.note_expression(value, nesting + 1));
             }
         }
     }
@@ -1129,21 +1134,27 @@ impl<'a> Classifier<'a> {
                     self.decision(line, nesting);
                 } else if else_if {
                     self.decision(line, nesting);
-                    self.walk_brace_body(siblings, index, nesting + 1, skipped);
+                    self.inside(|this| {
+                        this.walk_brace_body(siblings, index, nesting + 1, skipped);
+                    });
                 } else {
                     self.structural(line, nesting);
                     self.decision(line, nesting);
-                    self.walk_brace_body(siblings, index, nesting + 1, skipped);
+                    self.inside(|this| {
+                        this.walk_brace_body(siblings, index, nesting + 1, skipped);
+                    });
                 }
             }
             "match" => {
                 self.structural(line_of(node), nesting);
-                self.walk_brace_body(siblings, index, nesting, skipped);
+                self.inside(|this| this.walk_brace_body(siblings, index, nesting, skipped));
             }
             "else" => {
                 self.hybrid(line_of(node));
                 if else_body(siblings, index, self.source).is_some() {
-                    self.walk_brace_body(siblings, index, nesting + 1, skipped);
+                    self.inside(|this| {
+                        this.walk_brace_body(siblings, index, nesting + 1, skipped);
+                    });
                 }
             }
             "&&" => self.bool_token(node, nesting, BoolOp::And, last_bool),
@@ -1304,6 +1315,16 @@ impl<'a> Classifier<'a> {
             kind: CognitiveKind::Structural,
             depth: nesting,
         });
+        self.levels.push(Decision {
+            line,
+            depth: self.structure + 1,
+        });
+    }
+
+    fn inside(&mut self, f: impl FnOnce(&mut Self)) {
+        self.structure += 1;
+        f(self);
+        self.structure -= 1;
     }
 
     fn hybrid(&mut self, line: u32) {
@@ -2741,6 +2762,279 @@ fn shipped() {}
             number: number.map(str::to_string),
             reason: reason.map(str::to_string),
         }
+    }
+
+    #[test]
+    fn nesting_is_the_deepest_structural_level() {
+        let cases = [
+            (
+                "\
+fn boolean(a: bool, b: bool) -> bool {
+    a && b
+}
+",
+                "boolean",
+                0,
+                None,
+            ),
+            (
+                "\
+fn conditional(a: bool, b: bool) -> i32 {
+    if a && b {
+        1
+    } else {
+        0
+    }
+}
+",
+                "conditional",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+fn ternary_bool(a: bool, b: bool) -> i32 {
+    if a && b { 1 } else { 0 }
+}
+",
+                "ternary_bool",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+fn in_lambda(a: bool) -> i32 {
+    let pick = |y: i32| if a { y } else { 0 };
+    pick(1)
+}
+",
+                "in_lambda",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+fn nested_keeps_its_own(a: bool) -> bool {
+    fn inner(x: bool) -> bool {
+        if x {
+            return x;
+        }
+        false
+    }
+    inner(a)
+}
+",
+                "nested_keeps_its_own",
+                0,
+                None,
+            ),
+            (
+                "\
+fn nested_keeps_its_own(a: bool) -> bool {
+    fn inner(x: bool) -> bool {
+        if x {
+            return x;
+        }
+        false
+    }
+    inner(a)
+}
+",
+                "nested_keeps_its_own::inner",
+                1,
+                Some(3),
+            ),
+            (
+                "\
+fn chained(a: bool, b: bool) -> i32 {
+    if a {
+        1
+    } else {
+        if b { 2 } else { 3 }
+    }
+}
+",
+                "chained",
+                2,
+                Some(5),
+            ),
+            (
+                "\
+fn else_if_chain(a: bool, b: bool) -> i32 {
+    if a {
+        1
+    } else if b {
+        2
+    } else {
+        3
+    }
+}
+",
+                "else_if_chain",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+fn in_condition(a: bool) -> i32 {
+    if if a { true } else { false } {
+        1
+    } else {
+        0
+    }
+}
+",
+                "in_condition",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+fn operand(a: bool) -> i32 {
+    if if a { 2 } else { 0 } == 1 { 1 } else { 3 }
+}
+",
+                "operand",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+fn in_body(a: bool, b: bool) -> i32 {
+    if a {
+        if b { 1 } else { 0 }
+    } else {
+        0
+    }
+}
+",
+                "in_body",
+                2,
+                Some(3),
+            ),
+            (
+                "\
+fn if_else(a: bool) -> i32 {
+    if a {
+        1
+    } else {
+        0
+    }
+}
+",
+                "if_else",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+fn else_holds_if(a: bool, b: bool) -> i32 {
+    if a {
+        1
+    } else {
+        if b {
+            2
+        } else {
+            0
+        }
+    }
+}
+",
+                "else_holds_if",
+                2,
+                Some(5),
+            ),
+            (
+                "\
+fn guard(x: i32) -> i32 {
+    match x {
+        y if y > 0 => 1,
+        _ => 0,
+    }
+}
+",
+                "guard",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+fn arm_if(x: i32) -> i32 {
+    match x {
+        y => {
+            if y > 0 {
+                1
+            } else {
+                0
+            }
+        }
+    }
+}
+",
+                "arm_if",
+                2,
+                Some(4),
+            ),
+            (
+                "\
+fn tied(a: bool, b: bool) -> i32 {
+    if a {
+        if b { 1 } else { 0 }
+    } else {
+        if b { 2 } else { 0 }
+    }
+}
+",
+                "tied",
+                2,
+                Some(3),
+            ),
+            (
+                "\
+fn loops(xs: &[i32]) -> i32 {
+    for x in xs {
+        while *x > 0 {
+            return *x;
+        }
+    }
+    0
+}
+",
+                "loops",
+                2,
+                Some(3),
+            ),
+            (
+                "\
+fn let_else(value: Option<i32>) -> i32 {
+    let Some(found) = value else {
+        if value.is_none() {
+            return 0;
+        }
+        return 1;
+    };
+    found
+}
+",
+                "let_else",
+                1,
+                Some(3),
+            ),
+        ];
+        for (source, name, depth, line) in cases {
+            assert_eq!(structural_nesting(source, name), (depth, line), "{name}");
+        }
+    }
+
+    fn structural_nesting(source: &str, name: &str) -> (u32, Option<u32>) {
+        let file = parse("nesting.rs", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{name}\n{source}");
+        let measured = crate::analyzers::measure(&file, &[]);
+        let found = measured
+            .iter()
+            .find(|item| item.name == name)
+            .unwrap_or_else(|| panic!("missing {name}"));
+        (found.nesting, found.nesting_line)
     }
 
     fn function<'a>(file: &'a File, name: &str) -> &'a Function {

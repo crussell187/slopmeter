@@ -836,7 +836,9 @@ fn classify(node: Node<'_>, source: &[u8], receiver: Option<&str>, ordinary: &[S
         receiver,
         skip: None,
         lloc: 0,
+        structure: 0,
         decisions: Vec::new(),
+        levels: Vec::new(),
         cognitive: Vec::new(),
         chains: Vec::new(),
     };
@@ -862,6 +864,7 @@ fn classify(node: Node<'_>, source: &[u8], receiver: Option<&str>, ordinary: &[S
     Body {
         lloc: classifier.lloc,
         decisions: classifier.decisions,
+        levels: classifier.levels,
         cognitive: classifier.cognitive,
         chains: classifier.chains,
         forward,
@@ -890,7 +893,9 @@ struct Classifier<'a> {
     receiver: Option<&'a str>,
     skip: Option<Range<usize>>,
     lloc: u32,
+    structure: u32,
     decisions: Vec<Decision>,
+    levels: Vec<Decision>,
     cognitive: Vec<Cognitive>,
     chains: Vec<Chain>,
 }
@@ -1036,7 +1041,7 @@ impl<'a> Classifier<'a> {
             self.walk_condition(condition, nesting);
         }
         if let Some(body) = node.child_by_field_name("consequence") {
-            self.walk(body, nesting + 1);
+            self.inside(|this| this.walk(body, nesting + 1));
         }
         if let Some(alternative) = node.child_by_field_name("alternative") {
             let inner = code_nodes(alternative);
@@ -1045,7 +1050,7 @@ impl<'a> Classifier<'a> {
                     self.walk_if(*child, nesting, true);
                 } else {
                     self.hybrid(line_of(alternative));
-                    self.walk(*child, nesting + 1);
+                    self.inside(|this| this.walk(*child, nesting + 1));
                 }
             }
         }
@@ -1059,7 +1064,7 @@ impl<'a> Classifier<'a> {
             self.walk_condition(condition, nesting);
         }
         if let Some(body) = node.child_by_field_name("body") {
-            self.walk(body, nesting + 1);
+            self.inside(|this| this.walk(body, nesting + 1));
         }
     }
 
@@ -1068,7 +1073,7 @@ impl<'a> Classifier<'a> {
         self.decision(line_of(node), nesting);
         self.structural(line_of(node), nesting);
         if let Some(body) = node.child_by_field_name("body") {
-            self.walk(body, nesting + 1);
+            self.inside(|this| this.walk(body, nesting + 1));
         }
         if let Some(condition) = node.child_by_field_name("condition") {
             self.walk_condition(condition, nesting);
@@ -1085,7 +1090,7 @@ impl<'a> Classifier<'a> {
             }
         }
         if let Some(body) = node.child_by_field_name("body") {
-            self.walk(body, nesting + 1);
+            self.inside(|this| this.walk(body, nesting + 1));
         }
     }
 
@@ -1109,7 +1114,7 @@ impl<'a> Classifier<'a> {
             if Some(child) == value {
                 continue;
             }
-            self.walk(child, nesting + 1);
+            self.inside(|this| this.walk(child, nesting + 1));
         }
     }
 
@@ -1135,7 +1140,7 @@ impl<'a> Classifier<'a> {
         self.decision(line_of(node), nesting);
         self.structural(line_of(node), nesting);
         if let Some(body) = node.child_by_field_name("body") {
-            self.walk(body, nesting + 1);
+            self.inside(|this| this.walk(body, nesting + 1));
         }
     }
 
@@ -1146,10 +1151,10 @@ impl<'a> Classifier<'a> {
             self.walk(condition, nesting);
         }
         if let Some(consequence) = node.child_by_field_name("consequence") {
-            self.walk(consequence, nesting + 1);
+            self.inside(|this| this.walk(consequence, nesting + 1));
         }
         if let Some(alternative) = node.child_by_field_name("alternative") {
-            self.walk(alternative, nesting + 1);
+            self.inside(|this| this.walk(alternative, nesting + 1));
         }
     }
 
@@ -1277,6 +1282,16 @@ impl<'a> Classifier<'a> {
             kind: CognitiveKind::Structural,
             depth: nesting,
         });
+        self.levels.push(Decision {
+            line,
+            depth: self.structure + 1,
+        });
+    }
+
+    fn inside(&mut self, f: impl FnOnce(&mut Self)) {
+        self.structure += 1;
+        f(self);
+        self.structure -= 1;
     }
 
     fn hybrid(&mut self, line: u32) {
@@ -2230,6 +2245,302 @@ done:
             .cognitive
             .iter()
             .any(|item| item.kind == CognitiveKind::Fundamental));
+    }
+
+    #[test]
+    fn nesting_is_the_deepest_structural_level() {
+        let cases = [
+            (
+                "\
+int boolean(bool a, bool b) {
+    return a && b;
+}
+",
+                "boolean",
+                0,
+                None,
+            ),
+            (
+                "\
+int conditional(bool a, bool b) {
+    if (a && b) return 1;
+    return 0;
+}
+",
+                "conditional",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+int ternary_bool(bool a, bool b) {
+    return a && b ? 1 : 0;
+}
+",
+                "ternary_bool",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+int in_lambda(bool a) {
+    auto pick = [](int y, bool flag) { return flag ? y : 0; };
+    return pick(1, a);
+}
+",
+                "in_lambda",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+int nested_keeps_its_own(bool a) {
+    struct Inner {
+        static bool method(bool x) {
+            if (x) return x;
+            return false;
+        }
+    };
+    return Inner::method(a);
+}
+",
+                "nested_keeps_its_own",
+                0,
+                None,
+            ),
+            (
+                "\
+int nested_keeps_its_own(bool a) {
+    struct Inner {
+        static bool method(bool x) {
+            if (x) return x;
+            return false;
+        }
+    };
+    return Inner::method(a);
+}
+",
+                "nested_keeps_its_own::Inner::method",
+                1,
+                Some(4),
+            ),
+            (
+                "\
+int chained(bool a, bool b) {
+    return a ? 1 : b ? 2 : 3;
+}
+",
+                "chained",
+                2,
+                Some(2),
+            ),
+            (
+                "\
+int in_condition(bool a) {
+    if (a ? 1 : 0) return 1;
+    return 0;
+}
+",
+                "in_condition",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+int operand(bool a) {
+    return (a ? 2 : 0) ? 1 : 3;
+}
+",
+                "operand",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+int in_body(bool a, bool b) {
+    if (a) return b ? 1 : 0;
+    return 0;
+}
+",
+                "in_body",
+                2,
+                Some(2),
+            ),
+            (
+                "\
+int if_else(bool a) {
+    if (a) return 1;
+    else return 0;
+}
+",
+                "if_else",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+int else_if_chain(bool a, bool b) {
+    if (a) return 1;
+    else if (b) return 2;
+    else return 0;
+}
+",
+                "else_if_chain",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+int else_holds_if(bool a, bool b) {
+    if (a) return 1;
+    else {
+        if (b) return 2;
+    }
+    return 0;
+}
+",
+                "else_holds_if",
+                2,
+                Some(4),
+            ),
+            (
+                "\
+int switches(int x) {
+    switch (x) {
+    case 1: return 1;
+    case 2: return 2;
+    }
+    return 0;
+}
+",
+                "switches",
+                1,
+                Some(2),
+            ),
+            (
+                "\
+int arm_if(int x) {
+    switch (x) {
+    case 1:
+        if (x) return 1;
+        break;
+    }
+    return 0;
+}
+",
+                "arm_if",
+                2,
+                Some(4),
+            ),
+            (
+                "\
+int try_if(bool a) {
+    try {
+        if (a) return 1;
+    } catch (...) {
+        return 0;
+    }
+    return 0;
+}
+",
+                "try_if",
+                1,
+                Some(3),
+            ),
+            (
+                "\
+int catch_if(bool a) {
+    try {
+        return 0;
+    } catch (...) {
+        if (a) return 1;
+    }
+    return 0;
+}
+",
+                "catch_if",
+                2,
+                Some(5),
+            ),
+            (
+                "\
+int two_handlers(bool a) {
+    try {
+        return 0;
+    } catch (int) {
+        return 1;
+    } catch (...) {
+        if (a) return 2;
+    }
+    return 0;
+}
+",
+                "two_handlers",
+                2,
+                Some(7),
+            ),
+            (
+                "\
+int nested_handlers(bool a) {
+    try {
+        return 0;
+    } catch (...) {
+        try {
+            return 1;
+        } catch (...) {
+            if (a) return 2;
+        }
+    }
+    return 0;
+}
+",
+                "nested_handlers",
+                3,
+                Some(8),
+            ),
+            (
+                "\
+int preproc(bool a) {
+#if 1
+    if (a) return 1;
+#endif
+    return 0;
+}
+",
+                "preproc",
+                1,
+                Some(3),
+            ),
+            (
+                "\
+int tied(bool a, bool b) {
+    if (a) {
+        if (b) return 1;
+    } else {
+        if (b) return 2;
+    }
+    return 0;
+}
+",
+                "tied",
+                2,
+                Some(3),
+            ),
+        ];
+        for (source, name, depth, line) in cases {
+            assert_eq!(structural_nesting(source, name), (depth, line), "{name}");
+        }
+    }
+
+    fn structural_nesting(source: &str, name: &str) -> (u32, Option<u32>) {
+        let file = parse("nesting.hpp", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{name}\n{source}");
+        let measured = crate::analyzers::measure(&file, &[]);
+        let found = measured
+            .iter()
+            .find(|item| item.name == name)
+            .unwrap_or_else(|| panic!("missing {name}"));
+        (found.nesting, found.nesting_line)
     }
 
     #[test]

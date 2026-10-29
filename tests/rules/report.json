@@ -1,8 +1,8 @@
 {
   "verdict": "fail",
   "scope": "strict",
-  "slop_score": 392.2413793103448,
-  "kloc": 0.232,
+  "slop_score": 391.6666666666667,
+  "kloc": 0.24,
   "tool_version": "0.0.0",
   "findings": [
     {
@@ -48,12 +48,12 @@
         "param_types": [],
         "qualifier": ""
       },
-      "line": 2,
+      "line": 8,
       "measured_value": 7,
       "threshold": 6,
       "weight": 10,
       "principle": "A reader should not hold three decisions at once.",
-      "fix_shape": "Flatten the decision at line 2 in deep. Nesting is 7, and the gate is 6.",
+      "fix_shape": "Flatten the decision at line 8 in deep. Nesting is 7, and the gate is 6.",
       "anti_fix": "Indenting the inner condition less leaves the depth in place."
     },
     {
@@ -140,6 +140,23 @@
       "principle": "A function's body should stay short enough to read at once.",
       "fix_shape": "Shorten long. Its body is 197 lines, and the gate is 196.",
       "anti_fix": "Breaking one statement across more lines makes the count larger."
+    },
+    {
+      "rule": "F03",
+      "level": "warn",
+      "symbol": {
+        "path": "tests/rules/F05.py",
+        "name": "deep",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 1,
+      "measured_value": 28,
+      "threshold": 10,
+      "weight": 3,
+      "principle": "Nested structure costs more to understand than a path count. SonarSource Cognitive Complexity.",
+      "fix_shape": "Simplify deep. Its cognitive complexity is 28, and the warn is 10.",
+      "anti_fix": "Adding a comment inside the nested block leaves the score in place."
     },
     {
       "rule": "F07",

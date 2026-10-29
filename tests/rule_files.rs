@@ -89,7 +89,13 @@ fn each_file_trips_only_its_rule_and_the_goldens_match() {
             .filter(|finding| finding.path == path)
             .map(|finding| finding.rule.as_str())
             .collect();
-        assert_eq!(found, vec![rule], "{name}");
+        // Seven structural levels are also an F03 warn. The same forms make both counts.
+        let expected = if rule == "F05" {
+            vec!["F03", "F05"]
+        } else {
+            vec![rule]
+        };
+        assert_eq!(found, expected, "{name}");
     }
     let table = render(&report, false);
     let json = render(&report, true);

@@ -93,9 +93,9 @@ fn cognitive(body: &Body) -> u32 {
 }
 
 fn nesting(body: &Body) -> u32 {
-    body.decisions
+    body.levels
         .iter()
-        .map(|decision| decision.depth)
+        .map(|level| level.depth)
         .max()
         .unwrap_or(0)
 }
@@ -105,10 +105,10 @@ fn nesting_line(body: &Body) -> Option<u32> {
     if depth == 0 {
         return None;
     }
-    body.decisions
+    body.levels
         .iter()
-        .filter(|decision| decision.depth == depth)
-        .map(|decision| decision.line)
+        .filter(|level| level.depth == depth)
+        .map(|level| level.line)
         .min()
 }
 
@@ -226,6 +226,7 @@ mod tests {
         Body {
             lloc: 0,
             decisions: vec![],
+            levels: vec![],
             cognitive: vec![],
             chains: vec![],
             forward: None,
@@ -247,17 +248,19 @@ mod tests {
     }
 
     #[test]
-    fn decisions_add_a_path_and_nesting_is_the_deepest() {
+    fn decisions_add_a_path_and_nesting_is_the_deepest_level() {
         let mut body = empty();
-        body.decisions = vec![
-            Decision { line: 12, depth: 1 },
+        body.decisions = vec![Decision { line: 12, depth: 9 }];
+        body.levels = vec![
             Decision { line: 14, depth: 3 },
             Decision { line: 15, depth: 2 },
+            Decision { line: 11, depth: 3 },
         ];
         let measured = measure(&file(vec![function("choose", vec![], body)]), &[]);
 
-        assert_eq!(measured[0].cyclomatic, 4);
+        assert_eq!(measured[0].cyclomatic, 2);
         assert_eq!(measured[0].nesting, 3);
+        assert_eq!(measured[0].nesting_line, Some(11));
     }
 
     #[test]
@@ -463,7 +466,7 @@ mod tests {
     fn the_measurement_keeps_lines_nesting_and_waivers() {
         let mut body = empty();
         body.lloc = 4;
-        body.decisions = vec![
+        body.levels = vec![
             Decision { line: 14, depth: 3 },
             Decision { line: 11, depth: 3 },
             Decision { line: 12, depth: 1 },
