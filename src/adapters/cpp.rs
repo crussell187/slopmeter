@@ -1673,6 +1673,12 @@ fn peel(node: Node, source: &[u8]) -> Option<Peeled> {
         "call_expression" => {
             let function = node.child_by_field_name("function")?;
             if let Some(name) = bare_call_name(function, source) {
+                if bare_call_roots_a_chain(node) {
+                    return Some(Peeled {
+                        root: None,
+                        hops: Vec::new(),
+                    });
+                }
                 return Some(Peeled {
                     root: None,
                     hops: vec![Hop {
@@ -1727,6 +1733,46 @@ fn bare_call_name(node: Node, source: &[u8]) -> Option<String> {
             bare_call_name(*child, source)
         }
         _ => None,
+    }
+}
+
+fn bare_call_roots_a_chain(node: Node) -> bool {
+    let mut current = node;
+    loop {
+        let Some(parent) = current.parent() else {
+            return false;
+        };
+        match parent.kind() {
+            "field_expression" => {
+                return parent.child_by_field_name("argument") == Some(current);
+            }
+            "subscript_expression" => {
+                if parent.child_by_field_name("argument") != Some(current) {
+                    return false;
+                }
+                current = parent;
+            }
+            "parenthesized_expression" => {
+                let children = code_nodes(parent);
+                if children.len() != 1 || children.first() != Some(&current) {
+                    return false;
+                }
+                current = parent;
+            }
+            "call_expression" => {
+                if parent.child_by_field_name("function") != Some(current) {
+                    return false;
+                }
+                current = parent;
+            }
+            "template_function" | "template_method" => {
+                if parent.child_by_field_name("name") != Some(current) {
+                    return false;
+                }
+                current = parent;
+            }
+            _ => return false,
+        }
     }
 }
 
@@ -1852,6 +1898,14 @@ mod tests {
             .iter()
             .find(|function| function.name == name)
             .unwrap_or_else(|| panic!("missing {name}"))
+    }
+
+    fn member_names(chain: &crate::ir::Chain) -> Vec<&str> {
+        chain
+            .members
+            .iter()
+            .map(|member| member.name.as_str())
+            .collect()
     }
 
     fn cognitive_total(body: &Body) -> u32 {
@@ -2255,6 +2309,48 @@ struct Repo {
             .chains
             .iter()
             .any(|chain| !chain.rooted && chain.members.len() == 1));
+    }
+
+    #[test]
+    fn a_bare_call_that_starts_a_member_chain_is_not_a_hop() {
+        let source = "\
+int call_result() { return make().a.b.c; }
+int wrapped() { return (make()).a.b; }
+int arrow() { return make()->a.b; }
+int method_call(Obj& obj) { return obj.method().extra; }
+int calls() { send(); return 0; }
+";
+        let file = parse("chain.hpp", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+        let call_result = function(&file, "call_result");
+        assert_eq!(
+            member_names(&call_result.body.chains[0]),
+            vec!["a", "b", "c"]
+        );
+        assert!(call_result.body.chains[0]
+            .members
+            .iter()
+            .all(|member| !member.call));
+        assert_eq!(
+            member_names(&function(&file, "wrapped").body.chains[0]),
+            vec!["a", "b"]
+        );
+        assert_eq!(
+            member_names(&function(&file, "arrow").body.chains[0]),
+            vec!["a", "b"]
+        );
+        let method_call = function(&file, "method_call");
+        assert_eq!(
+            member_names(&method_call.body.chains[0]),
+            vec!["method", "extra"]
+        );
+        assert!(method_call.body.chains[0].members[0].call);
+        assert!(!method_call.body.chains[0].members[1].call);
+        assert_eq!(
+            member_names(&function(&file, "calls").body.chains[0]),
+            vec!["send"]
+        );
+        assert!(function(&file, "calls").body.chains[0].members[0].call);
     }
 
     #[test]
