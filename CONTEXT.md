@@ -24,7 +24,7 @@ A named definition with a body the programmer wrote, including one nested inside
 _Avoid_: method, lambda, closure, callable, declaration, prototype, decorator, attribute
 
 **Body span**:
-The lines from the `def` or `fn` through the end of the body. Coverage joins on this span.
+The lines from the `def` or `fn` through the end of the body. Coverage and the mutation score join on this span. A mutant belongs to the function whose span contains the line where that mutant starts.
 _Avoid_: touch span, extent
 
 **Touch span**:
@@ -70,6 +70,10 @@ _Avoid_: changed-line coverage, branch coverage, instruction coverage
 **CRAP**:
 A function metric that grows with cyclomatic complexity and with uncovered lines. The score is CC squared times the uncovered fraction cubed, plus CC. Absent coverage leaves it uncomputed.
 _Avoid_: crap score, grade
+
+**Mutation score**:
+The fraction of a function's valid mutants that the tests detected. A mutant is detected when a test fails on it or the run times out. A mutant the tests pass is undetected. A mutant that never compiles is left out. With no valid mutants, the score is absent.
+_Avoid_: kill rate, coverage, CRAP
 
 **Unparsed ratio**:
 The fraction of lines in a file that the parser could not recover. It says how far to trust that file's numbers, and it does not fail the run.

@@ -84,11 +84,11 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [What a pass-through is when one extra statement dodges it](issues/58-passthrough-tightening.md) — a logging statement and a dead assignment may sit beside the one call; `Ok`, `Some`, and `Err` peel; the call's object counts; a non-literal extra argument disqualifies the call; a pack expansion forwards the pack ([ADR 0009](../../docs/adr/0009-passthrough-warns-chain-gates.md)).
 - [Fix the LCOV join edge cases](issues/59-lcov-edge-cases.md) — a second record that matches the same file is a tie and leaves coverage absent; an empty `DA` checksum is a listed line; a missing report path is named in the note ([ADR 0011](../../docs/adr/0011-coverage-by-line-range.md)).
 - [A coverage gate on changed lines](issues/60-coverage-gate.md) — S06 gates the hit `DA` fraction of a touched function at 100%; a missing report fails that run; `--strict` keeps shown rows inherited; a waiver line for S06 fails the run ([ADR 0026](../../docs/adr/0026-coverage-gate-on-a-changed-function.md)).
+- [Mutation testing as a slopmeter gate](issues/61-mutation-testing.md) — S07 gates the mutation score of a touched function at 1; the tool reads a report and does not run the mutator; a missing report fails that run; `--strict` keeps shown rows inherited; a waiver line for S07 fails the run ([ADR 0027](../../docs/adr/0027-mutation-score-on-a-changed-function.md)).
 
 ## Not yet specified
 
-- **Mutation report readers.** One per language once [Mutation testing as a slopmeter gate](issues/61-mutation-testing.md) is decided: cargo-mutants `outcomes.json`, mutmut's store or stats export, and mull's mutation-testing-elements JSON if C++ gets a build input. Each is a build slice with a fixture report and a sloppy-corpus run.
-- **Assertion density (spec S05).** Once the coverage gate exists, a test that runs everything and asserts nothing reaches 100%; the spec's counter is an assertion-per-test floor. Depends on the coverage-gate decision and on scoring test files, which are out of the scored set today.
+- **Assertion density (spec S05).** S07 fails a changed function when a test runs it and asserts nothing, because the mutant survives. An assertion-per-test floor would still score the tests themselves, which are out of the scored set today.
 - **Multi-package repos.** Cargo workspaces, Python monorepos, C++ projects with several targets: how source selection, `--changed` and the KLOC denominator treat them.
 - **Secondary-language files inside a repo.** 188 `.py` files inside the C++ corpus repos were scored under the Python profile. Whether a repo declares its languages, or every claimed extension counts everywhere, waits on the recalibration.
 
