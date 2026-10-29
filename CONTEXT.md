@@ -148,7 +148,11 @@ Member names that add no hop on a member chain. The adapter publishes the langua
 _Avoid_: exemption, ignore list
 
 **Profile**:
-One language's thresholds. The tool ships the table, including the pass-through ratio and the two chain depths. `slopmeter.toml` records a `warn` or a `gate` a project changes, and names added to that language's allow-list.
+One language's thresholds. The tool ships the table, including the pass-through ratio and the two chain depths. The config file may change a gate on a count rule, a warn only on cognitive complexity, and names on that language's allow-list. The coverage gate and the mutation gate are not in the profile.
+
+**Departure**:
+A profile value set to something other than that language's built-in. The run names it, and it does not fail the run.
+_Avoid_: override, customization
 
 **Validation run**:
 A `--strict` score of the per-language corpus once thresholds have been tuned. Clean repos have no gate findings. The sloppy repo fails each gating rule, and shows the F07 warn.

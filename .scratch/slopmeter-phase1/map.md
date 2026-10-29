@@ -85,6 +85,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Fix the LCOV join edge cases](issues/59-lcov-edge-cases.md) — a second record that matches the same file is a tie and leaves coverage absent; an empty `DA` checksum is a listed line; a missing report path is named in the note ([ADR 0011](../../docs/adr/0011-coverage-by-line-range.md)).
 - [A coverage gate on changed lines](issues/60-coverage-gate.md) — S06 gates the hit `DA` fraction of a touched function at 100%; a missing report fails that run; `--strict` keeps shown rows inherited; a waiver line for S06 fails the run ([ADR 0026](../../docs/adr/0026-coverage-gate-on-a-changed-function.md)).
 - [Mutation testing as a slopmeter gate](issues/61-mutation-testing.md) — S07 gates the mutation score of a touched function at 1; the tool reads a report and does not run the mutator; a missing report fails that run; `--strict` keeps shown rows inherited; a waiver line for S07 fails the run ([ADR 0027](../../docs/adr/0027-mutation-score-on-a-changed-function.md)).
+- [Which gates the config may move, and how the report shows it](issues/62-config-overrides.md) — a count gate may rise to twice that language's built-in, F03's warn tops out at 20, and each departure is a run-level note ([ADR 0028](../../docs/adr/0028-count-gate-twice-the-built-in.md)).
 
 ## Not yet specified
 
