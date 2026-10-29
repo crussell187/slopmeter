@@ -6,6 +6,7 @@ use crate::ir::Language;
 pub const F01_GATE: u32 = 8;
 pub const F02_GATE: u32 = 8;
 pub const F03_WARN: u32 = 10;
+pub const F03_WARN_MAX: u32 = 20;
 pub const F03_GATE: u32 = 15;
 pub const F04_GATE: u32 = 3;
 pub const F05_GATE: u32 = 2;
@@ -80,6 +81,7 @@ pub enum ConfigError {
     InvalidPath(String),
     InvalidName(String),
     Negative(String),
+    OutOfRange(String),
     WarnNotBelowGate {
         language: String,
         warn: u32,
@@ -99,6 +101,7 @@ impl std::fmt::Display for ConfigError {
             ConfigError::InvalidPath(path) => write!(f, "invalid path {path}"),
             ConfigError::InvalidName(name) => write!(f, "invalid allow name {name}"),
             ConfigError::Negative(key) => write!(f, "{key} is negative"),
+            ConfigError::OutOfRange(key) => write!(f, "{key} is out of range"),
             ConfigError::WarnNotBelowGate {
                 language,
                 warn,
@@ -334,12 +337,70 @@ fn apply_language(
     }
     for (rule, body) in table {
         match rule.as_str() {
+            "F01" | "F02" | "F04" | "F05" | "F06" | "F11" => {
+                apply_count_gate(config, language, rule, body)?;
+            }
             "F03" => apply_f03(config, language, body)?,
             "F08" => apply_f08(config, language, body)?,
             other => return Err(ConfigError::UnknownKey(format!("profile.{label}.{other}"))),
         }
     }
     Ok(())
+}
+
+fn apply_count_gate(
+    config: &mut Config,
+    language: Language,
+    rule: &str,
+    value: &toml::Value,
+) -> Result<(), ConfigError> {
+    let label = language_name(language);
+    let key = format!("profile.{label}.{rule}");
+    let Some(table) = value.as_table() else {
+        return Err(ConfigError::WrongType(key));
+    };
+    if table.is_empty() {
+        return Err(ConfigError::EmptyOverride(key));
+    }
+    let mut gate = None;
+    for (name, item) in table {
+        match name.as_str() {
+            "gate" => gate = Some(nonneg(item, &format!("{key}.gate"))?),
+            other => return Err(ConfigError::UnknownKey(format!("{key}.{other}"))),
+        }
+    }
+    let Some(gate) = gate else {
+        return Err(ConfigError::EmptyOverride(key));
+    };
+    let ceiling = builtin_gate(language, rule).saturating_mul(2);
+    if gate > ceiling {
+        return Err(ConfigError::OutOfRange(format!("{key}.gate")));
+    }
+    let profile = config.profile_mut(language);
+    match rule {
+        "F01" => profile.f01_gate = gate,
+        "F02" => profile.f02_gate = gate,
+        "F04" => profile.f04_gate = gate,
+        "F05" => profile.f05_gate = gate,
+        "F06" => profile.f06_gate = gate,
+        "F11" => profile.f11_gate = gate,
+        _ => return Err(ConfigError::UnknownKey(key)),
+    }
+    Ok(())
+}
+
+fn builtin_gate(language: Language, rule: &str) -> u32 {
+    let profile = LanguageProfile::builtin(language);
+    match rule {
+        "F01" => profile.f01_gate,
+        "F02" => profile.f02_gate,
+        "F03" => profile.f03_gate,
+        "F04" => profile.f04_gate,
+        "F05" => profile.f05_gate,
+        "F06" => profile.f06_gate,
+        "F11" => profile.f11_gate,
+        _ => 0,
+    }
 }
 
 fn apply_f03(
@@ -371,7 +432,14 @@ fn apply_f03(
         return Err(ConfigError::EmptyOverride(format!("profile.{label}.F03")));
     }
     let warn = warn.unwrap_or(F03_WARN);
-    let gate = gate.unwrap_or(F03_GATE);
+    let builtin = builtin_gate(language, "F03");
+    let gate = gate.unwrap_or(builtin);
+    if warn > F03_WARN_MAX {
+        return Err(ConfigError::OutOfRange(format!("profile.{label}.F03.warn")));
+    }
+    if gate < 1 || gate > builtin.saturating_mul(2) {
+        return Err(ConfigError::OutOfRange(format!("profile.{label}.F03.gate")));
+    }
     if warn >= gate {
         return Err(ConfigError::WarnNotBelowGate {
             language: label.to_string(),
@@ -521,11 +589,56 @@ fn segment_matches(pattern: &str, segment: &str) -> bool {
     true
 }
 
+pub fn departures(config: &Config) -> Vec<String> {
+    let mut notes = Vec::new();
+    for language in [Language::Python, Language::Rust, Language::Cpp] {
+        let current = config.profile(language);
+        let builtin = LanguageProfile::builtin(language);
+        let name = language_label(language);
+        note_gate(&mut notes, name, "F01", current.f01_gate, builtin.f01_gate);
+        note_gate(&mut notes, name, "F02", current.f02_gate, builtin.f02_gate);
+        if current.f03_warn != builtin.f03_warn {
+            notes.push(format!(
+                "{name} F03 warn is {}, built-in {}",
+                current.f03_warn, builtin.f03_warn
+            ));
+        }
+        note_gate(&mut notes, name, "F03", current.f03_gate, builtin.f03_gate);
+        note_gate(&mut notes, name, "F04", current.f04_gate, builtin.f04_gate);
+        note_gate(&mut notes, name, "F05", current.f05_gate, builtin.f05_gate);
+        note_gate(&mut notes, name, "F06", current.f06_gate, builtin.f06_gate);
+        if !current.f08_allow.is_empty() {
+            notes.push(format!(
+                "{name} F08 allow adds {}",
+                current.f08_allow.join(", ")
+            ));
+        }
+        note_gate(&mut notes, name, "F11", current.f11_gate, builtin.f11_gate);
+    }
+    notes
+}
+
+fn note_gate(notes: &mut Vec<String>, language: &str, rule: &str, value: u32, builtin: u32) {
+    if value != builtin {
+        notes.push(format!(
+            "{language} {rule} gate is {value}, built-in {builtin}"
+        ));
+    }
+}
+
 fn language_name(language: Language) -> &'static str {
     match language {
         Language::Python => "python",
         Language::Rust => "rust",
         Language::Cpp => "cpp",
+    }
+}
+
+fn language_label(language: Language) -> &'static str {
+    match language {
+        Language::Python => "Python",
+        Language::Rust => "Rust",
+        Language::Cpp => "C++",
     }
 }
 
@@ -713,11 +826,95 @@ allow = ["with_timeout"]
     }
 
     #[test]
+    fn a_warn_only_table_keeps_the_language_gate() {
+        let root = fixture("warn-only");
+        write_config(&root, "[profile.python.F03]\nwarn = 12\n");
+        let python = load_config(&root)
+            .unwrap()
+            .profile(Language::Python)
+            .clone();
+        assert_eq!(python.f03_warn, 12);
+        assert_eq!(python.f03_gate, PYTHON_F03_GATE);
+        assert_eq!(python.f01_gate, PYTHON_F01_GATE);
+    }
+
+    #[test]
+    fn a_count_gate_runs_from_zero_to_twice_the_built_in() {
+        let root = fixture("bounds");
+        write_config(&root, "[profile.python.F01]\ngate = 0\n");
+        assert_eq!(
+            load_config(&root)
+                .unwrap()
+                .profile(Language::Python)
+                .f01_gate,
+            0
+        );
+
+        write_config(&root, "[profile.python.F01]\ngate = 96\n");
+        assert_eq!(
+            load_config(&root)
+                .unwrap()
+                .profile(Language::Python)
+                .f01_gate,
+            96
+        );
+
+        write_config(
+            &root,
+            "[profile.rust.F04]\ngate = 0\n\n[profile.cpp.F06]\ngate = 1426\n\n[profile.python.F02]\ngate = 16\n",
+        );
+        let config = load_config(&root).unwrap();
+        assert_eq!(config.profile(Language::Rust).f04_gate, 0);
+        assert_eq!(config.profile(Language::Cpp).f06_gate, 1426);
+        assert_eq!(config.profile(Language::Python).f02_gate, 16);
+        assert_eq!(config.profile(Language::Python).f04_gate, PYTHON_F04_GATE);
+
+        write_config(&root, "[profile.python.F01]\ngate = 97\n");
+        let err = load_config(&root).unwrap_err().to_string();
+        assert!(err.contains("profile.python.F01.gate"), "{err}");
+
+        write_config(&root, "[profile.python.F03]\nwarn = 0\ngate = 1\n");
+        let python = load_config(&root)
+            .unwrap()
+            .profile(Language::Python)
+            .clone();
+        assert_eq!(python.f03_warn, 0);
+        assert_eq!(python.f03_gate, 1);
+
+        write_config(&root, "[profile.python.F03]\nwarn = 20\n");
+        let python = load_config(&root)
+            .unwrap()
+            .profile(Language::Python)
+            .clone();
+        assert_eq!(python.f03_warn, 20);
+        assert_eq!(python.f03_gate, PYTHON_F03_GATE);
+
+        write_config(&root, "[profile.python.F03]\ngate = 0\nwarn = 0\n");
+        let err = load_config(&root).unwrap_err().to_string();
+        assert!(err.contains("profile.python.F03.gate"), "{err}");
+
+        write_config(&root, "[profile.python.F03]\nwarn = 21\n");
+        let err = load_config(&root).unwrap_err().to_string();
+        assert!(err.contains("profile.python.F03.warn"), "{err}");
+
+        write_config(&root, "[profile.rust.F03]\ngate = 384\nwarn = 20\n");
+        let rust_profile = load_config(&root).unwrap().profile(Language::Rust).clone();
+        assert_eq!(rust_profile.f03_gate, 384);
+        assert_eq!(rust_profile.f03_warn, 20);
+
+        write_config(&root, "[profile.rust.F03]\ngate = 385\nwarn = 20\n");
+        let err = load_config(&root).unwrap_err().to_string();
+        assert!(err.contains("profile.rust.F03.gate"), "{err}");
+    }
+
+    #[test]
     fn other_rules_wrong_types_and_bad_paths_fail() {
         let root = fixture("rejected");
         let rejected = [
-            "[profile.python.F01]\ngate = 10\n",
             "[profile.python.F07]\nwarn = 80\n",
+            "[profile.python.S06]\ngate = 1\n",
+            "[profile.python.S07]\ngate = 1\n",
+            "[profile.python.F01]\nwarn = 10\n",
             "[profile.python.F03]\nallow = [\"x\"]\n",
             "[profile.rust.F08]\ngate = 2\n",
             "coverage = \"\"\n",
@@ -800,5 +997,53 @@ allow = ["with_timeout"]
         assert_eq!(config.mutation_cpp.as_deref(), Some("mull.json"));
         config.set_mutation_cpp_override("/tmp/mull.json");
         assert_eq!(config.mutation_cpp.as_deref(), Some("/tmp/mull.json"));
+    }
+
+    #[test]
+    fn departures_name_each_changed_level_and_skip_a_written_built_in() {
+        let root = fixture("departure-notes");
+        write_config(
+            &root,
+            r#"
+coverage = "coverage.lcov"
+include = ["pkg/**"]
+
+[mutation]
+rust = "outcomes.json"
+
+[profile.python.F01]
+gate = 48
+
+[profile.python.F03]
+warn = 8
+
+[profile.python.F04]
+gate = 20
+
+[profile.python.F08]
+allow = ["builder", "with_timeout"]
+
+[profile.rust.F01]
+gate = 95
+
+[profile.cpp.F02]
+gate = 8
+
+[profile.cpp.F11]
+gate = 0
+"#,
+        );
+
+        let notes = departures(&load_config(&root).unwrap());
+        assert_eq!(
+            notes,
+            vec![
+                "Python F03 warn is 8, built-in 10".to_string(),
+                "Python F04 gate is 20, built-in 19".to_string(),
+                "Python F08 allow adds builder, with_timeout".to_string(),
+                "Rust F01 gate is 95, built-in 94".to_string(),
+                "C++ F11 gate is 0, built-in 217".to_string(),
+            ]
+        );
     }
 }

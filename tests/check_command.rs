@@ -1016,3 +1016,113 @@ fn a_missing_cpp_mutation_report_fails_the_touch_and_a_bad_report_exits_2() {
     assert_eq!(s07_rows(&doc, "findings").len(), 1, "{stdout}");
     assert_eq!(s07_rows(&doc, "findings")[0]["measured_value"], 0.5);
 }
+
+#[test]
+fn a_departure_is_noted_before_the_run_notes_and_the_finding_uses_it() {
+    let root = fixture("departure");
+    let builtin = Config::builtin();
+    let python = &builtin.python;
+    let gate = python.f04_gate + 1;
+    let rust_gate = builtin.rust.f01_gate + 1;
+    write(
+        &root,
+        "slopmeter.toml",
+        &format!(
+            r#"
+[profile.python.F01]
+gate = {f01}
+
+[profile.python.F03]
+warn = 8
+
+[profile.python.F04]
+gate = {gate}
+
+[profile.python.F08]
+allow = ["builder", "with_timeout"]
+
+[profile.rust.F01]
+gate = {rust_gate}
+
+[profile.cpp.F11]
+gate = 0
+"#,
+            f01 = python.f01_gate,
+            gate = gate,
+            rust_gate = rust_gate,
+        ),
+    );
+    write(&root, "pkg/wide.py", &function("wide", gate));
+
+    let output = run(&root, &["--strict", "--json"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(doc["findings"].as_array().unwrap().is_empty(), "{stdout}");
+    let notes = doc["notes"].as_array().unwrap();
+    let messages: Vec<_> = notes
+        .iter()
+        .map(|note| note["message"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        messages,
+        vec![
+            "Python F03 warn is 8, built-in 10".to_string(),
+            format!("Python F04 gate is {gate}, built-in {}", python.f04_gate),
+            "Python F08 allow adds builder, with_timeout".to_string(),
+            format!(
+                "Rust F01 gate is {rust_gate}, built-in {}",
+                builtin.rust.f01_gate
+            ),
+            format!("C++ F11 gate is 0, built-in {}", builtin.cpp.f11_gate),
+            "No coverage report was given. CRAP was not computed.".to_string(),
+            "No mutation report was given.".to_string(),
+        ],
+        "{stdout}"
+    );
+    assert!(notes.iter().take(5).all(|note| note.get("path").is_none()));
+
+    write(&root, "pkg/wide.py", &function("wide", gate + 1));
+    let output = run(&root, &["--strict", "--json"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let findings = doc["findings"].as_array().unwrap();
+    assert_eq!(findings.len(), 1, "{stdout}");
+    assert_eq!(findings[0]["rule"], "F04");
+    assert_eq!(findings[0]["threshold"], gate);
+    assert_eq!(
+        doc["notes"][1]["message"],
+        format!("Python F04 gate is {gate}, built-in {}", python.f04_gate)
+    );
+}
+
+#[test]
+fn a_gate_outside_its_range_exits_2_and_names_the_key() {
+    let root = fixture("range");
+    write(&root, "pkg/ok.py", "def ok():\n    return 1\n");
+    write(&root, "slopmeter.toml", "[profile.python.F01]\ngate = 97\n");
+    let output = run(&root, &["--strict"]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(output.stdout.is_empty(), "{stderr}");
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(stderr, "profile.python.F01.gate is out of range\n");
+
+    write(&root, "slopmeter.toml", "[profile.python.F03]\ngate = 0\n");
+    let output = run(&root, &["--strict"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "profile.python.F03.gate is out of range\n"
+    );
+
+    write(&root, "slopmeter.toml", "[profile.python.F03]\nwarn = 21\n");
+    let output = run(&root, &["--strict"]);
+    assert_eq!(output.status.code(), Some(2));
+    assert_eq!(
+        String::from_utf8(output.stderr).unwrap(),
+        "profile.python.F03.warn is out of range\n"
+    );
+}

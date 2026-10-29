@@ -93,6 +93,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Read a cargo-mutants report into S07](issues/71-cargo-mutants-report.md) — `score_rust` reads `outcomes.json`; caught and timeout are detected, missed is undetected, and unviable is left out; S07 gates at 1, a missing report fails a touched Rust function, and a waiver for S07 fails the run.
 - [Read a mutmut store into S07](issues/72-mutmut-store.md) — `score_python` reads `mutants/<file>.meta`; killed and timeout are detected, survived and no-tests are undetected, and a type-check rejection is left out; the start line comes from the orig copy, and an unfinished mutant fails the file.
 - [Read a mull report into S07](issues/73-mull-report.md) — `score_cpp` reads mull's mutation-testing-elements JSON; killed and timeout are detected, survived and no coverage are undetected, and a compile error or a runtime error is left out; a pending or ignored mutant fails the file.
+- [Accept a bounded count gate and note the departure](issues/74-bounded-gate-overrides.md) — a count gate may be 0 through twice that language's built-in, F03's warn tops out at 20 and its gate floor is 1, and each departure is a run-level note that does not fail the run.
 
 ## Not yet specified
 

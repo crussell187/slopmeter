@@ -117,7 +117,8 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
         repo.as_path()
     };
     let report = coverage_path(coverage_root, config.coverage.as_deref());
-    let mut notes = unparsed_notes(&files);
+    let mut notes = departure_notes(&config);
+    notes.extend(unparsed_notes(&files));
     notes.extend(macro_notes(&files));
     notes.extend(
         cover(&mut measurements, &scored, report.as_deref()).map_err(CheckError::Coverage)?,
@@ -186,6 +187,16 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
         inherited: scoped.inherited,
         notes,
     })
+}
+
+fn departure_notes(config: &Config) -> Vec<Note> {
+    crate::inputs::departures(config)
+        .into_iter()
+        .map(|message| Note {
+            path: None,
+            message,
+        })
+        .collect()
 }
 
 fn macro_notes(files: &[File]) -> Vec<Note> {

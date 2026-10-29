@@ -11,6 +11,28 @@ fn run(args: &[&str]) -> std::process::Output {
 }
 
 #[test]
+fn explain_prints_the_shipped_threshold_when_the_config_raises_a_gate() {
+    let dir = std::env::temp_dir().join(format!("slopmeter-explain-config-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("slopmeter.toml"),
+        "[profile.python.F04]\ngate = 38\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_slopmeter"))
+        .args(["explain", "F04"])
+        .current_dir(&dir)
+        .output()
+        .expect("run slopmeter");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    assert!(output.stderr.is_empty());
+    assert!(stdout.contains("Python gate at 19."));
+    assert!(!stdout.contains("38"));
+}
+
+#[test]
 fn explain_prints_the_shipped_page_and_exits_0() {
     for rule in [
         "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F11", "S06", "S07",
