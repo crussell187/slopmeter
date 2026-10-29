@@ -16,11 +16,11 @@ decisions count on the enclosing function. A nested function has its
 own count. The finding is that total, at the function line.
 
 Threshold
-Shipped stand-in: gate at the p95 of that language's clean
-repos. Python gate at 10. 10 passes and 11 fails.
-Rust gate at 10. 10 passes and 11 fails.
-C++ gate at 12. 12 passes and 13 fails.
-No warn level.
+        gate
+Python    10
+Rust      10
+C++       12
+A count at the gate passes. One above it fails. No warn level.
 A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
 above the function excuses this gate in Python, and the same tokens
 after `//` do so in Rust and C++, with a whole number except on F02,

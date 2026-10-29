@@ -125,6 +125,60 @@ fn json_reports_the_same_verdict_as_the_table() {
 }
 
 #[test]
+fn help_and_version_print_and_exit_0() {
+    let help = invoke(&["--help"]);
+    let stdout = String::from_utf8(help.stdout.clone()).unwrap();
+    assert_eq!(help.status.code(), Some(0), "{stdout}");
+    assert!(help.stderr.is_empty());
+    assert!(stdout.contains("slopmeter 0.0.0"));
+    assert!(stdout.contains("slopmeter explain <rule>"));
+    assert!(stdout.contains("--strict"));
+    assert!(stdout.contains("--changed <ref>"));
+    assert!(stdout.contains("--json"));
+    assert!(stdout.contains("--tests"));
+    assert!(stdout.contains("--coverage <path>"));
+    assert!(stdout.contains("--mutation-rust <path>"));
+    assert!(stdout.contains("--mutation-python <path>"));
+    assert!(stdout.contains("--mutation-cpp <path>"));
+    assert!(stdout.contains("--version"));
+
+    let short = invoke(&["-h"]);
+    assert_eq!(short.status.code(), Some(0));
+    assert_eq!(short.stdout, help.stdout);
+    assert!(short.stderr.is_empty());
+
+    let version = invoke(&["--version"]);
+    assert_eq!(version.status.code(), Some(0));
+    assert!(version.stderr.is_empty());
+    assert_eq!(version.stdout, b"slopmeter 0.0.0\n");
+}
+
+#[test]
+fn changed_with_strict_is_a_usage_error() {
+    for args in [
+        &["--strict", "--changed", "HEAD"][..],
+        &["--changed=HEAD", "--strict"][..],
+    ] {
+        let output = invoke(args);
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert_eq!(output.status.code(), Some(2), "{stderr}");
+        assert!(output.stdout.is_empty());
+        assert_eq!(stderr, "--changed and --strict cannot be combined\n");
+    }
+}
+
+#[test]
+fn changed_outside_git_is_a_usage_error() {
+    let root = fixture("changed-outside");
+    write(&root, "pkg/ok.py", "def ok():\n    return 1\n");
+    let output = run(&root, &["--changed", "HEAD"]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(output.stdout.is_empty());
+    assert_eq!(stderr, "--changed needs a git repository\n");
+}
+
+#[test]
 fn a_wrong_argument_exits_2() {
     let unknown = invoke(&["--nope"]);
     assert_eq!(unknown.status.code(), Some(2));

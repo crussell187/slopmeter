@@ -19,8 +19,11 @@ under --strict. The finding sits on the first missed line, or
 on the function line when no fraction was produced.
 
 Threshold
-Shipped stand-in: gate at 1. 1 passes and a fraction below 1
-fails. No warn level.
+        gate
+Python     1
+Rust       1
+C++        1
+1 passes and a fraction below 1 fails. No warn level.
 A waiver line for S06 fails the run.
 
 Before

@@ -28,7 +28,7 @@ fn explain_prints_the_shipped_threshold_when_the_config_raises_a_gate() {
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert_eq!(output.status.code(), Some(0), "{stdout}");
     assert!(output.stderr.is_empty());
-    assert!(stdout.contains("Python gate at 10."));
+    assert!(stdout.contains("Python    10"));
     assert!(!stdout.contains("gate = 20"));
 }
 
@@ -42,7 +42,7 @@ fn explain_prints_the_shipped_page_and_exits_0() {
         assert!(output.stderr.is_empty(), "{rule}");
         let stdout = String::from_utf8(output.stdout).unwrap();
         assert_eq!(stdout, slopmeter::explain::page(rule).unwrap());
-        assert!(stdout.contains("Shipped stand-in:"), "{rule}");
+        assert!(!stdout.contains("Shipped stand-in:"), "{rule}");
     }
 }
 

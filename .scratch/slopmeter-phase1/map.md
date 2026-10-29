@@ -96,6 +96,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Accept a bounded count gate and note the departure](issues/74-bounded-gate-overrides.md) — a count gate may be 0 through twice that language's built-in, F03's warn tops out at 20 and its gate floor is 1, and each departure is a run-level note that does not fail the run.
 - [Count nesting as the deepest structural level](issues/75-structural-nesting.md) — an `if`, a loop, a `match` or `switch`, a ternary, and a `catch` each add one, and the finding sits on the deepest of those lines.
 - [Recalibrate the gates by percentile on a production-only set](issues/46-recalibrate-gates.md) — each count gate is the nearest-rank percentile of that language's three pinned commits, measured 2026-10-29, and a later measurement may replace the integers; a clean-repo function over the gate fails ([ADR 0031](../../docs/adr/0031-count-gates-are-a-percentile.md)).
+- [Fix the explain pages and the CLI surface](issues/64-explain-and-cli-polish.md) — each explain page's threshold is one table and names no stand-in; F02's after adds a test; `--help` and `--version` print and exit 0; `--changed` with `--strict`, and `--changed` outside git, are usage errors; a waiver that names no rule is the finding `waiver`.
 
 ## Not yet specified
 

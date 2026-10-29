@@ -5,9 +5,53 @@ use crate::explain::page;
 use crate::reporters::{no_check, render, Rendered};
 
 pub fn run(cwd: &Path, args: &[String]) -> Rendered {
+    if args.iter().any(|arg| arg == "--help" || arg == "-h") {
+        return help();
+    }
+    if args.iter().any(|arg| arg == "--version") {
+        return version();
+    }
     match args.first().map(String::as_str) {
         Some("explain") => explain(&args[1..]),
         _ => check(cwd, args),
+    }
+}
+
+fn help() -> Rendered {
+    Rendered {
+        stdout: format!(
+            "\
+slopmeter {version}
+
+Score Python, Rust, and C++ against the function-scope rules.
+
+Usage: slopmeter [options] [path]
+       slopmeter explain <rule>
+
+Options:
+  --strict                 score the whole tree
+  --changed <ref>          diff against this base
+  --json                   print the JSON report
+  --tests                  score tests too
+  --coverage <path>        read this LCOV report
+  --mutation-rust <path>   read cargo-mutants outcomes.json
+  --mutation-python <path> read a mutmut store
+  --mutation-cpp <path>    read a mull report
+  -h, --help               print this help
+  --version                print the version
+",
+            version = env!("CARGO_PKG_VERSION"),
+        ),
+        stderr: String::new(),
+        code: 0,
+    }
+}
+
+fn version() -> Rendered {
+    Rendered {
+        stdout: format!("slopmeter {}\n", env!("CARGO_PKG_VERSION")),
+        stderr: String::new(),
+        code: 0,
     }
 }
 
@@ -106,6 +150,9 @@ fn parse_check(cwd: &Path, args: &[String]) -> Result<Parsed, String> {
                 path = Some(PathBuf::from(other));
             }
         }
+    }
+    if options.strict && options.changed.is_some() {
+        return Err("--changed and --strict cannot be combined".to_string());
     }
     let root = match path {
         Some(path) if path.is_absolute() => path,

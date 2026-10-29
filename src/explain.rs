@@ -82,65 +82,80 @@ mod tests {
     }
 
     #[test]
-    fn python_thresholds_are_the_calibrated_gates() {
-        let pages = [
-            ("F01", "Python gate at 10."),
-            ("F03", "gates above 12."),
-            ("F04", "Python gate at 10."),
-            ("F05", "gate at 3 in every language."),
-            ("F06", "Python gate at 51."),
-            ("F08", "1 otherwise, in every language."),
-            ("F11", "Python gate at 19."),
+    fn each_threshold_is_one_table_and_names_no_stand_in() {
+        let tables = [
+            (
+                "F01",
+                "        gate\nPython    10\nRust      10\nC++       12\n",
+            ),
+            (
+                "F02",
+                "        gate\nPython     8\nRust       8\nC++        8\n",
+            ),
+            (
+                "F03",
+                "        warn  gate\nPython     8    12\nRust       3     6\nC++        7    15\n",
+            ),
+            (
+                "F04",
+                "        gate\nPython    10\nRust       3\nC++        4\n",
+            ),
+            (
+                "F05",
+                "        gate\nPython     3\nRust       3\nC++        3\n",
+            ),
+            (
+                "F06",
+                "        gate\nPython    51\nRust      45\nC++       41\n",
+            ),
+            (
+                "F07",
+                "        warn\nPython    80\nRust      80\nC++       80\n",
+            ),
+            (
+                "F08",
+                "        receiver  other\nPython         2      1\nRust           2      1\nC++            2      1\n",
+            ),
+            (
+                "F11",
+                "        gate\nPython    19\nRust      17\nC++       25\n",
+            ),
+            (
+                "S06",
+                "        gate\nPython     1\nRust       1\nC++        1\n",
+            ),
+            (
+                "S07",
+                "        gate\nPython     1\nRust       1\nC++        1\n",
+            ),
         ];
-        for (rule, phrase) in pages {
-            assert!(page(rule).unwrap().contains(phrase), "{rule}");
-        }
-        assert!(page("F02").unwrap().contains("gate at 8 in every language"));
-        assert!(page("F07")
-            .unwrap()
-            .contains("warn at 80 percent in every language"));
-    }
-
-    #[test]
-    fn rust_thresholds_are_the_calibrated_gates() {
-        let pages = [
-            ("F01", "Rust gate at 10."),
-            ("F03", "gates above 6."),
-            ("F04", "Rust gate at 3."),
-            ("F05", "gate at 3 in every language."),
-            ("F06", "Rust gate at 45."),
-            ("F08", "2 hops from the receiver"),
-            ("F11", "Rust gate at 17."),
-        ];
-        for (rule, phrase) in pages {
-            assert!(page(rule).unwrap().contains(phrase), "{rule}");
-        }
-    }
-
-    #[test]
-    fn cpp_thresholds_are_the_calibrated_gates() {
-        let pages = [
-            ("F01", "C++ gate at 12."),
-            ("F03", "gates above 15."),
-            ("F04", "C++ gate at 4."),
-            ("F05", "gate at 3 in every language."),
-            ("F06", "C++ gate at 41."),
-            ("F08", "1 otherwise, in every language."),
-            ("F11", "C++ gate at 25."),
-        ];
-        for (rule, phrase) in pages {
-            assert!(page(rule).unwrap().contains(phrase), "{rule}");
-        }
-    }
-
-    #[test]
-    fn each_threshold_is_marked_as_the_shipped_stand_in() {
-        for rule in RULES {
+        for (rule, table) in tables {
             let text = page(rule).unwrap();
             let threshold = text.find("\nThreshold\n").unwrap();
             let before = text.find("\nBefore\n").unwrap();
-            assert!(text[threshold..before].contains("Shipped stand-in:"));
+            let section = &text[threshold..before];
+            assert!(
+                !section.contains("Shipped stand-in:"),
+                "{rule} still marks a stand-in"
+            );
+            assert!(
+                section.contains(table),
+                "{rule} threshold is not the table:\n{section}"
+            );
         }
+        let f03 = page("F03").unwrap();
+        assert!(!f03.contains("8 and 12 pass"));
+    }
+
+    #[test]
+    fn f02_after_adds_a_test_and_keeps_the_branches() {
+        let text = page("F02").unwrap();
+        let after = text.find("\nAfter\n").unwrap();
+        let anti = text.find("\nAnti-fixes\n").unwrap();
+        let section = &text[after..anti];
+        assert!(section.contains("for i in range(n):"));
+        assert!(section.contains("def test_classify():"));
+        assert!(section.contains("assert classify("));
     }
 
     #[test]

@@ -17,7 +17,11 @@ receiver is in neither count. The finding is that ratio, at the
 call, when it is at least 80 percent. There is no gate level.
 
 Threshold
-Shipped stand-in: warn at 80 percent in every language. No gate.
+        warn
+Python    80
+Rust      80
+C++       80
+The warn is 80 percent of ordinary parameters. No gate.
 A waiver line for F07 fails the run, because F07 is not a gate.
 
 Before

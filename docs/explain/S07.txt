@@ -30,8 +30,11 @@ undetected mutant, or on the function line when no score
 was produced.
 
 Threshold
-Shipped stand-in: gate at 1. 1 passes and a score below 1
-fails. No warn level.
+        gate
+Python     1
+Rust       1
+C++        1
+1 passes and a score below 1 fails. No warn level.
 A waiver line for S07 fails the run.
 
 Before

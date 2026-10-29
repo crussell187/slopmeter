@@ -397,7 +397,7 @@ fn rejection_finding(
     class: &Classified,
     message: &str,
 ) -> Finding {
-    let rule = class.rule.clone().unwrap_or_default();
+    let rule = class.rule.clone().unwrap_or_else(|| "waiver".to_string());
     let (measured_value, threshold) = rejection_numbers(measurement, profile, &rule);
     Finding {
         rule,
@@ -1168,7 +1168,7 @@ mod tests {
             "A function that only hands its parameters to one call adds a hop and no behavior."
         );
 
-        assert_eq!(findings[2].rule, "");
+        assert_eq!(findings[2].rule, "waiver");
         assert_eq!(findings[2].line, 7);
         assert_eq!(findings[2].measured_value, None);
         assert_eq!(findings[2].threshold, None);

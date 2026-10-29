@@ -9,15 +9,18 @@ the uncovered fraction cubed, plus CC. Coverage is the hit DA lines
 divided by the DA lines in the body span. The tool reads that report
 and does not run the tests. No report, a missing file, or no DA lines
 in the function leaves the score uncomputed, and this rule emits
-nothing. S06 gates a touched function on that same fraction. DA
-lines that are all zero are coverage 0, and the score is
-computed. A nested function's lines stay with it. A lambda's lines stay
-with the function that contains it. The finding is that score, at the
-function line.
+nothing. S06 gates a touched function on that same fraction.
+A nested function's lines stay with it, and so do a lambda's.
+DA lines that are all zero are coverage 0, and the score is
+computed. The finding is that score, at the function line.
 
 Threshold
-Shipped stand-in: gate at 8 in every language. 8 passes and a score
-above 8 fails. No warn level. Absent coverage emits nothing.
+        gate
+Python     8
+Rust       8
+C++        8
+8 passes and a score above 8 fails. No warn level. Absent
+coverage emits nothing.
 A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
 above the function excuses this gate in Python, and the same tokens
 after `//` do so in Rust and C++, with a whole number except on F02,
@@ -35,10 +38,21 @@ def classify(n, flag):
     return "other"
 
 After
-def classify(n):
+def classify(n, flag):
     if n < 0:
         return "neg"
+    if n == 0 or n == 1:
+        return "small"
+    for i in range(n):
+        if flag and i % 2 == 0:
+            return "even"
     return "other"
+
+def test_classify():
+    assert classify(-1, False) == "neg"
+    assert classify(0, False) == "small"
+    assert classify(2, True) == "even"
+    assert classify(3, False) == "other"
 
 Anti-fixes
 Extracting an uncovered branch leaves that branch's score in place.

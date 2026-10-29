@@ -24,6 +24,7 @@ pub struct Scoped {
 pub enum ScopeError {
     NoBase,
     BadRef(String),
+    ChangedOutsideGit,
     Git(String),
 }
 
@@ -37,6 +38,7 @@ impl std::fmt::Display for ScopeError {
                     "changed ref {rev} is not a revision; pass --changed=<ref> or --strict"
                 )
             }
+            ScopeError::ChangedOutsideGit => write!(f, "--changed needs a git repository"),
             ScopeError::Git(message) => write!(f, "{message}"),
         }
     }
@@ -56,6 +58,9 @@ pub fn partition(
         return Ok(whole(findings, Vec::new()));
     }
     if !work_tree(root)? {
+        if options.changed.is_some() {
+            return Err(ScopeError::ChangedOutsideGit);
+        }
         return Ok(whole(
             findings,
             vec![Note {
@@ -1397,6 +1402,23 @@ def other():
             scoped.notes[0].message,
             "not a git repository; scoring the whole tree"
         );
+    }
+
+    #[test]
+    fn changed_outside_git_is_an_error() {
+        let root = outside_repo("changed-outside");
+        let err = partition(
+            &root,
+            &[source_file("src/a.py", vec![function("touched", 1, 2)])],
+            &[gate("src/a.py", "touched")],
+            ScopeOptions {
+                changed: Some("HEAD".to_string()),
+                strict: false,
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(err.to_string(), "--changed needs a git repository");
     }
 
     #[test]

@@ -140,7 +140,7 @@ The one stage that knows thresholds, weights, waivers, and what "bad" means; tur
 A stage that renders findings: JSON, worst-first text table, exit code.
 
 **Explain**:
-The one-page description of one rule: its principle, its counting method, the shipped threshold, one before and one after, and the anti-fix list. A gate's page also states how that gate is waived.
+The one-page description of one rule: its principle, its counting method, one threshold table of the shipped numbers, one before and one after, and the anti-fix list. A gate's page also states how that gate is waived.
 _Avoid_: help text, man page
 
 **Allow-list**:
