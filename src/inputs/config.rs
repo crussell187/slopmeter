@@ -60,6 +60,7 @@ pub struct LanguageProfile {
 pub struct Config {
     pub coverage: Option<String>,
     pub mutation_rust: Option<String>,
+    pub mutation_python: Option<String>,
     pub include: Option<Vec<String>>,
     pub exclude: Option<Vec<String>>,
     pub python: LanguageProfile,
@@ -115,6 +116,7 @@ impl Config {
         Self {
             coverage: None,
             mutation_rust: None,
+            mutation_python: None,
             include: None,
             exclude: None,
             python: LanguageProfile::builtin(Language::Python),
@@ -137,6 +139,10 @@ impl Config {
 
     pub fn set_mutation_rust_override(&mut self, path: impl Into<String>) {
         self.mutation_rust = Some(path.into());
+    }
+
+    pub fn set_mutation_python_override(&mut self, path: impl Into<String>) {
+        self.mutation_python = Some(path.into());
     }
 
     pub fn retains(&self, path: &str) -> bool {
@@ -256,6 +262,7 @@ fn apply_mutation(config: &mut Config, value: &toml::Value) -> Result<(), Config
     for (key, item) in table {
         match key.as_str() {
             "rust" => config.mutation_rust = Some(report_path(item, "mutation.rust")?),
+            "python" => config.mutation_python = Some(report_path(item, "mutation.python")?),
             other => return Err(ConfigError::UnknownKey(format!("mutation.{other}"))),
         }
     }
@@ -725,7 +732,6 @@ allow = ["with_timeout"]
             "coverage =\n",
             "[profile.python]\n",
             "[mutation]\n",
-            "[mutation]\npython = \"mutants\"\n",
             "[mutation]\nrust = \"\"\n",
             "[mutation]\nrust = \"/tmp/outcomes.json\"\n",
             "[mutation]\nrust = 1\n",
@@ -767,5 +773,15 @@ allow = ["with_timeout"]
         );
         config.set_mutation_rust_override("/tmp/outcomes.json");
         assert_eq!(config.mutation_rust.as_deref(), Some("/tmp/outcomes.json"));
+    }
+
+    #[test]
+    fn a_mutation_python_path_loads_and_the_flag_replaces_it() {
+        let root = fixture("mutation-python");
+        write_config(&root, "[mutation]\npython = \"mutants\"\n");
+        let mut config = load_config(&root).unwrap();
+        assert_eq!(config.mutation_python.as_deref(), Some("mutants"));
+        config.set_mutation_python_override("/tmp/mutants");
+        assert_eq!(config.mutation_python.as_deref(), Some("/tmp/mutants"));
     }
 }

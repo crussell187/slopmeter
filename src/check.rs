@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use crate::adapters;
 use crate::analyzers::{measure, Measurement};
 use crate::inputs::{
-    cover, coverage_path, load_config, mutation_path, score_rust, select, Config, ConfigError,
-    LcovError, MutationError, SelectError, SelectOptions,
+    cover, coverage_path, load_config, mutation_path, score_python, score_rust, select, Config,
+    ConfigError, LcovError, MutationError, SelectError, SelectOptions,
 };
 use crate::ir::{File, Language};
 use crate::reporters::{Note, Report};
@@ -18,6 +18,7 @@ pub struct CheckOptions {
     pub changed: Option<String>,
     pub coverage: Option<String>,
     pub mutation_rust: Option<String>,
+    pub mutation_python: Option<String>,
 }
 
 #[derive(Debug)]
@@ -58,6 +59,18 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
     if let Some(mutation) = &options.mutation_rust {
         config.set_mutation_rust_override(mutation.clone());
     }
+    if let Some(mutation) = &options.mutation_python {
+        config.set_mutation_python_override(mutation.clone());
+    }
+    let python_root = if options.mutation_python.is_some() {
+        root
+    } else {
+        repo.as_path()
+    };
+    let python_report = mutation_path(python_root, config.mutation_python.as_deref());
+    let store_prefix = python_report
+        .as_ref()
+        .and_then(|store| relative_store(root, store));
     let prefix = subtree_prefix(&repo, root);
     let selected = select(
         root,
@@ -76,6 +89,12 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
         .into_iter()
         .filter(|item| config.retains(&repo_relative(&prefix, &item.path)))
     {
+        if store_prefix
+            .as_ref()
+            .is_some_and(|store| Path::new(&item.path).starts_with(store))
+        {
+            continue;
+        }
         let full = root.join(&item.path);
         let source = fs::read(&full).map_err(|err| CheckError::Read(full, err))?;
         lines += source.iter().filter(|byte| **byte == b'\n').count();
@@ -99,20 +118,34 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
     notes.extend(
         cover(&mut measurements, &scored, report.as_deref()).map_err(CheckError::Coverage)?,
     );
-    let mutation_root = if options.mutation_rust.is_some() {
+    let rust_root = if options.mutation_rust.is_some() {
         root
     } else {
         repo.as_path()
     };
-    let mutation = mutation_path(mutation_root, config.mutation_rust.as_deref());
+    let rust_report = mutation_path(rust_root, config.mutation_rust.as_deref());
     let rust_ranges: Vec<(usize, usize)> = spans
         .iter()
         .filter(|(language, _, _)| *language == Language::Rust)
         .map(|(_, start, end)| (*start, *end))
         .collect();
+    let python_ranges: Vec<(usize, usize)> = spans
+        .iter()
+        .filter(|(language, _, _)| *language == Language::Python)
+        .map(|(_, start, end)| (*start, *end))
+        .collect();
     notes.extend(
-        score_rust(&mut measurements, &rust_ranges, mutation.as_deref())
+        score_rust(&mut measurements, &rust_ranges, rust_report.as_deref())
             .map_err(CheckError::Mutation)?,
+    );
+    notes.extend(
+        score_python(
+            &mut measurements,
+            &python_ranges,
+            python_report.as_deref(),
+            root,
+        )
+        .map_err(CheckError::Mutation)?,
     );
     let findings = evaluate_spans(&measurements, &spans, &config);
     let scoped = partition(
@@ -145,6 +178,16 @@ fn macro_notes(files: &[File]) -> Vec<Note> {
             message: macro_note(file.unscored_macros),
         })
         .collect()
+}
+
+fn relative_store(scan: &Path, store: &Path) -> Option<PathBuf> {
+    let scan = scan.canonicalize().ok()?;
+    let store = store.canonicalize().ok()?;
+    let relative = store.strip_prefix(&scan).ok()?;
+    if relative.as_os_str().is_empty() {
+        return None;
+    }
+    Some(relative.to_path_buf())
 }
 
 fn macro_note(count: u32) -> String {

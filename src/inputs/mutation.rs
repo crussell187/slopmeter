@@ -78,6 +78,47 @@ pub fn score_rust(
     Ok(apply(measurements, rust, &records))
 }
 
+pub fn score_python(
+    measurements: &mut [Measurement],
+    python: &[(usize, usize)],
+    report: Option<&Path>,
+    source_root: &Path,
+) -> Result<Vec<Note>, MutationError> {
+    for (start, end) in python {
+        for measurement in &mut measurements[*start..*end] {
+            measurement.mutation = None;
+        }
+    }
+    let Some(report) = report else {
+        if python.is_empty() {
+            return Ok(Vec::new());
+        }
+        mark_unshown(measurements, python);
+        return Ok(vec![Note {
+            path: None,
+            message: NO_REPORT.to_string(),
+        }]);
+    };
+    if !report.exists() {
+        if !python.is_empty() {
+            mark_unshown(measurements, python);
+        }
+        return Ok(vec![Note {
+            path: None,
+            message: format!("No mutation report at {}.", report.display()),
+        }]);
+    }
+    if !report.is_dir() {
+        return Err(MutationError::BadReport(report.to_path_buf()));
+    }
+    let mut records = read_store(report)?;
+    if python.is_empty() {
+        return Ok(Vec::new());
+    }
+    resolve_lines(&mut records, measurements, python, report, source_root)?;
+    Ok(apply(measurements, python, &records))
+}
+
 fn read_outcomes(path: &Path) -> Result<Vec<Record>, MutationError> {
     let text =
         fs::read_to_string(path).map_err(|err| MutationError::Read(path.to_path_buf(), err))?;
@@ -117,6 +158,7 @@ fn record(value: &Value) -> Result<Option<Record>, ()> {
         file,
         line,
         kind: kind(summary, line),
+        locator: None,
     }))
 }
 
@@ -141,6 +183,13 @@ struct Record {
     file: String,
     line: Option<u32>,
     kind: Kind,
+    locator: Option<Locator>,
+}
+
+struct Locator {
+    mutant: String,
+    orig: String,
+    plain: String,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -149,6 +198,7 @@ enum Kind {
     Undetected,
     LeftOut,
     Unfinished,
+    Present,
 }
 
 struct ScoredFile {
@@ -220,7 +270,7 @@ fn score_file(measurements: &mut [Measurement], file: &ScoredFile, rows: &[&Reco
                     undetected += 1;
                     first_miss = Some(first_miss.map_or(line, |have: u32| have.min(line)));
                 }
-                Kind::LeftOut | Kind::Unfinished => {}
+                Kind::LeftOut | Kind::Unfinished | Kind::Present => {}
             }
         }
         let total = detected + undetected;
@@ -349,9 +399,391 @@ fn normalize(path: &str) -> String {
     }
 }
 
+fn read_store(dir: &Path) -> Result<Vec<Record>, MutationError> {
+    let mut metas = Vec::new();
+    collect_meta(dir, &mut metas)?;
+    let mut records = Vec::new();
+    for meta in metas {
+        records.extend(read_meta(dir, &meta)?);
+    }
+    Ok(records)
+}
+
+fn collect_meta(dir: &Path, metas: &mut Vec<PathBuf>) -> Result<(), MutationError> {
+    let entries = fs::read_dir(dir).map_err(|err| MutationError::Read(dir.to_path_buf(), err))?;
+    for entry in entries {
+        let entry = entry.map_err(|err| MutationError::Read(dir.to_path_buf(), err))?;
+        let path = entry.path();
+        if ignored_store_path(&path) {
+            continue;
+        }
+        let kind = entry
+            .file_type()
+            .map_err(|err| MutationError::Read(path.clone(), err))?;
+        if kind.is_dir() {
+            collect_meta(&path, metas)?;
+        } else if path.extension().is_some_and(|ext| ext == "meta") {
+            metas.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn ignored_store_path(path: &Path) -> bool {
+    path.components()
+        .any(|component| component.as_os_str() == "export-cicd-stats")
+        || path
+            .file_name()
+            .is_some_and(|name| name == "mutmut-cicd-stats.json")
+}
+
+fn read_meta(root: &Path, meta: &Path) -> Result<Vec<Record>, MutationError> {
+    let text =
+        fs::read_to_string(meta).map_err(|err| MutationError::Read(meta.to_path_buf(), err))?;
+    let value: Value =
+        serde_json::from_str(&text).map_err(|_| MutationError::BadReport(meta.to_path_buf()))?;
+    let codes = value
+        .get("exit_code_by_key")
+        .and_then(Value::as_object)
+        .ok_or_else(|| MutationError::BadReport(meta.to_path_buf()))?;
+    let file = meta
+        .strip_prefix(root)
+        .ok()
+        .and_then(|path| path.to_str())
+        .and_then(|path| path.strip_suffix(".meta"))
+        .map(normalize)
+        .filter(|file| !file.is_empty())
+        .ok_or_else(|| MutationError::BadReport(meta.to_path_buf()))?;
+    if codes.is_empty() {
+        return Ok(vec![Record {
+            file,
+            line: None,
+            kind: Kind::Present,
+            locator: None,
+        }]);
+    }
+    let mut records = Vec::new();
+    for (key, code) in codes {
+        let exit = exit_code(code).map_err(|_| MutationError::BadReport(meta.to_path_buf()))?;
+        let kind = python_kind(exit);
+        let locator = mutant_locator(key);
+        records.push(Record {
+            file: file.clone(),
+            line: None,
+            kind: if locator.is_none() {
+                Kind::Unfinished
+            } else {
+                kind
+            },
+            locator,
+        });
+    }
+    Ok(records)
+}
+
+fn exit_code(value: &Value) -> Result<Option<i64>, ()> {
+    if value.is_null() {
+        return Ok(None);
+    }
+    value.as_i64().map(Some).ok_or(())
+}
+
+fn python_kind(code: Option<i64>) -> Kind {
+    match code {
+        Some(1 | 3) => Kind::Detected,
+        Some(0 | 5 | 33) => Kind::Undetected,
+        Some(36 | 24 | 152 | 255 | -24) => Kind::Detected,
+        Some(37) => Kind::LeftOut,
+        _ => Kind::Unfinished,
+    }
+}
+
+fn mutant_locator(key: &str) -> Option<Locator> {
+    let mutant = key.split('.').find(|part| {
+        (part.starts_with("x_") || part.starts_with("x\u{01c1}")) && part.contains("__mutmut_")
+    })?;
+    let (prefix, _) = mutant.split_once("__mutmut_")?;
+    let plain = if prefix.contains('\u{01c1}') {
+        prefix.rsplit('\u{01c1}').next()?
+    } else {
+        prefix.strip_prefix("x_")?
+    };
+    if plain.is_empty() {
+        return None;
+    }
+    Some(Locator {
+        mutant: mutant.to_string(),
+        orig: format!("{prefix}__mutmut_orig"),
+        plain: plain.to_string(),
+    })
+}
+
+fn resolve_lines(
+    records: &mut [Record],
+    measurements: &[Measurement],
+    ranges: &[(usize, usize)],
+    mutants_dir: &Path,
+    source_root: &Path,
+) -> Result<(), MutationError> {
+    let files = scored_files(measurements, ranges);
+    let mut jobs = Vec::new();
+    for file in &files {
+        let pointers: Vec<*const Record> = match choose(records, &file.key) {
+            Choice::Rows(rows) => rows
+                .into_iter()
+                .filter(|row| row.locator.is_some())
+                .map(std::ptr::from_ref)
+                .collect(),
+            _ => continue,
+        };
+        for (index, record) in records.iter().enumerate() {
+            if pointers.contains(&std::ptr::from_ref(record)) {
+                jobs.push((index, file.path.clone()));
+            }
+        }
+    }
+    let mut sources = BTreeMap::<String, Option<String>>::new();
+    let mut copies = BTreeMap::<String, StoreCopy>::new();
+    for (index, scored_path) in &jobs {
+        if !sources.contains_key(scored_path) {
+            sources.insert(
+                scored_path.clone(),
+                read_optional(&source_root.join(scored_path))?,
+            );
+        }
+        let store_file = records[*index].file.clone();
+        if !copies.contains_key(&store_file) {
+            copies.insert(store_file.clone(), load_copy(mutants_dir, &store_file)?);
+        }
+    }
+    for (index, scored_path) in jobs {
+        let Some(locator) = records[index].locator.take() else {
+            continue;
+        };
+        let source = sources.get(&scored_path).and_then(Option::as_deref);
+        let copy = copies.get(&records[index].file);
+        let line = source
+            .zip(copy)
+            .and_then(|(source, copy)| recover_line(source, copy, &locator));
+        match line {
+            Some(line) => records[index].line = Some(line),
+            None => {
+                records[index].kind = Kind::Unfinished;
+                records[index].line = None;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn read_optional(path: &Path) -> Result<Option<String>, MutationError> {
+    match fs::read_to_string(path) {
+        Ok(text) => Ok(Some(text)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(MutationError::Read(path.to_path_buf(), err)),
+    }
+}
+
+struct StoreCopy {
+    mutated: Option<String>,
+    spans: Option<BTreeMap<String, (u32, u32)>>,
+}
+
+fn load_copy(dir: &Path, file: &str) -> Result<StoreCopy, MutationError> {
+    let mutated_path = dir.join(file);
+    let mutated = read_optional(&mutated_path)?;
+    let spans_path = dir.join(format!("{file}.spans"));
+    let spans = match read_optional(&spans_path)? {
+        None => None,
+        Some(text) => Some(read_spans(&spans_path, &text)?),
+    };
+    Ok(StoreCopy { mutated, spans })
+}
+
+fn read_spans(path: &Path, text: &str) -> Result<BTreeMap<String, (u32, u32)>, MutationError> {
+    let value: Value =
+        serde_json::from_str(text).map_err(|_| MutationError::BadReport(path.to_path_buf()))?;
+    if value.get("version").and_then(Value::as_u64) != Some(1) {
+        return Ok(BTreeMap::new());
+    }
+    let spans = value
+        .get("spans")
+        .and_then(Value::as_object)
+        .ok_or_else(|| MutationError::BadReport(path.to_path_buf()))?;
+    let mut parsed = BTreeMap::new();
+    for (name, span) in spans {
+        let Some(pair) = span.as_array() else {
+            return Err(MutationError::BadReport(path.to_path_buf()));
+        };
+        let Some([start, end]) = pair.get(0..2) else {
+            return Err(MutationError::BadReport(path.to_path_buf()));
+        };
+        let (Some(start), Some(end)) = (start.as_u64(), end.as_u64()) else {
+            return Err(MutationError::BadReport(path.to_path_buf()));
+        };
+        let (Ok(start), Ok(end)) = (u32::try_from(start), u32::try_from(end)) else {
+            return Err(MutationError::BadReport(path.to_path_buf()));
+        };
+        parsed.insert(name.clone(), (start, end));
+    }
+    Ok(parsed)
+}
+
+fn recover_line(source: &str, copy: &StoreCopy, locator: &Locator) -> Option<u32> {
+    let mutated = copy.mutated.as_deref()?;
+    let orig = function_lines(mutated, copy, &locator.orig)?;
+    let mutant = function_lines(mutated, copy, &locator.mutant)?;
+    let offset = first_diff(
+        &orig,
+        &mutant,
+        &locator.orig,
+        &locator.mutant,
+        &locator.plain,
+    )?;
+    let mut restored = orig;
+    trim_trailing_blank(&mut restored);
+    let def = restored
+        .iter()
+        .position(|line| line.contains(&locator.orig))?;
+    restored[def] = restored[def].replacen(&locator.orig, &locator.plain, 1);
+    let start = find_block(source, &restored)?;
+    start.checked_add(offset)
+}
+
+fn function_lines(mutated: &str, copy: &StoreCopy, name: &str) -> Option<Vec<String>> {
+    if let Some(spans) = &copy.spans {
+        if let Some((start, end)) = spans.get(name) {
+            return slice_lines(mutated, *start, *end);
+        }
+    }
+    slice_def(mutated, name)
+}
+
+fn slice_lines(source: &str, start: u32, end: u32) -> Option<Vec<String>> {
+    if start < 1 || end < start {
+        return None;
+    }
+    let lines: Vec<&str> = source.lines().collect();
+    let start = usize::try_from(start).ok()?;
+    let end = usize::try_from(end).ok()?;
+    if end > lines.len() {
+        return None;
+    }
+    let mut lines: Vec<String> = lines[start - 1..end]
+        .iter()
+        .map(|line| (*line).to_string())
+        .collect();
+    trim_trailing_blank(&mut lines);
+    Some(lines)
+}
+
+fn slice_def(source: &str, name: &str) -> Option<Vec<String>> {
+    let lines: Vec<&str> = source.lines().collect();
+    let start = lines.iter().position(|line| is_def_line(line, name))?;
+    let mut from = start;
+    while from > 0 && lines[from - 1].trim_start().starts_with('@') {
+        from -= 1;
+    }
+    let indent = indent_of(lines[start]);
+    let mut end = start + 1;
+    while end < lines.len() {
+        let line = lines[end];
+        if line.trim().is_empty() {
+            end += 1;
+            continue;
+        }
+        if indent_of(line) <= indent {
+            break;
+        }
+        end += 1;
+    }
+    while end > start + 1 && lines[end - 1].trim().is_empty() {
+        end -= 1;
+    }
+    Some(
+        lines[from..end]
+            .iter()
+            .map(|line| (*line).to_string())
+            .collect(),
+    )
+}
+
+fn is_def_line(line: &str, name: &str) -> bool {
+    let trimmed = line.trim_start();
+    let rest = trimmed.strip_prefix("async ").unwrap_or(trimmed);
+    let Some(rest) = rest.strip_prefix("def ") else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix(name) else {
+        return false;
+    };
+    rest.starts_with(['(', ':', ' ', '\t'])
+}
+
+fn indent_of(line: &str) -> usize {
+    line.len() - line.trim_start().len()
+}
+
+fn first_diff(
+    orig: &[String],
+    mutant: &[String],
+    orig_name: &str,
+    mutant_name: &str,
+    plain: &str,
+) -> Option<u32> {
+    let mut orig = orig.to_vec();
+    let mut mutant = mutant.to_vec();
+    trim_trailing_blank(&mut orig);
+    trim_trailing_blank(&mut mutant);
+    let width = orig.len().max(mutant.len());
+    for index in 0..width {
+        let left = orig
+            .get(index)
+            .map(|line| line.replacen(orig_name, plain, 1));
+        let right = mutant
+            .get(index)
+            .map(|line| line.replacen(mutant_name, plain, 1));
+        if left != right {
+            return u32::try_from(index).ok();
+        }
+    }
+    None
+}
+
+fn trim_trailing_blank(lines: &mut Vec<String>) {
+    while lines.last().is_some_and(|line| line.trim().is_empty()) {
+        lines.pop();
+    }
+}
+
+fn find_block(source: &str, block: &[String]) -> Option<u32> {
+    if block.is_empty() {
+        return None;
+    }
+    let lines: Vec<&str> = source.lines().collect();
+    if block.len() > lines.len() {
+        return None;
+    }
+    let mut found = None;
+    for start in 0..=lines.len() - block.len() {
+        let same = lines[start..start + block.len()]
+            .iter()
+            .zip(block)
+            .all(|(have, want)| *have == want);
+        if !same {
+            continue;
+        }
+        if found.is_some() {
+            return None;
+        }
+        found = u32::try_from(start).ok().map(|start| start + 1);
+    }
+    found
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{mutation_path, score_rust, MutationError};
+    use super::{mutation_path, score_python, score_rust, MutationError};
     use crate::analyzers::{Measurement, Mutation};
     use crate::ir::Span;
     use std::fs;
@@ -608,5 +1040,315 @@ mod tests {
         assert_eq!(joined, root.join("mutants.out/outcomes.json"));
         let absolute = mutation_path(Path::new("/tmp"), Some("/tmp/outcomes.json")).unwrap();
         assert_eq!(absolute, PathBuf::from("/tmp/outcomes.json"));
+    }
+
+    fn write_python(root: &Path, file: &str, source: &str, mutated: &str, meta: &str) -> PathBuf {
+        fs::create_dir_all(root.join(file).parent().unwrap()).unwrap();
+        fs::write(root.join(file), source).unwrap();
+        let mutants = root.join("mutants");
+        fs::create_dir_all(mutants.join(file).parent().unwrap()).unwrap();
+        fs::write(mutants.join(file), mutated).unwrap();
+        fs::write(mutants.join(format!("{file}.meta")), meta).unwrap();
+        mutants
+    }
+
+    fn spans_for(root: &Path, file: &str, body: &str) {
+        fs::write(root.join("mutants").join(format!("{file}.spans")), body).unwrap();
+    }
+
+    fn meta(entries: &[(&str, &str)]) -> String {
+        let body = entries
+            .iter()
+            .map(|(key, code)| format!("\"{key}\": {code}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!("{{\"exit_code_by_key\": {{{body}}}}}")
+    }
+
+    const CLASSIFY: &str = "def classify(n):\n    return n > 0\n";
+
+    fn mutated_classify() -> String {
+        "\
+def x_classify__mutmut_orig(n):
+    return n > 0
+
+def x_classify__mutmut_1(n):
+    return n < 0
+
+def x_classify__mutmut_2(n):
+    return n >= 0
+
+def x_classify__mutmut_3(n):
+    return n > 1
+
+def x_classify__mutmut_4(n):
+    return n == 0
+"
+        .to_string()
+    }
+
+    fn classify_spans() -> &'static str {
+        r#"{"version":1,"spans":{"x_classify__mutmut_orig":[1,2],"x_classify__mutmut_1":[4,5],"x_classify__mutmut_2":[7,8],"x_classify__mutmut_3":[10,11],"x_classify__mutmut_4":[13,14]}}"#
+    }
+
+    #[test]
+    fn killed_and_survived_score_one_half_and_timeout_and_type_check_stay_in_their_buckets() {
+        let root = fixture("py-half");
+        let mutants = write_python(
+            &root,
+            "pkg/a.py",
+            CLASSIFY,
+            &mutated_classify(),
+            &meta(&[
+                ("pkg.a.x_classify__mutmut_1", "1"),
+                ("pkg.a.x_classify__mutmut_2", "0"),
+                ("pkg.a.x_classify__mutmut_3", "255"),
+                ("pkg.a.x_classify__mutmut_4", "37"),
+            ]),
+        );
+        spans_for(&root, "pkg/a.py", classify_spans());
+        let mut measurements = vec![measured("pkg/a.py", "classify", 1, 2)];
+
+        let notes = score_python(&mut measurements, &[(0, 1)], Some(&mutants), &root).unwrap();
+
+        assert!(notes.is_empty());
+        assert_eq!(
+            measurements[0].mutation,
+            Some(Mutation::Score {
+                score: 2.0 / 3.0,
+                line: 2
+            })
+        );
+    }
+
+    #[test]
+    fn no_tests_is_undetected_and_a_nested_span_owns_its_line() {
+        let root = fixture("py-nested");
+        let source = "\
+def outer(n):
+    if n > 0:
+        return 1
+    def inner(n):
+        return n
+    return inner(n)
+";
+        let mutated = "\
+def x_outer__mutmut_orig(n):
+    if n > 0:
+        return 1
+    def inner(n):
+        return n
+    return inner(n)
+
+def x_outer__mutmut_1(n):
+    if n < 0:
+        return 1
+    def inner(n):
+        return n
+    return inner(n)
+
+def x_outer__mutmut_2(n):
+    if n > 0:
+        return 1
+    def inner(n):
+        return n + 0
+    return inner(n)
+";
+        let mutants = write_python(
+            &root,
+            "pkg/a.py",
+            source,
+            mutated,
+            &meta(&[
+                ("pkg.a.x_outer__mutmut_1", "33"),
+                ("pkg.a.x_outer__mutmut_2", "5"),
+            ]),
+        );
+        let mut measurements = vec![
+            measured("pkg/a.py", "outer", 1, 6),
+            measured("pkg/a.py", "inner", 4, 5),
+        ];
+
+        score_python(&mut measurements, &[(0, 2)], Some(&mutants), &root).unwrap();
+
+        assert_eq!(
+            measurements[0].mutation,
+            Some(Mutation::Score {
+                score: 0.0,
+                line: 2
+            })
+        );
+        assert_eq!(
+            measurements[1].mutation,
+            Some(Mutation::Score {
+                score: 0.0,
+                line: 5
+            })
+        );
+    }
+
+    #[test]
+    fn an_unfinished_mutant_or_a_missing_line_fails_the_file() {
+        let root = fixture("py-unfinished");
+        let mutants = write_python(
+            &root,
+            "pkg/a.py",
+            CLASSIFY,
+            &mutated_classify(),
+            &meta(&[
+                ("pkg.a.x_classify__mutmut_1", "1"),
+                ("pkg.a.x_classify__mutmut_2", "null"),
+                ("pkg.a.x_classify__mutmut_3", "2"),
+                ("pkg.a.x_classify__mutmut_4", "34"),
+            ]),
+        );
+        spans_for(&root, "pkg/a.py", classify_spans());
+        let mut measurements = vec![
+            measured("pkg/a.py", "one", 1, 1),
+            measured("pkg/a.py", "two", 2, 2),
+        ];
+
+        let notes = score_python(&mut measurements, &[(0, 2)], Some(&mutants), &root).unwrap();
+
+        assert_eq!(measurements[0].mutation, Some(Mutation::Unshown));
+        assert_eq!(measurements[1].mutation, Some(Mutation::Unshown));
+        assert_eq!(
+            notes[0].message,
+            "A mutant in this file has no finished outcome."
+        );
+
+        let mutants = write_python(
+            &root,
+            "pkg/a.py",
+            CLASSIFY,
+            &mutated_classify(),
+            &meta(&[
+                ("pkg.a.x_classify__mutmut_1", "1"),
+                ("pkg.a.x_missing__mutmut_1", "0"),
+            ]),
+        );
+        let mut measurements = vec![measured("pkg/a.py", "classify", 1, 2)];
+        let notes = score_python(&mut measurements, &[(0, 1)], Some(&mutants), &root).unwrap();
+        assert_eq!(measurements[0].mutation, Some(Mutation::Unshown));
+        assert_eq!(
+            notes[0].message,
+            "A mutant in this file has no finished outcome."
+        );
+    }
+
+    #[test]
+    fn a_method_line_is_recovered_without_spans_and_an_empty_meta_stays_off_the_rule() {
+        let root = fixture("py-method");
+        let source = "\
+class Box:
+    def classify(self, n):
+        return n > 0
+";
+        let mutated = "\
+class Box:
+    def x\u{01c1}Box\u{01c1}classify__mutmut_orig(self, n):
+        return n > 0
+
+    def x\u{01c1}Box\u{01c1}classify__mutmut_1(self, n):
+        return n < 0
+";
+        let mutants = write_python(
+            &root,
+            "pkg/a.py",
+            source,
+            mutated,
+            &meta(&[("pkg.a.x\u{01c1}Box\u{01c1}classify__mutmut_1", "0")]),
+        );
+        fs::write(mutants.join("mutmut-cicd-stats.json"), "{").unwrap();
+        let mut measurements = vec![measured("pkg/a.py", "Box.classify", 2, 3)];
+
+        let notes = score_python(&mut measurements, &[(0, 1)], Some(&mutants), &root).unwrap();
+
+        assert!(notes.is_empty());
+        assert_eq!(
+            measurements[0].mutation,
+            Some(Mutation::Score {
+                score: 0.0,
+                line: 3
+            })
+        );
+
+        let mutants = write_python(
+            &root,
+            "pkg/a.py",
+            CLASSIFY,
+            &mutated_classify(),
+            "{\"exit_code_by_key\": {}}",
+        );
+        let mut measurements = vec![measured("pkg/a.py", "classify", 1, 2)];
+        let notes = score_python(&mut measurements, &[(0, 1)], Some(&mutants), &root).unwrap();
+        assert!(notes.is_empty());
+        assert_eq!(measurements[0].mutation, None);
+    }
+
+    #[test]
+    fn a_bad_meta_is_an_error_and_a_missing_store_names_the_path() {
+        let root = fixture("py-bad");
+        let mutants = write_python(&root, "pkg/a.py", CLASSIFY, CLASSIFY, "{");
+        let mut measurements = vec![measured("pkg/a.py", "classify", 1, 2)];
+        let err = score_python(&mut measurements, &[(0, 1)], Some(&mutants), &root).unwrap_err();
+        assert!(matches!(err, MutationError::BadReport(_)));
+
+        let file = root.join("outcomes.json");
+        fs::write(&file, "{}").unwrap();
+        let err = score_python(&mut measurements, &[(0, 1)], Some(&file), &root).unwrap_err();
+        assert!(err.to_string().contains("cannot be parsed"));
+
+        let missing = root.join("absent");
+        let notes = score_python(&mut measurements, &[(0, 1)], Some(&missing), &root).unwrap();
+        assert_eq!(measurements[0].mutation, Some(Mutation::Unshown));
+        assert!(notes[0].message.contains("absent"));
+
+        let mutants = write_python(
+            &root,
+            "pkg/a.py",
+            CLASSIFY,
+            &mutated_classify(),
+            &meta(&[("pkg.a.x_classify__mutmut_1", "1")]),
+        );
+        let mut measurements = vec![measured("pkg/a.py", "classify", 1, 2)];
+        let notes = score_python(&mut measurements, &[], Some(&mutants), &root).unwrap();
+        assert!(notes.is_empty());
+        assert_eq!(measurements[0].mutation, None);
+    }
+
+    #[test]
+    fn a_longer_store_path_matches_on_a_boundary_and_two_suffixes_tie() {
+        let root = fixture("py-suffix");
+        let mutants = write_python(
+            &root,
+            "repo/pkg/a.py",
+            CLASSIFY,
+            &mutated_classify(),
+            &meta(&[("repo.pkg.a.x_classify__mutmut_2", "0")]),
+        );
+        fs::create_dir_all(root.join("pkg")).unwrap();
+        fs::write(root.join("pkg/a.py"), CLASSIFY).unwrap();
+        let mut measurements = vec![measured("pkg/a.py", "classify", 1, 2)];
+        score_python(&mut measurements, &[(0, 1)], Some(&mutants), &root).unwrap();
+        assert_eq!(
+            measurements[0].mutation,
+            Some(Mutation::Score {
+                score: 0.0,
+                line: 2
+            })
+        );
+
+        write_python(
+            &root,
+            "other/a.py",
+            CLASSIFY,
+            &mutated_classify(),
+            &meta(&[("other.a.x_classify__mutmut_2", "1")]),
+        );
+        let mut measurements = vec![measured("a.py", "classify", 1, 2)];
+        let notes = score_python(&mut measurements, &[(0, 1)], Some(&mutants), &root).unwrap();
+        assert_eq!(measurements[0].mutation, Some(Mutation::Unshown));
+        assert_eq!(notes[0].message, "Mutation records tie for this file.");
     }
 }

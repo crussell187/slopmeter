@@ -10,5 +10,5 @@ pub use config::{
     PYTHON_F08_OTHER_HOPS, PYTHON_F08_RECEIVER_HOPS, PYTHON_F11_GATE,
 };
 pub use lcov::{cover, coverage_path, read_lcov, Coverage, LcovError, Section};
-pub use mutation::{mutation_path, score_rust, MutationError};
+pub use mutation::{mutation_path, score_python, score_rust, MutationError};
 pub use select::{select, SelectError, SelectOptions, Selected};

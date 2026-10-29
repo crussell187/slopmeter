@@ -146,6 +146,11 @@ fn a_wrong_argument_exits_2() {
     assert!(mutation.stdout.is_empty());
     assert_eq!(mutation.stderr, b"mutation-rust needs a path\n");
 
+    let python = invoke(&["--mutation-python"]);
+    assert_eq!(python.status.code(), Some(2));
+    assert!(python.stdout.is_empty());
+    assert_eq!(python.stderr, b"mutation-python needs a path\n");
+
     let root = fixture("two");
     let extra = root.join("other");
     let both = invoke(&["--strict", root.to_str().unwrap(), extra.to_str().unwrap()]);
@@ -711,6 +716,129 @@ fn outside_git_a_shown_mutation_row_is_inherited_and_the_config_names_the_report
         &root,
         "outcomes.json",
         &outcomes("src/lib.rs", &[("CaughtMutant", 1), ("MissedMutant", 2)]),
+    );
+    let output = run(&root, &["--json"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(s07_rows(&doc, "findings").len(), 1, "{stdout}");
+    assert_eq!(s07_rows(&doc, "findings")[0]["measured_value"], 0.5);
+}
+
+const PY_CLASSIFY: &str = "def classify(n):\n    return n > 1\n";
+
+fn touched_python(name: &str) -> PathBuf {
+    let root = fixture(name);
+    git(&root, &["init", "-b", "main"]);
+    write(&root, "pkg/a.py", "def classify(n):\n    return n > 0\n");
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-m", "base"]);
+    write(&root, "pkg/a.py", PY_CLASSIFY);
+    root
+}
+
+fn write_mutmut(root: &Path, meta: &str) {
+    let mutated = "\
+def x_classify__mutmut_orig(n):
+    return n > 1
+
+def x_classify__mutmut_1(n):
+    return n > 0
+
+def x_classify__mutmut_2(n):
+    return n < 1
+";
+    write(root, "mutants/pkg/a.py", mutated);
+    write(
+        root,
+        "mutants/pkg/a.py.meta",
+        &format!("{{\"exit_code_by_key\": {meta}, \"hash_by_function_name\": {{}}}}"),
+    );
+    write(root, "mutants/mutmut-cicd-stats.json", "{");
+}
+
+#[test]
+fn a_mutmut_store_gates_a_touched_python_function_at_the_survived_mutant() {
+    let root = touched_python("mutmut");
+    write_mutmut(
+        &root,
+        r#"{"pkg.a.x_classify__mutmut_1": 1, "pkg.a.x_classify__mutmut_2": 0}"#,
+    );
+
+    let output = run(&root, &["--json", "--mutation-python=mutants"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let rows = s07_rows(&doc, "findings");
+    assert_eq!(rows.len(), 1, "{stdout}");
+    assert_eq!(rows[0]["symbol"]["name"], "classify");
+    assert_eq!(rows[0]["line"], 2);
+    assert_eq!(rows[0]["measured_value"], 0.5);
+    assert_eq!(rows[0]["weight"], 10);
+    assert!(s07_rows(&doc, "inherited").is_empty(), "{stdout}");
+
+    let strict = run(&root, &["--strict", "--json", "--mutation-python=mutants"]);
+    let stdout = String::from_utf8(strict.stdout).unwrap();
+    assert_eq!(strict.status.code(), Some(0), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(s07_rows(&doc, "findings").is_empty(), "{stdout}");
+    assert_eq!(s07_rows(&doc, "inherited").len(), 1, "{stdout}");
+    assert_eq!(s07_rows(&doc, "inherited")[0]["measured_value"], 0.5);
+}
+
+#[test]
+fn a_missing_python_mutation_store_fails_the_touch_and_a_bad_store_exits_2() {
+    let root = touched_python("missing-mutmut");
+    let missing = run(&root, &["--json", "--mutation-python=mutants"]);
+    let stdout = String::from_utf8(missing.stdout).unwrap();
+    assert_eq!(missing.status.code(), Some(1), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let rows = s07_rows(&doc, "findings");
+    assert_eq!(rows.len(), 1, "{stdout}");
+    assert!(rows[0]["measured_value"].is_null(), "{stdout}");
+    assert!(
+        doc["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|note| note["message"].as_str().unwrap().contains("mutants")),
+        "{stdout}"
+    );
+
+    write(&root, "mutants/pkg/a.py.meta", "{");
+    let output = run(&root, &["--strict", "--mutation-python=mutants"]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert_eq!(output.status.code(), Some(2), "{stderr}");
+    assert!(stderr.contains("cannot be parsed"), "{stderr}");
+
+    write(
+        &root,
+        "pkg/a.py",
+        &format!("# slopmeter: waive S07 0 later\n{PY_CLASSIFY}"),
+    );
+    write_mutmut(&root, r#"{"pkg.a.x_classify__mutmut_1": 1}"#);
+    let output = run(&root, &["--json", "--mutation-python=mutants"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(
+        s07_rows(&doc, "findings")
+            .iter()
+            .any(|row| row["waiver"]["rejection"] == "S07 cannot be waived."),
+        "{stdout}"
+    );
+
+    let root = touched_python("config-mutmut");
+    write(
+        &root,
+        "slopmeter.toml",
+        "[mutation]\npython = \"mutants\"\n",
+    );
+    write_mutmut(
+        &root,
+        r#"{"pkg.a.x_classify__mutmut_1": 36, "pkg.a.x_classify__mutmut_2": 5}"#,
     );
     let output = run(&root, &["--json"]);
     let stdout = String::from_utf8(output.stdout).unwrap();
