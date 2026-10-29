@@ -1,7 +1,7 @@
 # Whether nesting is the deepest decision or the deepest structure
 
 Type: grilling
-Status: open
+Status: resolved
 Blocked by:
 
 ## Question
@@ -16,3 +16,7 @@ Measured on the current adapters:
 - `return lambda y: y if a else 0` is nesting 2. The lambda is not a decision, and the ternary is the only one. The same shape in Rust and C++ is nesting 2.
 
 Decide whether nesting stays the deepest decision, in which case the ternary condition and the lambda walk are bugs against that sentence, or whether it becomes the deepest structural level — an `if`, a loop, a `match` or `switch`, a ternary, a `catch` — so a boolean and a lambda add none. The gate stays with [Recalibrate the gates by percentile on a production-only set](46-recalibrate-gates.md).
+
+## Answer
+
+Resolved 2026-10-29 with Christopher. Nesting is the deepest structural level. An `if`, a loop, a `match` or `switch`, a ternary, and a `catch` each add one inside the body or a ternary's value operand. A condition, an `else`, an `elif`, an `else if`, a boolean operator, a lambda, a guard, a comprehension clause, a `try`, a `finally`, a `with`, and a `#if` add none. Handlers on one `try` share one level, and so do the arms of one `match` and the cases of one `switch`. A structural form inside a lambda counts on the enclosing function. A nested function's nesting stays on that function. The finding sits on the deepest of these lines, and on the earlier line when two share that depth. The gate number stays with recalibration. [ADR 0030](../../../docs/adr/0030-nesting-is-structural.md). The count is [Count nesting as the deepest structural level](75-structural-nesting.md).

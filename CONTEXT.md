@@ -56,8 +56,8 @@ The number of independent paths through a function. It starts at 1, and each dec
 _Avoid_: cognitive complexity, complexity
 
 **Nesting**:
-The deepest decision in a function. A decision outside any other is depth 1. A function with no decisions has nesting 0.
-_Avoid_: cognitive depth, indent
+The deepest structural level in a function: an `if`, a loop, a `match` or `switch`, a ternary, and a `catch` each add one inside the body or a ternary's value operand, handlers on one `try` share that level, and a function with none of these has nesting 0. A condition, an `else`, an `elif`, an `else if`, a boolean operator, a lambda, a guard, a comprehension clause, a `try`, a `finally`, a `with`, and a `#if` add none.
+_Avoid_: cognitive depth, indent, decision depth
 
 **Cognitive complexity**:
 The cost of understanding a function. A nested break adds 1 plus its depth. An `else`, a boolean sequence, or a labelled jump adds 1. The same table applies in Python, Rust, and C++.

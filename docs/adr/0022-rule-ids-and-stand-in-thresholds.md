@@ -21,7 +21,7 @@ A value greater than the gate fails. The gate number itself passes. F03 keeps it
 - F02 is CRAP. The gate is 8. A score of 8 passes and a score above 8 fails. Absent coverage leaves CRAP uncomputed, and F02 emits nothing.
 - F03 stays cognitive complexity, warn above 10 and gate above 15.
 - F04 is parameter count. The gate is 3. The receiver is excluded. Three ordinary parameters pass and four fail.
-- F05 is nesting, the deepest decision. The gate is 2. Nesting 2 passes and 3 fails.
+- F05 is nesting, the deepest structural level ([Nesting is the deepest structural level](0030-nesting-is-structural.md)). The gate is 2. Nesting 2 passes and 3 fails.
 - F06 is function length, the physical lines of the body span. The gate is 19, so 19 lines pass and 20 fail. A decorator or attribute is outside the span.
 - F07 stays the pass-through warn at 80, with no gate.
 - F08 stays the member-chain gate, 2 hops from the receiver and 1 otherwise, with no warn.

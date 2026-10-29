@@ -1,0 +1,21 @@
+# Count nesting as the deepest structural level
+
+Type: task
+Status: open
+Blocked by: 69
+
+## Question
+
+Implement [Nesting is the deepest structural level](../../../docs/adr/0030-nesting-is-structural.md) in the Python, Rust, and C++ adapters. Nesting is the deepest of those levels, or 0. The finding stays on that line, and on the earlier line when two share the depth. The stand-in gate stays 2 until [Recalibrate the gates by percentile on a production-only set](46-recalibrate-gates.md).
+
+Rewrite the Counting section of `docs/explain/F05.txt`, and any sentence on that page that calls nesting a decision, to this definition. Leave the threshold numbers for the explain-pages ticket.
+
+These readings hold in all three languages:
+
+- `return a and b` is 0. `if a and b` is 1. `return 1 if a and b else 0` is 1.
+- `return lambda y: y if a else 0` is 1. A nested function's nesting stays on that function.
+- `return 1 if a else 2 if b else 3` is 2. `if 1 if a else 0` is 1. `1 if (2 if a else 0) else 3` is 1. `if a: return 1 if b else 0` is 2.
+- `if` / `else` is 1. `if` / `elif` / `else` is 1. `if` / `else` / `if` inside the `else` body is 2. `if` / `else if` is 1. `if` / `else { if }` is 2.
+- A guard adds none: `match x { y if y > 0 => 1 }` is 1, and an `if` inside an arm is 2. A comprehension's `for` and `if` add none: `[y for y in xs if y > 0]` is 0, and `[1 if y else 0 for y in xs]` is 1.
+- `try` / `if` is 1. `except` / `if` is 2. `with` / `if` is 1. `finally` / `if` is 1. `#if` / `if` is 1.
+- `try` / `except A` / `except B` / `if` is 2. `try` / `except` / `try` / `except` / `if` is 3.
