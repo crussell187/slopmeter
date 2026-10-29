@@ -90,6 +90,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Reconcile rule ids with the spec and the dropped commented-out-code rule](issues/63-rule-numbering.md) — the tool keeps its ids: F04 parameters, F05 nesting, F06 physical length, F11 logical lines; commented-out code is out of scope ([ADR 0029](../../docs/adr/0029-shipped-rule-ids-stand.md)).
 - [Whether nesting is the deepest decision or the deepest structure](issues/69-what-nesting-counts.md) — nesting is the deepest structural level: an `if`, a loop, a `match` or `switch`, a ternary, and a `catch` each add one, and a boolean, a lambda, an `else` chain, a guard, a comprehension, a `try`, a `with`, and a `#if` add none ([ADR 0030](../../docs/adr/0030-nesting-is-structural.md)).
 - [Drop a C++ bare call that only starts a member chain](issues/70-cpp-bare-call-chain.md) — `make().a.b.c`, `(make()).a.b`, and `make()->a.b` are the members after the call; `send()` stays one hop.
+- [Read a cargo-mutants report into S07](issues/71-cargo-mutants-report.md) — `score_rust` reads `outcomes.json`; caught and timeout are detected, missed is undetected, and unviable is left out; S07 gates at 1, a missing report fails a touched Rust function, and a waiver for S07 fails the run.
 
 ## Not yet specified
 

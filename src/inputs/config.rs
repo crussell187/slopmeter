@@ -59,6 +59,7 @@ pub struct LanguageProfile {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Config {
     pub coverage: Option<String>,
+    pub mutation_rust: Option<String>,
     pub include: Option<Vec<String>>,
     pub exclude: Option<Vec<String>>,
     pub python: LanguageProfile,
@@ -113,6 +114,7 @@ impl Config {
     pub fn builtin() -> Self {
         Self {
             coverage: None,
+            mutation_rust: None,
             include: None,
             exclude: None,
             python: LanguageProfile::builtin(Language::Python),
@@ -131,6 +133,10 @@ impl Config {
 
     pub fn set_coverage_override(&mut self, path: impl Into<String>) {
         self.coverage = Some(path.into());
+    }
+
+    pub fn set_mutation_rust_override(&mut self, path: impl Into<String>) {
+        self.mutation_rust = Some(path.into());
     }
 
     pub fn retains(&self, path: &str) -> bool {
@@ -218,7 +224,8 @@ fn parse_config(text: &str) -> Result<Config, ConfigError> {
     let mut config = Config::builtin();
     for (key, value) in &table {
         match key.as_str() {
-            "coverage" => config.coverage = Some(coverage_path(value)?),
+            "coverage" => config.coverage = Some(report_path(value, "coverage")?),
+            "mutation" => apply_mutation(&mut config, value)?,
             "include" => config.include = Some(pattern_list(value, "include")?),
             "exclude" => config.exclude = Some(pattern_list(value, "exclude")?),
             "profile" => apply_profile(&mut config, value)?,
@@ -228,15 +235,31 @@ fn parse_config(text: &str) -> Result<Config, ConfigError> {
     Ok(config)
 }
 
-fn coverage_path(value: &toml::Value) -> Result<String, ConfigError> {
+fn report_path(value: &toml::Value, key: &str) -> Result<String, ConfigError> {
     let Some(path) = value.as_str() else {
-        return Err(ConfigError::WrongType("coverage".to_string()));
+        return Err(ConfigError::WrongType(key.to_string()));
     };
     if path.is_empty() {
-        return Err(ConfigError::EmptyOverride("coverage".to_string()));
+        return Err(ConfigError::EmptyOverride(key.to_string()));
     }
     validate_repo_path(path)?;
     Ok(path.to_string())
+}
+
+fn apply_mutation(config: &mut Config, value: &toml::Value) -> Result<(), ConfigError> {
+    let Some(table) = value.as_table() else {
+        return Err(ConfigError::WrongType("mutation".to_string()));
+    };
+    if table.is_empty() {
+        return Err(ConfigError::EmptyOverride("mutation".to_string()));
+    }
+    for (key, item) in table {
+        match key.as_str() {
+            "rust" => config.mutation_rust = Some(report_path(item, "mutation.rust")?),
+            other => return Err(ConfigError::UnknownKey(format!("mutation.{other}"))),
+        }
+    }
+    Ok(())
 }
 
 fn pattern_list(value: &toml::Value, key: &str) -> Result<Vec<String>, ConfigError> {
@@ -701,6 +724,11 @@ allow = ["with_timeout"]
             "[profile.python.F03]\n",
             "coverage =\n",
             "[profile.python]\n",
+            "[mutation]\n",
+            "[mutation]\npython = \"mutants\"\n",
+            "[mutation]\nrust = \"\"\n",
+            "[mutation]\nrust = \"/tmp/outcomes.json\"\n",
+            "[mutation]\nrust = 1\n",
         ];
         for body in rejected {
             write_config(&root, body);
@@ -726,5 +754,18 @@ allow = ["with_timeout"]
         write_config(&root, "coverage = \"target/coverage.lcov\"\n");
         let config = load_config(&root).unwrap();
         assert_eq!(config.coverage.as_deref(), Some("target/coverage.lcov"));
+    }
+
+    #[test]
+    fn a_mutation_rust_path_loads_and_the_flag_replaces_it() {
+        let root = fixture("mutation");
+        write_config(&root, "[mutation]\nrust = \"mutants.out/outcomes.json\"\n");
+        let mut config = load_config(&root).unwrap();
+        assert_eq!(
+            config.mutation_rust.as_deref(),
+            Some("mutants.out/outcomes.json")
+        );
+        config.set_mutation_rust_override("/tmp/outcomes.json");
+        assert_eq!(config.mutation_rust.as_deref(), Some("/tmp/outcomes.json"));
     }
 }

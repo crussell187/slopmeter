@@ -52,11 +52,16 @@ fn parse_check(cwd: &Path, args: &[String]) -> Result<Parsed, String> {
         tests: false,
         changed: None,
         coverage: None,
+        mutation_rust: None,
     };
     let mut json = false;
     let mut path = None;
     let mut rest = args.iter();
     while let Some(arg) = rest.next() {
+        if let Some(value) = arg.strip_prefix("--mutation-rust=") {
+            options.mutation_rust = Some(required(value, "mutation-rust needs a path")?);
+            continue;
+        }
         if let Some(value) = arg.strip_prefix("--coverage=") {
             options.coverage = Some(required(value, "coverage needs a path")?);
             continue;
@@ -71,6 +76,9 @@ fn parse_check(cwd: &Path, args: &[String]) -> Result<Parsed, String> {
             "--tests" => options.tests = true,
             "--coverage" => {
                 options.coverage = Some(next_value(&mut rest, "coverage needs a path")?)
+            }
+            "--mutation-rust" => {
+                options.mutation_rust = Some(next_value(&mut rest, "mutation-rust needs a path")?)
             }
             "--changed" => options.changed = Some(next_value(&mut rest, "changed needs a ref")?),
             other if other.starts_with('-') => return Err(format!("unknown argument {other}")),

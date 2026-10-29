@@ -19,6 +19,13 @@ pub enum Coverage {
     Unshown,
 }
 
+/// A mutation score the report produced, or a report that never showed one.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Mutation {
+    Score { score: f64, line: u32 },
+    Unshown,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Measurement {
     pub path: String,
@@ -38,6 +45,7 @@ pub struct Measurement {
     pub waivers: Vec<WaiverLine>,
     pub crap: Option<f64>,
     pub coverage: Option<Coverage>,
+    pub mutation: Option<Mutation>,
 }
 
 pub fn measure(file: &File, allow: &[&str]) -> Vec<Measurement> {
@@ -70,6 +78,7 @@ fn measure_function(path: &str, function: &Function, allow: &[&str]) -> Measurem
         waivers: function.waivers.clone(),
         crap: None,
         coverage: None,
+        mutation: None,
     }
 }
 

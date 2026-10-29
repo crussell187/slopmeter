@@ -4,8 +4,8 @@ use std::path::{Path, PathBuf};
 use crate::adapters;
 use crate::analyzers::{measure, Measurement};
 use crate::inputs::{
-    cover, coverage_path, load_config, select, Config, ConfigError, LcovError, SelectError,
-    SelectOptions,
+    cover, coverage_path, load_config, mutation_path, score_rust, select, Config, ConfigError,
+    LcovError, MutationError, SelectError, SelectOptions,
 };
 use crate::ir::{File, Language};
 use crate::reporters::{Note, Report};
@@ -17,6 +17,7 @@ pub struct CheckOptions {
     pub tests: bool,
     pub changed: Option<String>,
     pub coverage: Option<String>,
+    pub mutation_rust: Option<String>,
 }
 
 #[derive(Debug)]
@@ -26,6 +27,7 @@ pub enum CheckError {
     Read(PathBuf, std::io::Error),
     Adapter(String),
     Coverage(LcovError),
+    Mutation(MutationError),
     Scope(ScopeError),
 }
 
@@ -37,6 +39,7 @@ impl std::fmt::Display for CheckError {
             CheckError::Read(path, err) => write!(f, "reading {}: {err}", path.display()),
             CheckError::Adapter(message) => write!(f, "{message}"),
             CheckError::Coverage(err) => write!(f, "{err}"),
+            CheckError::Mutation(err) => write!(f, "{err}"),
             CheckError::Scope(err) => write!(f, "{err}"),
         }
     }
@@ -51,6 +54,9 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
     let mut config = load_config(&repo).map_err(CheckError::Config)?;
     if let Some(coverage) = &options.coverage {
         config.set_coverage_override(coverage.clone());
+    }
+    if let Some(mutation) = &options.mutation_rust {
+        config.set_mutation_rust_override(mutation.clone());
     }
     let prefix = subtree_prefix(&repo, root);
     let selected = select(
@@ -92,6 +98,21 @@ pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> 
     notes.extend(macro_notes(&files));
     notes.extend(
         cover(&mut measurements, &scored, report.as_deref()).map_err(CheckError::Coverage)?,
+    );
+    let mutation_root = if options.mutation_rust.is_some() {
+        root
+    } else {
+        repo.as_path()
+    };
+    let mutation = mutation_path(mutation_root, config.mutation_rust.as_deref());
+    let rust_ranges: Vec<(usize, usize)> = spans
+        .iter()
+        .filter(|(language, _, _)| *language == Language::Rust)
+        .map(|(_, start, end)| (*start, *end))
+        .collect();
+    notes.extend(
+        score_rust(&mut measurements, &rust_ranges, mutation.as_deref())
+            .map_err(CheckError::Mutation)?,
     );
     let findings = evaluate_spans(&measurements, &spans, &config);
     let scoped = partition(

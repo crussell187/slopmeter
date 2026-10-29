@@ -463,6 +463,7 @@ mod tests {
             waivers: vec![],
             crap: None,
             coverage: None,
+            mutation: None,
         }
     }
 

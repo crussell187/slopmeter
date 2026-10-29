@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::analyzers::{ChainDepth, Coverage, Measurement};
+use crate::analyzers::{ChainDepth, Coverage, Measurement, Mutation};
 use crate::inputs::LanguageProfile;
 use crate::ir::{Span, WaiverLine};
 
@@ -96,6 +96,9 @@ fn evaluate_one(measurement: &Measurement, profile: &LanguageProfile) -> Vec<Fin
         ));
     }
     if let Some(finding) = coverage_finding(measurement) {
+        findings.push(finding);
+    }
+    if let Some(finding) = mutation_finding(measurement) {
         findings.push(finding);
     }
     for class in &classes {
@@ -242,6 +245,45 @@ fn coverage_finding(measurement: &Measurement) -> Option<Finding> {
         principle: principle("S06"),
         fix_shape,
         anti_fix: anti_fix("S06"),
+        waiver: None,
+    })
+}
+
+fn mutation_finding(measurement: &Measurement) -> Option<Finding> {
+    let (measured_value, line, fix_shape) = match measurement.mutation.as_ref()? {
+        Mutation::Score { score, .. } if *score >= 1.0 => return None,
+        Mutation::Score { score, line } => (
+            Some(*score),
+            *line,
+            format!(
+                "Detect the mutants of {}. Its mutation score is {}, and the gate is 1.",
+                measurement.name,
+                show(*score)
+            ),
+        ),
+        Mutation::Unshown => (
+            None,
+            measurement.span.start,
+            format!(
+                "Detect the mutants of {}. Its mutation score is absent, and the gate is 1.",
+                measurement.name
+            ),
+        ),
+    };
+    Some(Finding {
+        rule: "S07".to_string(),
+        level: Level::Gate,
+        path: measurement.path.clone(),
+        name: measurement.name.clone(),
+        param_types: measurement.param_types.clone(),
+        qualifier: measurement.qualifier.clone(),
+        line,
+        measured_value,
+        threshold: Some(1.0),
+        weight: finding_weight("S07", Level::Gate),
+        principle: principle("S07"),
+        fix_shape,
+        anti_fix: anti_fix("S07"),
         waiver: None,
     })
 }
@@ -459,6 +501,7 @@ fn classify_line(line: &WaiverLine, counts: &BTreeMap<String, usize>) -> Classif
     let outcome = match rule.as_deref() {
         None => Outcome::Rejected("The waiver line has no rule.".to_string()),
         Some("S06") => Outcome::Rejected("S06 cannot be waived.".to_string()),
+        Some("S07") => Outcome::Rejected("S07 cannot be waived.".to_string()),
         Some(rule) if counts.get(rule).copied().unwrap_or(0) > 1 && gate_id(rule) => {
             Outcome::Rejected(format!("{rule} is waived twice."))
         }
@@ -508,6 +551,7 @@ fn principle(rule: &str) -> String {
         "F08" => "A member chain that does not start at the receiver may be one deep, and a chain that starts at the receiver may be two deep. Law of Demeter.",
         "F11" => "A function should say little. The count is statements, not wrapped lines.",
         "S06" => "Every executable line of a changed function is hit.",
+        "S07" => "Every valid mutant of a changed function is detected.",
         _ => "A waiver excuses one gate, and this line does not name one.",
     }
     .to_string()
@@ -525,6 +569,7 @@ fn anti_fix(rule: &str) -> String {
         "F08" => "Saving the chain in locals leaves the finding in place.",
         "F11" => "Breaking one statement across more lines leaves the count in place.",
         "S06" => "A test that runs the function and asserts nothing marks the lines hit.",
+        "S07" => "A test that does not fail on the mutant.",
         _ => "Deleting the waiver line leaves the run with no such line.",
     }
     .to_string()
@@ -619,6 +664,7 @@ mod tests {
             waivers: vec![],
             crap: None,
             coverage: None,
+            mutation: None,
         }
     }
 
@@ -1292,6 +1338,81 @@ mod tests {
         assert_eq!(
             findings[1].waiver.as_ref().unwrap().rejection.as_deref(),
             Some("S06 cannot be waived.")
+        );
+    }
+
+    #[test]
+    fn a_mutation_score_of_one_half_is_s07_at_the_first_undetected_mutant() {
+        let mut measured = base();
+        measured.name = "classify".to_string();
+        measured.span = Span { start: 4, end: 9 };
+        measured.mutation = Some(Mutation::Score {
+            score: 0.5,
+            line: 6,
+        });
+
+        let findings = evaluate(&[measured], &profile());
+
+        assert_eq!(findings.len(), 1);
+        let finding = &findings[0];
+        assert_eq!(finding.rule, "S07");
+        assert_eq!(finding.level, Level::Gate);
+        assert_eq!(finding.line, 6);
+        assert_eq!(finding.measured_value, Some(0.5));
+        assert_eq!(finding.threshold, Some(1.0));
+        assert_eq!(finding.weight, 10);
+        assert_eq!(
+            finding.principle,
+            "Every valid mutant of a changed function is detected."
+        );
+        assert_eq!(
+            finding.fix_shape,
+            "Detect the mutants of classify. Its mutation score is 0.5, and the gate is 1."
+        );
+        assert_eq!(finding.anti_fix, "A test that does not fail on the mutant.");
+        assert!(finding.waiver.is_none());
+    }
+
+    #[test]
+    fn an_absent_mutation_score_sits_on_the_function_line() {
+        let mut measured = base();
+        measured.name = "classify".to_string();
+        measured.span = Span { start: 4, end: 9 };
+        measured.mutation = Some(Mutation::Unshown);
+
+        let findings = evaluate(&[measured], &profile());
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule, "S07");
+        assert_eq!(findings[0].line, 4);
+        assert_eq!(findings[0].measured_value, None);
+        assert_eq!(
+            findings[0].fix_shape,
+            "Detect the mutants of classify. Its mutation score is absent, and the gate is 1."
+        );
+    }
+
+    #[test]
+    fn a_waiver_line_for_s07_is_rejected() {
+        let mut measured = base();
+        measured.mutation = Some(Mutation::Score {
+            score: 0.5,
+            line: 6,
+        });
+        measured.waivers = vec![waiver(2, Some("S07"), Some("0"), Some("later"))];
+
+        let findings = evaluate(&[measured], &profile());
+
+        assert_eq!(findings.len(), 2);
+        assert_eq!(findings[0].rule, "S07");
+        assert_eq!(findings[0].weight, 10);
+        assert!(findings[0].waiver.is_none());
+        assert_eq!(findings[1].rule, "S07");
+        assert_eq!(findings[1].weight, 0);
+        assert_eq!(findings[1].line, 2);
+        assert_eq!(
+            findings[1].waiver.as_ref().unwrap().rejection.as_deref(),
+            Some("S07 cannot be waived.")
         );
     }
 

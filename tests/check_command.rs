@@ -141,6 +141,11 @@ fn a_wrong_argument_exits_2() {
     assert!(changed.stdout.is_empty());
     assert_eq!(changed.stderr, b"changed needs a ref\n");
 
+    let mutation = invoke(&["--mutation-rust"]);
+    assert_eq!(mutation.status.code(), Some(2));
+    assert!(mutation.stdout.is_empty());
+    assert_eq!(mutation.stderr, b"mutation-rust needs a path\n");
+
     let root = fixture("two");
     let extra = root.join("other");
     let both = invoke(&["--strict", root.to_str().unwrap(), extra.to_str().unwrap()]);
@@ -521,4 +526,196 @@ fn lcov(path: &str, source: &str) -> String {
     }
     text.push_str("end_of_record\n");
     text
+}
+
+const CLASSIFY: &str = "fn classify(n: i32) -> i32 {\n    n\n}\n";
+
+fn outcomes(file: &str, summaries: &[(&str, u32)]) -> String {
+    let mut rows = vec![r#"{"scenario":"Baseline","summary":"Success"}"#.to_string()];
+    for (summary, line) in summaries {
+        rows.push(format!(
+            r#"{{"scenario":{{"Mutant":{{"file":"{file}","function":{{"function_name":"ignored"}},"span":{{"start":{{"line":{line},"column":1}},"end":{{"line":{line},"column":2}}}}}}}},"summary":"{summary}"}}"#
+        ));
+    }
+    format!(r#"{{"outcomes":[{}]}}"#, rows.join(","))
+}
+
+fn touched_rust(name: &str) -> PathBuf {
+    let root = fixture(name);
+    git(&root, &["init", "-b", "main"]);
+    write(&root, "src/lib.rs", CLASSIFY);
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-m", "base"]);
+    write(
+        &root,
+        "src/lib.rs",
+        &CLASSIFY.replace("    n\n", "    n + 0\n"),
+    );
+    root
+}
+
+fn s07_rows<'a>(doc: &'a serde_json::Value, key: &str) -> Vec<&'a serde_json::Value> {
+    doc[key]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["rule"] == "S07")
+        .collect()
+}
+
+#[test]
+fn a_cargo_mutants_report_gates_a_touched_rust_function_at_the_missed_mutant() {
+    let root = touched_rust("mutants");
+    write(
+        &root,
+        "outcomes.json",
+        &outcomes(
+            "src/lib.rs",
+            &[("Timeout", 1), ("MissedMutant", 2), ("Unviable", 1)],
+        ),
+    );
+
+    let output = run(&root, &["--json", "--mutation-rust=outcomes.json"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.is_empty(), "{stderr}");
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let rows = s07_rows(&doc, "findings");
+    assert_eq!(rows.len(), 1, "{stdout}");
+    assert_eq!(rows[0]["symbol"]["name"], "classify");
+    assert_eq!(rows[0]["line"], 2);
+    assert_eq!(rows[0]["measured_value"], 0.5);
+    assert_eq!(rows[0]["threshold"], 1.0);
+    assert_eq!(rows[0]["weight"], 10);
+    assert!(s07_rows(&doc, "inherited").is_empty(), "{stdout}");
+
+    let strict = run(
+        &root,
+        &["--strict", "--json", "--mutation-rust=outcomes.json"],
+    );
+    let stdout = String::from_utf8(strict.stdout).unwrap();
+    assert_eq!(strict.status.code(), Some(0), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(s07_rows(&doc, "findings").is_empty(), "{stdout}");
+    let inherited = s07_rows(&doc, "inherited");
+    assert_eq!(inherited.len(), 1, "{stdout}");
+    assert_eq!(inherited[0]["measured_value"], 0.5);
+}
+
+#[test]
+fn a_missing_rust_mutation_report_fails_the_touch_and_strict_adds_no_row() {
+    let root = touched_rust("missing-mutants");
+    let missing = run(&root, &["--json", "--mutation-rust=outcomes.json"]);
+    let stdout = String::from_utf8(missing.stdout).unwrap();
+    assert_eq!(missing.status.code(), Some(1), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let rows = s07_rows(&doc, "findings");
+    assert_eq!(rows.len(), 1, "{stdout}");
+    assert!(rows[0]["measured_value"].is_null(), "{stdout}");
+    assert_eq!(rows[0]["line"], 1);
+    let notes = doc["notes"].as_array().unwrap();
+    assert!(
+        notes
+            .iter()
+            .any(|note| note["message"].as_str().unwrap().contains("outcomes.json")),
+        "{notes:?}"
+    );
+
+    let strict = run(
+        &root,
+        &["--strict", "--json", "--mutation-rust=outcomes.json"],
+    );
+    let stdout = String::from_utf8(strict.stdout).unwrap();
+    assert_eq!(strict.status.code(), Some(0), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(s07_rows(&doc, "findings").is_empty(), "{stdout}");
+    assert!(s07_rows(&doc, "inherited").is_empty(), "{stdout}");
+
+    let unset = run(&root, &["--json"]);
+    let stdout = String::from_utf8(unset.stdout).unwrap();
+    assert_eq!(unset.status.code(), Some(1), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(s07_rows(&doc, "findings").len(), 1, "{stdout}");
+    assert!(
+        doc["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|note| note["message"] == "No mutation report was given."),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn an_unreadable_mutation_report_exits_2_and_a_waiver_for_s07_fails() {
+    let root = touched_rust("bad-mutants");
+    write(&root, "outcomes.json", "{");
+    let output = run(&root, &["--strict", "--mutation-rust=outcomes.json"]);
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(output.stdout.is_empty(), "{stderr}");
+    assert_eq!(output.status.code(), Some(2));
+    assert!(stderr.contains("cannot be parsed"), "{stderr}");
+
+    write(
+        &root,
+        "src/lib.rs",
+        &format!("// slopmeter: waive S07 0 later\n{CLASSIFY}"),
+    );
+    write(
+        &root,
+        "outcomes.json",
+        &outcomes("src/lib.rs", &[("CaughtMutant", 1), ("Timeout", 2)]),
+    );
+    let output = run(&root, &["--json", "--mutation-rust=outcomes.json"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    let rows = s07_rows(&doc, "findings");
+    assert!(
+        rows.iter()
+            .any(|row| row["waiver"]["rejection"] == "S07 cannot be waived."),
+        "{stdout}"
+    );
+    assert!(
+        rows.iter().all(|row| row["measured_value"].is_null()),
+        "{stdout}"
+    );
+}
+
+#[test]
+fn outside_git_a_shown_mutation_row_is_inherited_and_the_config_names_the_report() {
+    let root = fixture("outside-mutants");
+    write(&root, "src/lib.rs", CLASSIFY);
+    write(
+        &root,
+        "outcomes.json",
+        &outcomes("src/lib.rs", &[("MissedMutant", 2)]),
+    );
+    let output = run(&root, &["--json", "--mutation-rust=outcomes.json"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(0), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert!(s07_rows(&doc, "findings").is_empty(), "{stdout}");
+    assert_eq!(s07_rows(&doc, "inherited").len(), 1, "{stdout}");
+    assert_eq!(s07_rows(&doc, "inherited")[0]["measured_value"], 0.0);
+    assert!(stdout.contains("not a git repository"), "{stdout}");
+
+    let root = touched_rust("config-mutants");
+    write(
+        &root,
+        "slopmeter.toml",
+        "[mutation]\nrust = \"outcomes.json\"\n",
+    );
+    write(
+        &root,
+        "outcomes.json",
+        &outcomes("src/lib.rs", &[("CaughtMutant", 1), ("MissedMutant", 2)]),
+    );
+    let output = run(&root, &["--json"]);
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    assert_eq!(output.status.code(), Some(1), "{stdout}");
+    let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+    assert_eq!(s07_rows(&doc, "findings").len(), 1, "{stdout}");
+    assert_eq!(s07_rows(&doc, "findings")[0]["measured_value"], 0.5);
 }

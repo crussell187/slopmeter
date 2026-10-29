@@ -88,7 +88,7 @@ fn level_rank(level: Level) -> u8 {
 }
 
 fn fraction(finding: &Finding) -> f64 {
-    if finding.rule == "S06" {
+    if matches!(finding.rule.as_str(), "S06" | "S07") {
         return match finding.measured_value {
             Some(measured) => -measured,
             None => f64::INFINITY,
@@ -194,7 +194,7 @@ fn location(finding: &Finding) -> String {
 }
 
 fn detail(finding: &Finding) -> String {
-    let mut text = if finding.rule == "S06" {
+    let mut text = if matches!(finding.rule.as_str(), "S06" | "S07") {
         match (finding.measured_value, finding.threshold) {
             (Some(measured), Some(threshold)) => {
                 format!("{} < {}", show(measured), show(threshold))
@@ -843,5 +843,44 @@ mod tests {
         let absent_at = rendered.stdout.find("absent < 1").unwrap();
         assert!(absent_at < partial_at);
         assert_eq!(rendered.code, 1);
+
+        let mutation = finding(
+            "S07",
+            Level::Gate,
+            "src/a.py",
+            "classify",
+            6,
+            Metric {
+                measured: 0.5,
+                threshold: 1.0,
+                weight: 10,
+            },
+        );
+        let mut absent_score = finding(
+            "S07",
+            Level::Gate,
+            "src/a.py",
+            "missing",
+            1,
+            Metric {
+                measured: 0.0,
+                threshold: 1.0,
+                weight: 10,
+            },
+        );
+        absent_score.measured_value = None;
+        let rendered = render(
+            &Report {
+                scope: Scope::Changed,
+                tool_version: "0.0.0".to_string(),
+                kloc: Some(1.0),
+                findings: vec![mutation, absent_score],
+                inherited: vec![],
+                notes: vec![],
+            },
+            false,
+        );
+        assert!(rendered.stdout.contains("0.5 < 1"));
+        assert!(rendered.stdout.contains("absent < 1"));
     }
 }

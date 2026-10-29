@@ -1,0 +1,50 @@
+S07  mutation score
+
+Every valid mutant of a changed function is detected.
+
+Counting
+The score is the detected mutants divided by the detected
+and undetected mutants whose start line sits in the body
+span. A test failure and a timeout are detected. A mutant
+the tests pass is undetected. A mutant that never compiled
+is left out. Rust reads cargo-mutants outcomes.json.
+Caught and timeout are detected, missed is undetected, and
+unviable is left out. The report's function name is
+ignored. A nested function keeps its own line. A function
+with no valid mutants stays off the gate. A file the
+report does not match, and a tie between records, fail
+each touched function in that file and record no score. An
+unfinished mutant in a file does the same. An untouched
+function below 1 is inherited. Under --strict, and outside
+git, every shown row stays inherited. A missing report
+fails the default run once a function is touched, and adds
+no row under --strict. The finding sits on the first
+undetected mutant, or on the function line when no score
+was produced.
+
+Threshold
+Shipped stand-in: gate at 1. 1 passes and a score below 1
+fails. No warn level.
+A waiver line for S07 fails the run.
+
+Before
+fn classify(n: i32) -> &'static str {
+    if n < 0 { "neg" } else { "other" }
+}
+
+After
+fn classify(n: i32) -> &'static str {
+    if n < 0 { "neg" } else { "other" }
+}
+
+fn both() {
+    assert_eq!(classify(-1), "neg");
+    assert_eq!(classify(1), "other");
+}
+
+Anti-fixes
+A test that does not fail on the mutant.
+A comment that claims the mutants were caught leaves them
+missed.
+Deleting the missed mutant from the report leaves the
+function unmeasured.
