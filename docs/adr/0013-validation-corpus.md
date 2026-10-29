@@ -5,9 +5,9 @@ date: 2026-10-26
 
 # The validation run tunes on nine pinned repos
 
-The bar below, that a clean repo has no gate findings and that a threshold loosens until it passes, is replaced by [Count gates are a percentile of the pinned clean repos](0031-count-gates-are-a-percentile.md). The nine repos and their commits still stand. A `--strict` run of a clean repo shows the functions over the gate. The sloppy repo still gates on F01–F06, F08, and F11, and warns on F07. A gate may not be switched off.
+The bar below, that a clean repo has no gate findings and that a threshold loosens until it passes, is replaced by [Count gates are a percentile of the pinned clean repos](0031-count-gates-are-a-percentile.md). The nine repos and their commits still stand. A `--strict` run of a clean repo shows the functions over the gate. The sloppy repo still gates on F01–F06, F08, and F11 by a wide margin, and warns on F07. Its coverage report leaves the untested function's lines unhit. A gate may not be switched off.
 
-The clean set is three public repos per language, each with tests that can emit LCOV, each small enough to score in one session, each pinned to the commit recorded for the run. Python: `psf/requests`, `encode/httpx`, `pallets/click`. Rust: `serde-rs/serde`, `rust-lang/regex`, `tokio-rs/bytes`. C++: `fmtlib/fmt`, `google/re2`, `CLIUtils/CLI11`. The sloppy repo is one pinned tree per language, written by an agent from a fixed seed that asks for the bad structures in plain language and does not name rule ids. It is kept only once every gating rule fires, and later runs reuse the pin.
+The clean set is three public repos per language, each with tests that can emit LCOV, each small enough to score in one session, each pinned to the commit recorded for the run. Python: `psf/requests`, `encode/httpx`, `pallets/click`. Rust: `serde-rs/serde`, `rust-lang/regex`, `tokio-rs/bytes`. C++: `fmtlib/fmt`, `google/re2`, `CLIUtils/CLI11`. The sloppy repo is one pinned tree per language, written by an agent from a fixed seed that asks for the bad structures in plain language and does not name rule ids. It is kept only once every gating rule fires by a wide margin, and later runs reuse the pin. The coverage report includes the function the tests never call, and those lines are unhit.
 
 ## Considered options
 

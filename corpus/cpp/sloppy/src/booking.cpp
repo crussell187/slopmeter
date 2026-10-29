@@ -1,1226 +1,130 @@
-struct Hub { int hop01; };
-int send(int left, int right) { return left + right; }
+struct Request {
+    bool weekend;
+    bool holiday;
+    bool suite;
+    bool late;
+    bool early;
+    bool group;
+    bool member;
+    bool quiet;
+    bool high_floor;
+    bool view;
+    bool parking;
+    bool breakfast;
+    bool crib;
+    bool accessible;
+    bool prepaid;
+    bool invoice;
+    bool long_stay;
+    bool walk_in;
+    bool corporate;
+    bool government;
+    bool student;
+    bool military;
+    bool repeat_guest;
+    bool connecting;
+    bool guest;
+    bool night;
+    bool room;
+    bool paid;
+    bool loyalty;
+    bool policy;
+    bool double_room;
+    bool single;
+    bool card;
+    int kind;
+    int member_rate;
+    int rack_rate;
+};
 
-bool choices(bool flag) { return flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag && flag; }
+struct Desk {
+    int label;
+};
 
-int book(int a, int b, int c, int d, int e, int f, int g, int h, int i, int j, int k, int l, int m, int n, int o, int p, int q, int r, int s) { return a; }
+struct Wing {
+    Desk desk;
+};
 
-int forward(int left, int right) { return send(left, right); }
+struct Floor {
+    Wing wing;
+};
 
-int read(Hub value) { return value.hop01.hop02.hop03.hop04.hop05.hop06.hop07.hop08.hop09.hop10.hop11.hop12.hop13.hop14.hop15; }
+struct Room {
+    Floor floor;
+};
 
-int describe() {
-    // line 0
-    // line 1
-    // line 2
-    // line 3
-    // line 4
-    // line 5
-    // line 6
-    // line 7
-    // line 8
-    // line 9
-    // line 10
-    // line 11
-    // line 12
-    // line 13
-    // line 14
-    // line 15
-    // line 16
-    // line 17
-    // line 18
-    // line 19
-    // line 20
-    // line 21
-    // line 22
-    // line 23
-    // line 24
-    // line 25
-    // line 26
-    // line 27
-    // line 28
-    // line 29
-    // line 30
-    // line 31
-    // line 32
-    // line 33
-    // line 34
-    // line 35
-    // line 36
-    // line 37
-    // line 38
-    // line 39
-    // line 40
-    // line 41
-    // line 42
-    // line 43
-    // line 44
-    // line 45
-    // line 46
-    // line 47
-    // line 48
-    // line 49
-    // line 50
-    // line 51
-    // line 52
-    // line 53
-    // line 54
-    // line 55
-    // line 56
-    // line 57
-    // line 58
-    // line 59
-    // line 60
-    // line 61
-    // line 62
-    // line 63
-    // line 64
-    // line 65
-    // line 66
-    // line 67
-    // line 68
-    // line 69
-    // line 70
-    // line 71
-    // line 72
-    // line 73
-    // line 74
-    // line 75
-    // line 76
-    // line 77
-    // line 78
-    // line 79
-    // line 80
-    // line 81
-    // line 82
-    // line 83
-    // line 84
-    // line 85
-    // line 86
-    // line 87
-    // line 88
-    // line 89
-    // line 90
-    // line 91
-    // line 92
-    // line 93
-    // line 94
-    // line 95
-    // line 96
-    // line 97
-    // line 98
-    // line 99
-    // line 100
-    // line 101
-    // line 102
-    // line 103
-    // line 104
-    // line 105
-    // line 106
-    // line 107
-    // line 108
-    // line 109
-    // line 110
-    // line 111
-    // line 112
-    // line 113
-    // line 114
-    // line 115
-    // line 116
-    // line 117
-    // line 118
-    // line 119
-    // line 120
-    // line 121
-    // line 122
-    // line 123
-    // line 124
-    // line 125
-    // line 126
-    // line 127
-    // line 128
-    // line 129
-    // line 130
-    // line 131
-    // line 132
-    // line 133
-    // line 134
-    // line 135
-    // line 136
-    // line 137
-    // line 138
-    // line 139
-    // line 140
-    // line 141
-    // line 142
-    // line 143
-    // line 144
-    // line 145
-    // line 146
-    // line 147
-    // line 148
-    // line 149
-    // line 150
-    // line 151
-    // line 152
-    // line 153
-    // line 154
-    // line 155
-    // line 156
-    // line 157
-    // line 158
-    // line 159
-    // line 160
-    // line 161
-    // line 162
-    // line 163
-    // line 164
-    // line 165
-    // line 166
-    // line 167
-    // line 168
-    // line 169
-    // line 170
-    // line 171
-    // line 172
-    // line 173
-    // line 174
-    // line 175
-    // line 176
-    // line 177
-    // line 178
-    // line 179
-    // line 180
-    // line 181
-    // line 182
-    // line 183
-    // line 184
-    // line 185
-    // line 186
-    // line 187
-    // line 188
-    // line 189
-    // line 190
-    // line 191
-    // line 192
-    // line 193
-    // line 194
-    // line 195
-    // line 196
-    // line 197
-    // line 198
-    // line 199
-    // line 200
-    // line 201
-    // line 202
-    // line 203
-    // line 204
-    // line 205
-    // line 206
-    // line 207
-    // line 208
-    // line 209
-    // line 210
-    // line 211
-    // line 212
-    // line 213
-    // line 214
-    // line 215
-    // line 216
-    // line 217
-    // line 218
-    // line 219
-    // line 220
-    // line 221
-    // line 222
-    // line 223
-    // line 224
-    // line 225
-    // line 226
-    // line 227
-    // line 228
-    // line 229
-    // line 230
-    // line 231
-    // line 232
-    // line 233
-    // line 234
-    // line 235
-    // line 236
-    // line 237
-    // line 238
-    // line 239
-    // line 240
-    // line 241
-    // line 242
-    // line 243
-    // line 244
-    // line 245
-    // line 246
-    // line 247
-    // line 248
-    // line 249
-    // line 250
-    // line 251
-    // line 252
-    // line 253
-    // line 254
-    // line 255
-    // line 256
-    // line 257
-    // line 258
-    // line 259
-    // line 260
-    // line 261
-    // line 262
-    // line 263
-    // line 264
-    // line 265
-    // line 266
-    // line 267
-    // line 268
-    // line 269
-    // line 270
-    // line 271
-    // line 272
-    // line 273
-    // line 274
-    // line 275
-    // line 276
-    // line 277
-    // line 278
-    // line 279
-    // line 280
-    // line 281
-    // line 282
-    // line 283
-    // line 284
-    // line 285
-    // line 286
-    // line 287
-    // line 288
-    // line 289
-    // line 290
-    // line 291
-    // line 292
-    // line 293
-    // line 294
-    // line 295
-    // line 296
-    // line 297
-    // line 298
-    // line 299
-    // line 300
-    // line 301
-    // line 302
-    // line 303
-    // line 304
-    // line 305
-    // line 306
-    // line 307
-    // line 308
-    // line 309
-    // line 310
-    // line 311
-    // line 312
-    // line 313
-    // line 314
-    // line 315
-    // line 316
-    // line 317
-    // line 318
-    // line 319
-    // line 320
-    // line 321
-    // line 322
-    // line 323
-    // line 324
-    // line 325
-    // line 326
-    // line 327
-    // line 328
-    // line 329
-    // line 330
-    // line 331
-    // line 332
-    // line 333
-    // line 334
-    // line 335
-    // line 336
-    // line 337
-    // line 338
-    // line 339
-    // line 340
-    // line 341
-    // line 342
-    // line 343
-    // line 344
-    // line 345
-    // line 346
-    // line 347
-    // line 348
-    // line 349
-    // line 350
-    // line 351
-    // line 352
-    // line 353
-    // line 354
-    // line 355
-    // line 356
-    // line 357
-    // line 358
-    // line 359
-    // line 360
-    // line 361
-    // line 362
-    // line 363
-    // line 364
-    // line 365
-    // line 366
-    // line 367
-    // line 368
-    // line 369
-    // line 370
-    // line 371
-    // line 372
-    // line 373
-    // line 374
-    // line 375
-    // line 376
-    // line 377
-    // line 378
-    // line 379
-    // line 380
-    // line 381
-    // line 382
-    // line 383
-    // line 384
-    // line 385
-    // line 386
-    // line 387
-    // line 388
-    // line 389
-    // line 390
-    // line 391
-    // line 392
-    // line 393
-    // line 394
-    // line 395
-    // line 396
-    // line 397
-    // line 398
-    // line 399
-    // line 400
-    // line 401
-    // line 402
-    // line 403
-    // line 404
-    // line 405
-    // line 406
-    // line 407
-    // line 408
-    // line 409
-    // line 410
-    // line 411
-    // line 412
-    // line 413
-    // line 414
-    // line 415
-    // line 416
-    // line 417
-    // line 418
-    // line 419
-    // line 420
-    // line 421
-    // line 422
-    // line 423
-    // line 424
-    // line 425
-    // line 426
-    // line 427
-    // line 428
-    // line 429
-    // line 430
-    // line 431
-    // line 432
-    // line 433
-    // line 434
-    // line 435
-    // line 436
-    // line 437
-    // line 438
-    // line 439
-    // line 440
-    // line 441
-    // line 442
-    // line 443
-    // line 444
-    // line 445
-    // line 446
-    // line 447
-    // line 448
-    // line 449
-    // line 450
-    // line 451
-    // line 452
-    // line 453
-    // line 454
-    // line 455
-    // line 456
-    // line 457
-    // line 458
-    // line 459
-    // line 460
-    // line 461
-    // line 462
-    // line 463
-    // line 464
-    // line 465
-    // line 466
-    // line 467
-    // line 468
-    // line 469
-    // line 470
-    // line 471
-    // line 472
-    // line 473
-    // line 474
-    // line 475
-    // line 476
-    // line 477
-    // line 478
-    // line 479
-    // line 480
-    // line 481
-    // line 482
-    // line 483
-    // line 484
-    // line 485
-    // line 486
-    // line 487
-    // line 488
-    // line 489
-    // line 490
-    // line 491
-    // line 492
-    // line 493
-    // line 494
-    // line 495
-    // line 496
-    // line 497
-    // line 498
-    // line 499
-    // line 500
-    // line 501
-    // line 502
-    // line 503
-    // line 504
-    // line 505
-    // line 506
-    // line 507
-    // line 508
-    // line 509
-    // line 510
-    // line 511
-    // line 512
-    // line 513
-    // line 514
-    // line 515
-    // line 516
-    // line 517
-    // line 518
-    // line 519
-    // line 520
-    // line 521
-    // line 522
-    // line 523
-    // line 524
-    // line 525
-    // line 526
-    // line 527
-    // line 528
-    // line 529
-    // line 530
-    // line 531
-    // line 532
-    // line 533
-    // line 534
-    // line 535
-    // line 536
-    // line 537
-    // line 538
-    // line 539
-    // line 540
-    // line 541
-    // line 542
-    // line 543
-    // line 544
-    // line 545
-    // line 546
-    // line 547
-    // line 548
-    // line 549
-    // line 550
-    // line 551
-    // line 552
-    // line 553
-    // line 554
-    // line 555
-    // line 556
-    // line 557
-    // line 558
-    // line 559
-    // line 560
-    // line 561
-    // line 562
-    // line 563
-    // line 564
-    // line 565
-    // line 566
-    // line 567
-    // line 568
-    // line 569
-    // line 570
-    // line 571
-    // line 572
-    // line 573
-    // line 574
-    // line 575
-    // line 576
-    // line 577
-    // line 578
-    // line 579
-    // line 580
-    // line 581
-    // line 582
-    // line 583
-    // line 584
-    // line 585
-    // line 586
-    // line 587
-    // line 588
-    // line 589
-    // line 590
-    // line 591
-    // line 592
-    // line 593
-    // line 594
-    // line 595
-    // line 596
-    // line 597
-    // line 598
-    // line 599
-    // line 600
-    // line 601
-    // line 602
-    // line 603
-    // line 604
-    // line 605
-    // line 606
-    // line 607
-    // line 608
-    // line 609
-    // line 610
-    // line 611
-    // line 612
-    // line 613
-    // line 614
-    // line 615
-    // line 616
-    // line 617
-    // line 618
-    // line 619
-    // line 620
-    // line 621
-    // line 622
-    // line 623
-    // line 624
-    // line 625
-    // line 626
-    // line 627
-    // line 628
-    // line 629
-    // line 630
-    // line 631
-    // line 632
-    // line 633
-    // line 634
-    // line 635
-    // line 636
-    // line 637
-    // line 638
-    // line 639
-    // line 640
-    // line 641
-    // line 642
-    // line 643
-    // line 644
-    // line 645
-    // line 646
-    // line 647
-    // line 648
-    // line 649
-    // line 650
-    // line 651
-    // line 652
-    // line 653
-    // line 654
-    // line 655
-    // line 656
-    // line 657
-    // line 658
-    // line 659
-    // line 660
-    // line 661
-    // line 662
-    // line 663
-    // line 664
-    // line 665
-    // line 666
-    // line 667
-    // line 668
-    // line 669
-    // line 670
-    // line 671
-    // line 672
-    // line 673
-    // line 674
-    // line 675
-    // line 676
-    // line 677
-    // line 678
-    // line 679
-    // line 680
-    // line 681
-    // line 682
-    // line 683
-    // line 684
-    // line 685
-    // line 686
-    // line 687
-    // line 688
-    // line 689
-    // line 690
-    // line 691
-    // line 692
-    // line 693
-    // line 694
-    // line 695
-    // line 696
-    // line 697
-    // line 698
-    // line 699
-    // line 700
-    // line 701
-    // line 702
-    // line 703
-    // line 704
-    // line 705
-    // line 706
-    // line 707
-    // line 708
-    // line 709
-    // line 710
-    // line 711
-    return 0;
+struct Stay {
+    Room room;
+};
+
+struct Confirmation {
+    Stay stay;
+};
+
+bool choose(Request request) {
+    return
+        request.weekend ||
+        request.holiday ||
+        request.suite ||
+        request.late ||
+        request.early ||
+        request.group ||
+        request.member ||
+        request.quiet ||
+        request.high_floor ||
+        request.view ||
+        request.parking ||
+        request.breakfast ||
+        request.crib ||
+        request.accessible ||
+        request.prepaid ||
+        request.invoice ||
+        request.long_stay ||
+        request.walk_in ||
+        request.corporate ||
+        request.government ||
+        request.student ||
+        request.military ||
+        request.repeat_guest ||
+        request.connecting;
 }
 
-int record() {
-    int n = 0;
-    n = 1;
-    n = 2;
-    n = 3;
-    n = 4;
-    n = 5;
-    n = 6;
-    n = 7;
-    n = 8;
-    n = 9;
-    n = 10;
-    n = 11;
-    n = 12;
-    n = 13;
-    n = 14;
-    n = 15;
-    n = 16;
-    n = 17;
-    n = 18;
-    n = 19;
-    n = 20;
-    n = 21;
-    n = 22;
-    n = 23;
-    n = 24;
-    n = 25;
-    n = 26;
-    n = 27;
-    n = 28;
-    n = 29;
-    n = 30;
-    n = 31;
-    n = 32;
-    n = 33;
-    n = 34;
-    n = 35;
-    n = 36;
-    n = 37;
-    n = 38;
-    n = 39;
-    n = 40;
-    n = 41;
-    n = 42;
-    n = 43;
-    n = 44;
-    n = 45;
-    n = 46;
-    n = 47;
-    n = 48;
-    n = 49;
-    n = 50;
-    n = 51;
-    n = 52;
-    n = 53;
-    n = 54;
-    n = 55;
-    n = 56;
-    n = 57;
-    n = 58;
-    n = 59;
-    n = 60;
-    n = 61;
-    n = 62;
-    n = 63;
-    n = 64;
-    n = 65;
-    n = 66;
-    n = 67;
-    n = 68;
-    n = 69;
-    n = 70;
-    n = 71;
-    n = 72;
-    n = 73;
-    n = 74;
-    n = 75;
-    n = 76;
-    n = 77;
-    n = 78;
-    n = 79;
-    n = 80;
-    n = 81;
-    n = 82;
-    n = 83;
-    n = 84;
-    n = 85;
-    n = 86;
-    n = 87;
-    n = 88;
-    n = 89;
-    n = 90;
-    n = 91;
-    n = 92;
-    n = 93;
-    n = 94;
-    n = 95;
-    n = 96;
-    n = 97;
-    n = 98;
-    n = 99;
-    n = 100;
-    n = 101;
-    n = 102;
-    n = 103;
-    n = 104;
-    n = 105;
-    n = 106;
-    n = 107;
-    n = 108;
-    n = 109;
-    n = 110;
-    n = 111;
-    n = 112;
-    n = 113;
-    n = 114;
-    n = 115;
-    n = 116;
-    n = 117;
-    n = 118;
-    n = 119;
-    n = 120;
-    n = 121;
-    n = 122;
-    n = 123;
-    n = 124;
-    n = 125;
-    n = 126;
-    n = 127;
-    n = 128;
-    n = 129;
-    n = 130;
-    n = 131;
-    n = 132;
-    n = 133;
-    n = 134;
-    n = 135;
-    n = 136;
-    n = 137;
-    n = 138;
-    n = 139;
-    n = 140;
-    n = 141;
-    n = 142;
-    n = 143;
-    n = 144;
-    n = 145;
-    n = 146;
-    n = 147;
-    n = 148;
-    n = 149;
-    n = 150;
-    n = 151;
-    n = 152;
-    n = 153;
-    n = 154;
-    n = 155;
-    n = 156;
-    n = 157;
-    n = 158;
-    n = 159;
-    n = 160;
-    n = 161;
-    n = 162;
-    n = 163;
-    n = 164;
-    n = 165;
-    n = 166;
-    n = 167;
-    n = 168;
-    n = 169;
-    n = 170;
-    n = 171;
-    n = 172;
-    n = 173;
-    n = 174;
-    n = 175;
-    n = 176;
-    n = 177;
-    n = 178;
-    n = 179;
-    n = 180;
-    n = 181;
-    n = 182;
-    n = 183;
-    n = 184;
-    n = 185;
-    n = 186;
-    n = 187;
-    n = 188;
-    n = 189;
-    n = 190;
-    n = 191;
-    n = 192;
-    n = 193;
-    n = 194;
-    n = 195;
-    n = 196;
-    n = 197;
-    n = 198;
-    n = 199;
-    n = 200;
-    n = 201;
-    n = 202;
-    n = 203;
-    n = 204;
-    n = 205;
-    n = 206;
-    n = 207;
-    n = 208;
-    n = 209;
-    n = 210;
-    n = 211;
-    n = 212;
-    n = 213;
-    n = 214;
-    n = 215;
-    n = 216;
-    n = 217;
-    n = 218;
-    return n;
-}
-
-int tangled(bool flag) {
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) return 1;
-    if (flag) {
-        if (flag) {
-            if (flag) {
-                if (flag) {
-                    if (flag) {
-                        if (flag) {
-                            if (flag) {
-                                if (flag) {
-                                    if (flag) {
-                                        return 1;
-                                    }
-                                }
+int arrange(Request &request) {
+    if (request.guest) {
+        if (request.night) {
+            if (request.room) {
+                if (request.paid) {
+                    if (request.loyalty) {
+                        if (request.policy) {
+                            if (request.suite) {
+                                request.kind = 1;
+                            }
+                            if (request.double_room) {
+                                request.kind = 2;
+                            }
+                            if (request.single) {
+                                request.kind = 3;
+                            }
+                            if (request.late) {
+                                request.kind = 4;
+                            }
+                            if (request.early) {
+                                request.kind = 5;
+                            }
+                            if (request.group) {
+                                request.kind = 6;
+                            }
+                            if (request.card) {
+                                request.kind = 7;
+                            }
+                            if (request.invoice) {
+                                request.kind = 8;
+                            }
+                            if (request.accessible) {
+                                request.kind = 9;
+                            }
+                            if (request.crib) {
+                                request.kind = 10;
                             }
                         }
                     }
@@ -1228,6 +132,365 @@ int tangled(bool flag) {
             }
         }
     }
-    return 0;
+    return request.kind;
 }
 
+const char *deliver(const char *guest) {
+    return guest;
+}
+
+const char *forward(const char *guest) {
+    return deliver(guest);
+}
+
+int city(Confirmation confirmation) {
+    return confirmation.stay.room.floor.wing.desk.label;
+}
+
+const char *book(
+    const char *guest,
+    const char *email,
+    const char *phone,
+    int party,
+    int nights,
+    const char *arrival,
+    const char *departure,
+    int budget,
+    bool pillow,
+    bool quiet,
+    int floor,
+    bool view,
+    const char *payment,
+    const char *company,
+    const char *notes,
+    bool parking,
+    bool breakfast,
+    bool crib,
+    bool late,
+    bool early
+) {
+    return guest;
+}
+
+bool describe(bool flag) {
+    // Ada asked for a quiet room on night 1.
+    // Ada asked for a late checkout on night 1.
+    // Ada asked for a crib on night 1.
+    // Ada asked for a high floor on night 1.
+    // Ada asked for an extra pillow on night 1.
+    // Ada asked for a connecting door on night 1.
+    // Ada asked for breakfast on night 1.
+    // Ada asked for a parking spot on night 1.
+    // Ada asked for an invoice on night 1.
+    // Ada asked for a view of the court on night 1.
+    // Grace asked for a quiet room on night 1.
+    // Grace asked for a late checkout on night 1.
+    // Grace asked for a crib on night 1.
+    // Grace asked for a high floor on night 1.
+    // Grace asked for an extra pillow on night 1.
+    // Grace asked for a connecting door on night 1.
+    // Grace asked for breakfast on night 1.
+    // Grace asked for a parking spot on night 1.
+    // Grace asked for an invoice on night 1.
+    // Grace asked for a view of the court on night 1.
+    // Lin asked for a quiet room on night 1.
+    // Lin asked for a late checkout on night 1.
+    // Lin asked for a crib on night 1.
+    // Lin asked for a high floor on night 1.
+    // Lin asked for an extra pillow on night 1.
+    // Lin asked for a connecting door on night 1.
+    // Lin asked for breakfast on night 1.
+    // Lin asked for a parking spot on night 1.
+    // Lin asked for an invoice on night 1.
+    // Lin asked for a view of the court on night 1.
+    // Nikola asked for a quiet room on night 1.
+    // Nikola asked for a late checkout on night 1.
+    // Nikola asked for a crib on night 1.
+    // Nikola asked for a high floor on night 1.
+    // Nikola asked for an extra pillow on night 1.
+    // Nikola asked for a connecting door on night 1.
+    // Nikola asked for breakfast on night 1.
+    // Nikola asked for a parking spot on night 1.
+    // Nikola asked for an invoice on night 1.
+    // Nikola asked for a view of the court on night 1.
+    // Joan asked for a quiet room on night 1.
+    // Joan asked for a late checkout on night 1.
+    // Joan asked for a crib on night 1.
+    // Joan asked for a high floor on night 1.
+    // Joan asked for an extra pillow on night 1.
+    // Joan asked for a connecting door on night 1.
+    // Joan asked for breakfast on night 1.
+    // Joan asked for a parking spot on night 1.
+    // Joan asked for an invoice on night 1.
+    // Joan asked for a view of the court on night 1.
+    // Alan asked for a quiet room on night 1.
+    // Alan asked for a late checkout on night 1.
+    // Alan asked for a crib on night 1.
+    // Alan asked for a high floor on night 1.
+    // Alan asked for an extra pillow on night 1.
+    // Alan asked for a connecting door on night 1.
+    // Alan asked for breakfast on night 1.
+    // Alan asked for a parking spot on night 1.
+    // Alan asked for an invoice on night 1.
+    // Alan asked for a view of the court on night 1.
+    // Ada asked for a quiet room on night 2.
+    // Ada asked for a late checkout on night 2.
+    // Ada asked for a crib on night 2.
+    // Ada asked for a high floor on night 2.
+    // Ada asked for an extra pillow on night 2.
+    // Ada asked for a connecting door on night 2.
+    // Ada asked for breakfast on night 2.
+    // Ada asked for a parking spot on night 2.
+    // Ada asked for an invoice on night 2.
+    // Ada asked for a view of the court on night 2.
+    // Grace asked for a quiet room on night 2.
+    // Grace asked for a late checkout on night 2.
+    // Grace asked for a crib on night 2.
+    // Grace asked for a high floor on night 2.
+    // Grace asked for an extra pillow on night 2.
+    // Grace asked for a connecting door on night 2.
+    // Grace asked for breakfast on night 2.
+    // Grace asked for a parking spot on night 2.
+    // Grace asked for an invoice on night 2.
+    // Grace asked for a view of the court on night 2.
+    // Lin asked for a quiet room on night 2.
+    // Lin asked for a late checkout on night 2.
+    // Lin asked for a crib on night 2.
+    // Lin asked for a high floor on night 2.
+    // Lin asked for an extra pillow on night 2.
+    // Lin asked for a connecting door on night 2.
+    // Lin asked for breakfast on night 2.
+    // Lin asked for a parking spot on night 2.
+    // Lin asked for an invoice on night 2.
+    // Lin asked for a view of the court on night 2.
+    // Nikola asked for a quiet room on night 2.
+    // Nikola asked for a late checkout on night 2.
+    // Nikola asked for a crib on night 2.
+    // Nikola asked for a high floor on night 2.
+    // Nikola asked for an extra pillow on night 2.
+    // Nikola asked for a connecting door on night 2.
+    // Nikola asked for breakfast on night 2.
+    // Nikola asked for a parking spot on night 2.
+    // Nikola asked for an invoice on night 2.
+    // Nikola asked for a view of the court on night 2.
+    // Joan asked for a quiet room on night 2.
+    // Joan asked for a late checkout on night 2.
+    // Joan asked for a crib on night 2.
+    // Joan asked for a high floor on night 2.
+    // Joan asked for an extra pillow on night 2.
+    // Joan asked for a connecting door on night 2.
+    // Joan asked for breakfast on night 2.
+    // Joan asked for a parking spot on night 2.
+    // Joan asked for an invoice on night 2.
+    // Joan asked for a view of the court on night 2.
+    // Alan asked for a quiet room on night 2.
+    // Alan asked for a late checkout on night 2.
+    // Alan asked for a crib on night 2.
+    // Alan asked for a high floor on night 2.
+    // Alan asked for an extra pillow on night 2.
+    // Alan asked for a connecting door on night 2.
+    // Alan asked for breakfast on night 2.
+    // Alan asked for a parking spot on night 2.
+    // Alan asked for an invoice on night 2.
+    // Alan asked for a view of the court on night 2.
+    // Ada asked for a quiet room on night 3.
+    // Ada asked for a late checkout on night 3.
+    // Ada asked for a crib on night 3.
+    // Ada asked for a high floor on night 3.
+    // Ada asked for an extra pillow on night 3.
+    // Ada asked for a connecting door on night 3.
+    // Ada asked for breakfast on night 3.
+    // Ada asked for a parking spot on night 3.
+    // Ada asked for an invoice on night 3.
+    // Ada asked for a view of the court on night 3.
+    // Grace asked for a quiet room on night 3.
+    // Grace asked for a late checkout on night 3.
+    // Grace asked for a crib on night 3.
+    // Grace asked for a high floor on night 3.
+    // Grace asked for an extra pillow on night 3.
+    // Grace asked for a connecting door on night 3.
+    // Grace asked for breakfast on night 3.
+    // Grace asked for a parking spot on night 3.
+    // Grace asked for an invoice on night 3.
+    // Grace asked for a view of the court on night 3.
+    // Lin asked for a quiet room on night 3.
+    // Lin asked for a late checkout on night 3.
+    // Lin asked for a crib on night 3.
+    // Lin asked for a high floor on night 3.
+    // Lin asked for an extra pillow on night 3.
+    // Lin asked for a connecting door on night 3.
+    // Lin asked for breakfast on night 3.
+    // Lin asked for a parking spot on night 3.
+    // Lin asked for an invoice on night 3.
+    // Lin asked for a view of the court on night 3.
+    // Nikola asked for a quiet room on night 3.
+    // Nikola asked for a late checkout on night 3.
+    // Nikola asked for a crib on night 3.
+    // Nikola asked for a high floor on night 3.
+    // Nikola asked for an extra pillow on night 3.
+    // Nikola asked for a connecting door on night 3.
+    // Nikola asked for breakfast on night 3.
+    // Nikola asked for a parking spot on night 3.
+    // Nikola asked for an invoice on night 3.
+    // Nikola asked for a view of the court on night 3.
+    // Joan asked for a quiet room on night 3.
+    // Joan asked for a late checkout on night 3.
+    // Joan asked for a crib on night 3.
+    // Joan asked for a high floor on night 3.
+    // Joan asked for an extra pillow on night 3.
+    // Joan asked for a connecting door on night 3.
+    // Joan asked for breakfast on night 3.
+    // Joan asked for a parking spot on night 3.
+    // Joan asked for an invoice on night 3.
+    // Joan asked for a view of the court on night 3.
+    // Alan asked for a quiet room on night 3.
+    // Alan asked for a late checkout on night 3.
+    // Alan asked for a crib on night 3.
+    // Alan asked for a high floor on night 3.
+    // Alan asked for an extra pillow on night 3.
+    // Alan asked for a connecting door on night 3.
+    // Alan asked for breakfast on night 3.
+    // Alan asked for a parking spot on night 3.
+    // Alan asked for an invoice on night 3.
+    // Alan asked for a view of the court on night 3.
+    // Ada asked for a quiet room on night 4.
+    // Ada asked for a late checkout on night 4.
+    // Ada asked for a crib on night 4.
+    // Ada asked for a high floor on night 4.
+    // Ada asked for an extra pillow on night 4.
+    // Ada asked for a connecting door on night 4.
+    // Ada asked for breakfast on night 4.
+    // Ada asked for a parking spot on night 4.
+    // Ada asked for an invoice on night 4.
+    // Ada asked for a view of the court on night 4.
+    // Grace asked for a quiet room on night 4.
+    // Grace asked for a late checkout on night 4.
+    // Grace asked for a crib on night 4.
+    // Grace asked for a high floor on night 4.
+    // Grace asked for an extra pillow on night 4.
+    // Grace asked for a connecting door on night 4.
+    // Grace asked for breakfast on night 4.
+    // Grace asked for a parking spot on night 4.
+    // Grace asked for an invoice on night 4.
+    // Grace asked for a view of the court on night 4.
+    // Lin asked for a quiet room on night 4.
+    // Lin asked for a late checkout on night 4.
+    // Lin asked for a crib on night 4.
+    // Lin asked for a high floor on night 4.
+    // Lin asked for an extra pillow on night 4.
+    // Lin asked for a connecting door on night 4.
+    // Lin asked for breakfast on night 4.
+    // Lin asked for a parking spot on night 4.
+    // Lin asked for an invoice on night 4.
+    // Lin asked for a view of the court on night 4.
+    // Nikola asked for a quiet room on night 4.
+    // Nikola asked for a late checkout on night 4.
+    // Nikola asked for a crib on night 4.
+    // Nikola asked for a high floor on night 4.
+    // Nikola asked for an extra pillow on night 4.
+    // Nikola asked for a connecting door on night 4.
+    // Nikola asked for breakfast on night 4.
+    // Nikola asked for a parking spot on night 4.
+    // Nikola asked for an invoice on night 4.
+    // Nikola asked for a view of the court on night 4.
+    // Joan asked for a quiet room on night 4.
+    // Joan asked for a late checkout on night 4.
+    // Joan asked for a crib on night 4.
+    // Joan asked for a high floor on night 4.
+    // Joan asked for an extra pillow on night 4.
+    // Joan asked for a connecting door on night 4.
+    // Joan asked for breakfast on night 4.
+    // Joan asked for a parking spot on night 4.
+    // Joan asked for an invoice on night 4.
+    // Joan asked for a view of the court on night 4.
+    // Alan asked for a quiet room on night 4.
+    // Alan asked for a late checkout on night 4.
+    // Alan asked for a crib on night 4.
+    // Alan asked for a high floor on night 4.
+    // Alan asked for an extra pillow on night 4.
+    // Alan asked for a connecting door on night 4.
+    // Alan asked for breakfast on night 4.
+    // Alan asked for a parking spot on night 4.
+    // Alan asked for an invoice on night 4.
+    // Alan asked for a view of the court on night 4.
+    bool value = flag;
+    bool kept = value;
+    return kept;
+}
+
+int record() {
+    int ledger = 0;
+    ledger = 1;
+    ledger = 2;
+    ledger = 3;
+    ledger = 4;
+    ledger = 5;
+    ledger = 6;
+    ledger = 7;
+    ledger = 8;
+    ledger = 9;
+    ledger = 10;
+    ledger = 11;
+    ledger = 12;
+    ledger = 13;
+    ledger = 14;
+    ledger = 15;
+    ledger = 16;
+    ledger = 17;
+    ledger = 18;
+    ledger = 19;
+    ledger = 20;
+    ledger = 21;
+    ledger = 22;
+    ledger = 23;
+    ledger = 24;
+    ledger = 25;
+    ledger = 26;
+    ledger = 27;
+    ledger = 28;
+    ledger = 29;
+    ledger = 30;
+    ledger = 31;
+    ledger = 32;
+    ledger = 33;
+    ledger = 34;
+    ledger = 35;
+    ledger = 36;
+    ledger = 37;
+    ledger = 38;
+    ledger = 39;
+    ledger = 40;
+    ledger = 41;
+    ledger = 42;
+    ledger = 43;
+    ledger = 44;
+    ledger = 45;
+    ledger = 46;
+    ledger = 47;
+    ledger = 48;
+    ledger = 49;
+    ledger = 50;
+    ledger = 51;
+    ledger = 52;
+    ledger = 53;
+    ledger = 54;
+    ledger = 55;
+    ledger = 56;
+    ledger = 57;
+    ledger = 58;
+    ledger = 59;
+    ledger = 60;
+    ledger = 61;
+    ledger = 62;
+    ledger = 63;
+    ledger = 64;
+    ledger = 65;
+    ledger = 66;
+    ledger = 67;
+    ledger = 68;
+    ledger = 69;
+    ledger = 70;
+    ledger = 71;
+    ledger = 72;
+    return ledger;
+}

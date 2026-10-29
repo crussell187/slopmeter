@@ -1,250 +1,416 @@
-class Stop:
-    def __init__(self, name, value):
-        setattr(self, name, value)
+class Request:
+    pass
+
+
+class Part:
+    def __init__(self, name, child):
+        setattr(self, name, child)
+
+
+def choose(request):
+    return (
+        request.weekend or
+        request.holiday or
+        request.suite or
+        request.late or
+        request.early or
+        request.group or
+        request.member or
+        request.quiet or
+        request.high_floor or
+        request.view or
+        request.parking or
+        request.breakfast or
+        request.crib or
+        request.accessible or
+        request.prepaid or
+        request.invoice or
+        request.long_stay or
+        request.walk_in or
+        request.corporate or
+        request.government or
+        request.student or
+        request.military or
+        request.repeat_guest or
+        request.connecting
+    )
+
+
+def arrange(request):
+    if request.guest:
+        if request.night:
+            if request.room:
+                if request.paid:
+                    if request.loyalty:
+                        if request.policy:
+                            if request.suite:
+                                request.kind = "suite"
+                            if request.double_room:
+                                request.kind = "double"
+                            if request.single:
+                                request.kind = "single"
+                            if request.late:
+                                request.kind = "late"
+                            if request.early:
+                                request.kind = "early"
+                            if request.group:
+                                request.kind = "group"
+                            if request.card:
+                                request.kind = "card"
+                            if request.invoice:
+                                request.kind = "invoice"
+                            if request.accessible:
+                                request.kind = "accessible"
+                            if request.crib:
+                                request.kind = "crib"
+    return request.kind
+
+
+def quote(guest):
+    def season(guest):
+        def policy(guest):
+            def rate(guest):
+                if guest.member:
+                    return guest.member_rate
+                return guest.rack_rate
+            return rate(guest)
+        return policy(guest)
+    return season(guest)
 
 
 def deliver(guest):
     return guest
 
 
-def choose(flag):
-    if flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag or flag:
-        return 1
-    return 0
-
-
-def arrange(flag):
-    if flag:
-        if flag:
-            if flag:
-                if flag:
-                    if flag:
-                        if flag:
-                            if flag: flag = 1
-                            if flag: flag = 2
-                            if flag: flag = 3
-                            if flag: flag = 4
-                            if flag: flag = 5
-                            if flag: flag = 6
-                            if flag: flag = 7
-                            if flag: flag = 8
-    return flag
-
-
-def buried(flag):
-    return (lambda: (lambda: (lambda: (lambda: (lambda: (lambda: flag if flag else 0))))))
-
-
 def forward(guest):
     return deliver(guest)
 
 
-def city(response):
-    return response.body.city.region.code
+def city(confirmation):
+    return confirmation.stay.room.floor.wing.desk.label
 
 
-def book(p0, p1, p2, p3, p4, p5, p6, p7, p8, p9, p10, p11, p12, p13, p14, p15, p16, p17, p18, p19):
-    return p0
+def book(guest, email, phone, party, nights, arrival, departure, budget, pillow, quiet, floor, view, payment, company, notes, parking, breakfast, crib, late, early):
+    return guest
 
 
 def describe(flag):
+    # Ada asked for a quiet room on night 1.
+    # Ada asked for a late checkout on night 1.
+    # Ada asked for a crib on night 1.
+    # Ada asked for a high floor on night 1.
+    # Ada asked for an extra pillow on night 1.
+    # Ada asked for a connecting door on night 1.
+    # Ada asked for breakfast on night 1.
+    # Ada asked for a parking spot on night 1.
+    # Ada asked for an invoice on night 1.
+    # Ada asked for a view of the court on night 1.
+    # Grace asked for a quiet room on night 1.
+    # Grace asked for a late checkout on night 1.
+    # Grace asked for a crib on night 1.
+    # Grace asked for a high floor on night 1.
+    # Grace asked for an extra pillow on night 1.
+    # Grace asked for a connecting door on night 1.
+    # Grace asked for breakfast on night 1.
+    # Grace asked for a parking spot on night 1.
+    # Grace asked for an invoice on night 1.
+    # Grace asked for a view of the court on night 1.
+    # Lin asked for a quiet room on night 1.
+    # Lin asked for a late checkout on night 1.
+    # Lin asked for a crib on night 1.
+    # Lin asked for a high floor on night 1.
+    # Lin asked for an extra pillow on night 1.
+    # Lin asked for a connecting door on night 1.
+    # Lin asked for breakfast on night 1.
+    # Lin asked for a parking spot on night 1.
+    # Lin asked for an invoice on night 1.
+    # Lin asked for a view of the court on night 1.
+    # Nikola asked for a quiet room on night 1.
+    # Nikola asked for a late checkout on night 1.
+    # Nikola asked for a crib on night 1.
+    # Nikola asked for a high floor on night 1.
+    # Nikola asked for an extra pillow on night 1.
+    # Nikola asked for a connecting door on night 1.
+    # Nikola asked for breakfast on night 1.
+    # Nikola asked for a parking spot on night 1.
+    # Nikola asked for an invoice on night 1.
+    # Nikola asked for a view of the court on night 1.
+    # Joan asked for a quiet room on night 1.
+    # Joan asked for a late checkout on night 1.
+    # Joan asked for a crib on night 1.
+    # Joan asked for a high floor on night 1.
+    # Joan asked for an extra pillow on night 1.
+    # Joan asked for a connecting door on night 1.
+    # Joan asked for breakfast on night 1.
+    # Joan asked for a parking spot on night 1.
+    # Joan asked for an invoice on night 1.
+    # Joan asked for a view of the court on night 1.
+    # Alan asked for a quiet room on night 1.
+    # Alan asked for a late checkout on night 1.
+    # Alan asked for a crib on night 1.
+    # Alan asked for a high floor on night 1.
+    # Alan asked for an extra pillow on night 1.
+    # Alan asked for a connecting door on night 1.
+    # Alan asked for breakfast on night 1.
+    # Alan asked for a parking spot on night 1.
+    # Alan asked for an invoice on night 1.
+    # Alan asked for a view of the court on night 1.
+    # Ada asked for a quiet room on night 2.
+    # Ada asked for a late checkout on night 2.
+    # Ada asked for a crib on night 2.
+    # Ada asked for a high floor on night 2.
+    # Ada asked for an extra pillow on night 2.
+    # Ada asked for a connecting door on night 2.
+    # Ada asked for breakfast on night 2.
+    # Ada asked for a parking spot on night 2.
+    # Ada asked for an invoice on night 2.
+    # Ada asked for a view of the court on night 2.
+    # Grace asked for a quiet room on night 2.
+    # Grace asked for a late checkout on night 2.
+    # Grace asked for a crib on night 2.
+    # Grace asked for a high floor on night 2.
+    # Grace asked for an extra pillow on night 2.
+    # Grace asked for a connecting door on night 2.
+    # Grace asked for breakfast on night 2.
+    # Grace asked for a parking spot on night 2.
+    # Grace asked for an invoice on night 2.
+    # Grace asked for a view of the court on night 2.
+    # Lin asked for a quiet room on night 2.
+    # Lin asked for a late checkout on night 2.
+    # Lin asked for a crib on night 2.
+    # Lin asked for a high floor on night 2.
+    # Lin asked for an extra pillow on night 2.
+    # Lin asked for a connecting door on night 2.
+    # Lin asked for breakfast on night 2.
+    # Lin asked for a parking spot on night 2.
+    # Lin asked for an invoice on night 2.
+    # Lin asked for a view of the court on night 2.
+    # Nikola asked for a quiet room on night 2.
+    # Nikola asked for a late checkout on night 2.
+    # Nikola asked for a crib on night 2.
+    # Nikola asked for a high floor on night 2.
+    # Nikola asked for an extra pillow on night 2.
+    # Nikola asked for a connecting door on night 2.
+    # Nikola asked for breakfast on night 2.
+    # Nikola asked for a parking spot on night 2.
+    # Nikola asked for an invoice on night 2.
+    # Nikola asked for a view of the court on night 2.
+    # Joan asked for a quiet room on night 2.
+    # Joan asked for a late checkout on night 2.
+    # Joan asked for a crib on night 2.
+    # Joan asked for a high floor on night 2.
+    # Joan asked for an extra pillow on night 2.
+    # Joan asked for a connecting door on night 2.
+    # Joan asked for breakfast on night 2.
+    # Joan asked for a parking spot on night 2.
+    # Joan asked for an invoice on night 2.
+    # Joan asked for a view of the court on night 2.
+    # Alan asked for a quiet room on night 2.
+    # Alan asked for a late checkout on night 2.
+    # Alan asked for a crib on night 2.
+    # Alan asked for a high floor on night 2.
+    # Alan asked for an extra pillow on night 2.
+    # Alan asked for a connecting door on night 2.
+    # Alan asked for breakfast on night 2.
+    # Alan asked for a parking spot on night 2.
+    # Alan asked for an invoice on night 2.
+    # Alan asked for a view of the court on night 2.
+    # Ada asked for a quiet room on night 3.
+    # Ada asked for a late checkout on night 3.
+    # Ada asked for a crib on night 3.
+    # Ada asked for a high floor on night 3.
+    # Ada asked for an extra pillow on night 3.
+    # Ada asked for a connecting door on night 3.
+    # Ada asked for breakfast on night 3.
+    # Ada asked for a parking spot on night 3.
+    # Ada asked for an invoice on night 3.
+    # Ada asked for a view of the court on night 3.
+    # Grace asked for a quiet room on night 3.
+    # Grace asked for a late checkout on night 3.
+    # Grace asked for a crib on night 3.
+    # Grace asked for a high floor on night 3.
+    # Grace asked for an extra pillow on night 3.
+    # Grace asked for a connecting door on night 3.
+    # Grace asked for breakfast on night 3.
+    # Grace asked for a parking spot on night 3.
+    # Grace asked for an invoice on night 3.
+    # Grace asked for a view of the court on night 3.
+    # Lin asked for a quiet room on night 3.
+    # Lin asked for a late checkout on night 3.
+    # Lin asked for a crib on night 3.
+    # Lin asked for a high floor on night 3.
+    # Lin asked for an extra pillow on night 3.
+    # Lin asked for a connecting door on night 3.
+    # Lin asked for breakfast on night 3.
+    # Lin asked for a parking spot on night 3.
+    # Lin asked for an invoice on night 3.
+    # Lin asked for a view of the court on night 3.
+    # Nikola asked for a quiet room on night 3.
+    # Nikola asked for a late checkout on night 3.
+    # Nikola asked for a crib on night 3.
+    # Nikola asked for a high floor on night 3.
+    # Nikola asked for an extra pillow on night 3.
+    # Nikola asked for a connecting door on night 3.
+    # Nikola asked for breakfast on night 3.
+    # Nikola asked for a parking spot on night 3.
+    # Nikola asked for an invoice on night 3.
+    # Nikola asked for a view of the court on night 3.
+    # Joan asked for a quiet room on night 3.
+    # Joan asked for a late checkout on night 3.
+    # Joan asked for a crib on night 3.
+    # Joan asked for a high floor on night 3.
+    # Joan asked for an extra pillow on night 3.
+    # Joan asked for a connecting door on night 3.
+    # Joan asked for breakfast on night 3.
+    # Joan asked for a parking spot on night 3.
+    # Joan asked for an invoice on night 3.
+    # Joan asked for a view of the court on night 3.
+    # Alan asked for a quiet room on night 3.
+    # Alan asked for a late checkout on night 3.
+    # Alan asked for a crib on night 3.
+    # Alan asked for a high floor on night 3.
+    # Alan asked for an extra pillow on night 3.
+    # Alan asked for a connecting door on night 3.
+    # Alan asked for breakfast on night 3.
+    # Alan asked for a parking spot on night 3.
+    # Alan asked for an invoice on night 3.
+    # Alan asked for a view of the court on night 3.
+    # Ada asked for a quiet room on night 4.
+    # Ada asked for a late checkout on night 4.
+    # Ada asked for a crib on night 4.
+    # Ada asked for a high floor on night 4.
+    # Ada asked for an extra pillow on night 4.
+    # Ada asked for a connecting door on night 4.
+    # Ada asked for breakfast on night 4.
+    # Ada asked for a parking spot on night 4.
+    # Ada asked for an invoice on night 4.
+    # Ada asked for a view of the court on night 4.
+    # Grace asked for a quiet room on night 4.
+    # Grace asked for a late checkout on night 4.
+    # Grace asked for a crib on night 4.
+    # Grace asked for a high floor on night 4.
+    # Grace asked for an extra pillow on night 4.
+    # Grace asked for a connecting door on night 4.
+    # Grace asked for breakfast on night 4.
+    # Grace asked for a parking spot on night 4.
+    # Grace asked for an invoice on night 4.
+    # Grace asked for a view of the court on night 4.
+    # Lin asked for a quiet room on night 4.
+    # Lin asked for a late checkout on night 4.
+    # Lin asked for a crib on night 4.
+    # Lin asked for a high floor on night 4.
+    # Lin asked for an extra pillow on night 4.
+    # Lin asked for a connecting door on night 4.
+    # Lin asked for breakfast on night 4.
+    # Lin asked for a parking spot on night 4.
+    # Lin asked for an invoice on night 4.
+    # Lin asked for a view of the court on night 4.
+    # Nikola asked for a quiet room on night 4.
+    # Nikola asked for a late checkout on night 4.
+    # Nikola asked for a crib on night 4.
+    # Nikola asked for a high floor on night 4.
+    # Nikola asked for an extra pillow on night 4.
+    # Nikola asked for a connecting door on night 4.
+    # Nikola asked for breakfast on night 4.
+    # Nikola asked for a parking spot on night 4.
+    # Nikola asked for an invoice on night 4.
+    # Nikola asked for a view of the court on night 4.
+    # Joan asked for a quiet room on night 4.
+    # Joan asked for a late checkout on night 4.
+    # Joan asked for a crib on night 4.
+    # Joan asked for a high floor on night 4.
+    # Joan asked for an extra pillow on night 4.
+    # Joan asked for a connecting door on night 4.
+    # Joan asked for breakfast on night 4.
+    # Joan asked for a parking spot on night 4.
+    # Joan asked for an invoice on night 4.
+    # Joan asked for a view of the court on night 4.
+    # Alan asked for a quiet room on night 4.
+    # Alan asked for a late checkout on night 4.
+    # Alan asked for a crib on night 4.
+    # Alan asked for a high floor on night 4.
+    # Alan asked for an extra pillow on night 4.
+    # Alan asked for a connecting door on night 4.
+    # Alan asked for breakfast on night 4.
+    # Alan asked for a parking spot on night 4.
+    # Alan asked for an invoice on night 4.
+    # Alan asked for a view of the court on night 4.
     value = flag
-    # 001
-    # 002
-    # 003
-    # 004
-    # 005
-    # 006
-    # 007
-    # 008
-    # 009
-    # 010
-    # 011
-    # 012
-    # 013
-    # 014
-    # 015
-    # 016
-    # 017
-    # 018
-    # 019
-    # 020
-    # 021
-    # 022
-    # 023
-    # 024
-    # 025
-    # 026
-    # 027
-    # 028
-    # 029
-    # 030
-    # 031
-    # 032
-    # 033
-    # 034
-    # 035
-    # 036
-    # 037
-    # 038
-    # 039
-    # 040
-    # 041
-    # 042
-    # 043
-    # 044
-    # 045
-    # 046
-    # 047
-    # 048
-    # 049
-    # 050
-    # 051
-    # 052
-    # 053
-    # 054
-    # 055
-    # 056
-    # 057
-    # 058
-    # 059
-    # 060
-    # 061
-    # 062
-    # 063
-    # 064
-    # 065
-    # 066
-    # 067
-    # 068
-    # 069
-    # 070
-    # 071
-    # 072
-    # 073
-    # 074
-    # 075
-    # 076
-    # 077
-    # 078
-    # 079
-    # 080
-    # 081
-    # 082
-    # 083
-    # 084
-    # 085
-    # 086
-    # 087
-    # 088
-    # 089
-    # 090
-    # 091
-    # 092
-    # 093
-    # 094
-    # 095
-    # 096
-    # 097
-    # 098
-    # 099
-    # 100
-    # 101
-    # 102
-    # 103
-    # 104
-    # 105
-    # 106
-    # 107
-    # 108
-    # 109
-    # 110
-    # 111
-    # 112
-    # 113
-    # 114
-    # 115
-    # 116
-    # 117
-    # 118
-    # 119
-    # 120
-    # 121
-    # 122
-    # 123
-    # 124
-    # 125
-    # 126
-    # 127
-    # 128
-    # 129
-    # 130
-    # 131
-    # 132
-    # 133
-    # 134
-    # 135
-    # 136
-    # 137
-    # 138
-    # 139
-    # 140
-    # 141
-    # 142
-    # 143
-    # 144
-    # 145
-    # 146
-    # 147
-    # 148
-    # 149
-    # 150
-    # 151
-    # 152
-    # 153
-    # 154
-    # 155
-    # 156
-    # 157
-    # 158
-    # 159
-    # 160
-    # 161
-    # 162
-    # 163
-    # 164
-    # 165
-    # 166
-    # 167
-    # 168
-    # 169
-    # 170
-    # 171
-    # 172
-    # 173
-    # 174
-    # 175
-    # 176
-    # 177
-    # 178
-    # 179
-    # 180
-    # 181
-    # 182
-    # 183
-    # 184
-    # 185
-    # 186
-    # 187
-    # 188
-    # 189
-    # 190
-    # 191
-    # 192
-    # 193
-    # 194
-    return value
+    kept = value
+    return kept
 
 
 def record():
-    a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1; a = 1
+    ledger = 1
+    ledger = 2
+    ledger = 3
+    ledger = 4
+    ledger = 5
+    ledger = 6
+    ledger = 7
+    ledger = 8
+    ledger = 9
+    ledger = 10
+    ledger = 11
+    ledger = 12
+    ledger = 13
+    ledger = 14
+    ledger = 15
+    ledger = 16
+    ledger = 17
+    ledger = 18
+    ledger = 19
+    ledger = 20
+    ledger = 21
+    ledger = 22
+    ledger = 23
+    ledger = 24
+    ledger = 25
+    ledger = 26
+    ledger = 27
+    ledger = 28
+    ledger = 29
+    ledger = 30
+    ledger = 31
+    ledger = 32
+    ledger = 33
+    ledger = 34
+    ledger = 35
+    ledger = 36
+    ledger = 37
+    ledger = 38
+    ledger = 39
+    ledger = 40
+    ledger = 41
+    ledger = 42
+    ledger = 43
+    ledger = 44
+    ledger = 45
+    ledger = 46
+    ledger = 47
+    ledger = 48
+    ledger = 49
+    ledger = 50
+    ledger = 51
+    ledger = 52
+    ledger = 53
+    ledger = 54
+    ledger = 55
+    ledger = 56
+    ledger = 57
+    ledger = 58
+    ledger = 59
+    ledger = 60
+    ledger = 61
+    ledger = 62
+    ledger = 63
+    ledger = 64
+    ledger = 65
+    ledger = 66
+    ledger = 67
+    ledger = 68
+    ledger = 69
+    ledger = 70
+    ledger = 71
+    ledger = 72
+    return ledger

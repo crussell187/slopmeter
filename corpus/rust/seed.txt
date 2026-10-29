@@ -10,4 +10,5 @@ statements under several hundred comment lines. Include a function
 that is a long run of assignments. Include a function with a couple
 of decisions that the tests never call.
 
-The tests can emit LCOV. Give no quality instructions.
+The tests can emit LCOV. That function's lines are in the report
+and unhit. Give no quality instructions.

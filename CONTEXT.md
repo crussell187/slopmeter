@@ -155,9 +155,9 @@ A profile value set to something other than that language's built-in. The run na
 _Avoid_: override, customization
 
 **Validation run**:
-A `--strict` score of the per-language corpus once thresholds have been tuned. The clean repos show the functions over those gates. The sloppy repo fails each gating rule, and shows the F07 warn.
+A `--strict` score of the per-language corpus once thresholds have been tuned. The clean repos show the functions over those gates. The sloppy repo fails each gating rule by a wide margin, and shows the F07 warn.
 _Avoid_: acceptance test (that is the separate with-tool vs without-tool agent experiment, out of scope for Phase 1)
 
 **Sloppy repo**:
-A pinned tree, one per language, that an agent wrote from a fixed seed so every gating rule fires.
+A pinned tree, one per language, that an agent wrote from a fixed seed. It is kept when every gating rule fires by a wide margin, and the function the tests never call is left unhit in its coverage report.
 _Avoid_: fixture, acceptance test

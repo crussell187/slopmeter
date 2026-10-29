@@ -97,6 +97,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Count nesting as the deepest structural level](issues/75-structural-nesting.md) — an `if`, a loop, a `match` or `switch`, a ternary, and a `catch` each add one, and the finding sits on the deepest of those lines.
 - [Recalibrate the gates by percentile on a production-only set](issues/46-recalibrate-gates.md) — each count gate is the nearest-rank percentile of that language's three pinned commits, measured 2026-10-29, and a later measurement may replace the integers; a clean-repo function over the gate fails ([ADR 0031](../../docs/adr/0031-count-gates-are-a-percentile.md)).
 - [Fix the explain pages and the CLI surface](issues/64-explain-and-cli-polish.md) — each explain page's threshold is one table and names no stand-in; F02's after adds a test; `--help` and `--version` print and exit 0; `--changed` with `--strict`, and `--changed` outside git, are usage errors; a waiver that names no rule is the finding `waiver`.
+- [Rewrite the sloppy corpora so they are sloppy, not gate plus one](issues/66-rewrite-sloppy-corpus.md) — each tree was written again from its seed; the worst measurement on every gating rule is at least one and a half times that threshold and more than one past it, the pass-through is 100, and `hold` is unhit in the coverage report.
 
 ## Not yet specified
 

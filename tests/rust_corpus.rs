@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -64,7 +64,10 @@ fn the_sloppy_tree_gates_every_gating_rule_and_warns_on_f07() {
     let doc: serde_json::Value = serde_json::from_str(&stdout).unwrap();
     let inherited = doc["inherited"].as_array().unwrap();
     assert!(
-        !inherited.is_empty() && inherited.iter().all(|finding| finding["rule"] == "S06"),
+        !inherited.is_empty()
+            && inherited.iter().all(|finding| {
+                finding["rule"] == "S06" && finding["measured_value"].as_f64() == Some(0.0)
+            }),
         "{stdout}"
     );
     let found: BTreeSet<_> = doc["findings"]
@@ -90,4 +93,33 @@ fn the_sloppy_tree_gates_every_gating_rule_and_warns_on_f07() {
         ("F11", "gate"),
     ]);
     assert_eq!(found, expected, "{stdout}");
+    assert_wide_margin(&doc, &stdout);
+}
+
+fn assert_wide_margin(doc: &serde_json::Value, stdout: &str) {
+    let mut worst: BTreeMap<&str, (f64, f64)> = BTreeMap::new();
+    for finding in doc["findings"].as_array().unwrap() {
+        let rule = finding["rule"].as_str().unwrap();
+        let measured = finding["measured_value"].as_f64().unwrap();
+        let threshold = finding["threshold"].as_f64().unwrap();
+        worst
+            .entry(rule)
+            .and_modify(|(best, gate)| {
+                if measured > *best {
+                    *best = measured;
+                    *gate = threshold;
+                }
+            })
+            .or_insert((measured, threshold));
+    }
+    for (rule, (measured, threshold)) in worst {
+        if rule == "F07" {
+            assert_eq!(measured, 100.0, "{stdout}");
+            continue;
+        }
+        assert!(
+            measured >= threshold * 1.5 && measured > threshold + 1.0,
+            "{rule} measured {measured} against {threshold}\n{stdout}"
+        );
+    }
 }
