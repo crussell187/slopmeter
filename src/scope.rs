@@ -319,6 +319,7 @@ struct Change {
     base: String,
     files: BTreeMap<String, Delta>,
     untracked: BTreeSet<String>,
+    removed: BTreeSet<String>,
 }
 
 struct Delta {
@@ -556,11 +557,50 @@ fn contains(line: u32, span: Span) -> bool {
 
 fn load_change(root: &Path, changed: Option<&str>) -> Result<Change, ScopeError> {
     let base = resolve_base(root, changed)?;
+    let parsed = diff_files(root, &base)?;
     Ok(Change {
-        files: diff_files(root, &base)?,
+        files: parsed.files,
+        removed: parsed.removed,
         untracked: untracked_paths(root)?,
         base,
     })
+}
+
+pub fn changed_paths(root: &Path, changed: Option<&str>) -> Result<BTreeSet<String>, ScopeError> {
+    let change = load_change(root, changed)?;
+    Ok(every_path(&change))
+}
+
+fn every_path(change: &Change) -> BTreeSet<String> {
+    let mut paths = BTreeSet::new();
+    copy_files(&mut paths, change);
+    let removed = &change.removed;
+    copy_set(&mut paths, removed);
+    let untracked = &change.untracked;
+    copy_set(&mut paths, untracked);
+    paths
+}
+
+fn copy_files(paths: &mut BTreeSet<String>, change: &Change) {
+    let files = &change.files;
+    for (path, delta) in files {
+        paths.insert(path.clone());
+        keep_old_path(paths, delta);
+    }
+}
+
+fn copy_set(paths: &mut BTreeSet<String>, extra: &BTreeSet<String>) {
+    for path in extra {
+        paths.insert(path.clone());
+    }
+}
+
+fn keep_old_path(paths: &mut BTreeSet<String>, delta: &Delta) {
+    let old = &delta.old_path;
+    let Some(old) = old.clone() else {
+        return;
+    };
+    paths.insert(old);
 }
 
 fn resolve_base(root: &Path, changed: Option<&str>) -> Result<String, ScopeError> {
@@ -633,7 +673,7 @@ fn rev_exists(root: &Path, rev: &str) -> Result<bool, ScopeError> {
     Ok(succeeded(&out))
 }
 
-fn diff_files(root: &Path, base: &str) -> Result<BTreeMap<String, Delta>, ScopeError> {
+fn diff_files(root: &Path, base: &str) -> Result<ParsedDiff, ScopeError> {
     let out = git(
         root,
         &[
@@ -699,21 +739,44 @@ struct Open {
     deleted: BTreeSet<u32>,
 }
 
-fn parse_diff(diff: &str) -> BTreeMap<String, Delta> {
-    let mut files = BTreeMap::new();
-    let mut open = Open::default();
-    for line in diff.lines() {
-        read_diff_line(line, &mut open, &mut files);
-    }
-    flush(&mut open, &mut files);
-    files
+struct ParsedDiff {
+    files: BTreeMap<String, Delta>,
+    removed: BTreeSet<String>,
 }
 
-fn read_diff_line(line: &str, open: &mut Open, files: &mut BTreeMap<String, Delta>) {
+struct DiffBuild<'a> {
+    open: &'a mut Open,
+    files: &'a mut BTreeMap<String, Delta>,
+    removed: &'a mut BTreeSet<String>,
+}
+
+fn parse_diff(diff: &str) -> ParsedDiff {
+    let mut files = BTreeMap::new();
+    let mut removed = BTreeSet::new();
+    let mut open = Open::default();
+    for line in diff.lines() {
+        let mut build = DiffBuild {
+            open: &mut open,
+            files: &mut files,
+            removed: &mut removed,
+        };
+        read_diff_line(line, &mut build);
+    }
+    let mut build = DiffBuild {
+        open: &mut open,
+        files: &mut files,
+        removed: &mut removed,
+    };
+    flush(&mut build);
+    ParsedDiff { files, removed }
+}
+
+fn read_diff_line(line: &str, build: &mut DiffBuild<'_>) {
     if diff_header(line) {
-        flush(open, files);
+        flush(build);
         return;
     }
+    let open = &mut build.open;
     if apply_side(line, open) {
         return;
     }
@@ -764,15 +827,23 @@ fn insert_lines(lines: &mut BTreeSet<u32>, start: u32, count: u32) {
     }
 }
 
-fn flush(open: &mut Open, files: &mut BTreeMap<String, Delta>) {
-    let mut finished = std::mem::take(open);
+fn flush(build: &mut DiffBuild<'_>) {
+    let mut finished = std::mem::take(build.open);
     let Some(path) = take_path(&mut finished) else {
+        keep_removed(build.removed, finished.old_path);
         return;
     };
     if empty_change(&finished) {
         return;
     }
-    store_delta(files, path, finished);
+    store_delta(build.files, path, finished);
+}
+
+fn keep_removed(removed: &mut BTreeSet<String>, old: Option<String>) {
+    let Some(old) = old else {
+        return;
+    };
+    removed.insert(old);
 }
 
 fn take_path(finished: &mut Open) -> Option<String> {

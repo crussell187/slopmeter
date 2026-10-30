@@ -2,6 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, SystemTime};
 
 use slopmeter::inputs::Config;
 
@@ -738,7 +739,7 @@ fn an_unreadable_mutation_report_exits_2_and_a_waiver_for_s07_fails() {
     let rows = s07_rows(&doc, "findings");
     assert!(
         rows.iter()
-            .any(|row| row["waiver"]["rejection"] == "S07 cannot be waived."),
+            .any(|row| row["waiver"]["rejection"] == "written by this change"),
         "{stdout}"
     );
     assert!(
@@ -885,7 +886,7 @@ fn a_missing_python_mutation_store_fails_the_touch_and_a_bad_store_exits_2() {
     assert!(
         s07_rows(&doc, "findings")
             .iter()
-            .any(|row| row["waiver"]["rejection"] == "S07 cannot be waived."),
+            .any(|row| row["waiver"]["rejection"] == "written by this change"),
         "{stdout}"
     );
 
@@ -1031,7 +1032,7 @@ fn a_missing_cpp_mutation_report_fails_the_touch_and_a_bad_report_exits_2() {
     assert!(
         s07_rows(&doc, "findings")
             .iter()
-            .any(|row| row["waiver"]["rejection"] == "S07 cannot be waived."),
+            .any(|row| row["waiver"]["rejection"] == "written by this change"),
         "{stdout}"
     );
     assert!(
@@ -1178,5 +1179,406 @@ fn a_gate_outside_its_range_exits_2_and_names_the_key() {
     assert_eq!(
         String::from_utf8(output.stderr).unwrap(),
         "profile.python.F03.warn is out of range\n"
+    );
+}
+
+fn stamp(root: &Path, rel: &str, secs: u64) {
+    let path = root.join(rel);
+    let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+    let time = SystemTime::UNIX_EPOCH + Duration::from_secs(secs);
+    file.set_modified(time).unwrap();
+}
+
+fn doc_of(output: std::process::Output) -> serde_json::Value {
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let stderr = String::from_utf8(output.stderr).unwrap();
+    assert!(stderr.is_empty(), "{stderr}");
+    serde_json::from_str(&stdout).unwrap_or_else(|_| panic!("{stdout}"))
+}
+
+fn rule_rows<'a>(doc: &'a serde_json::Value, list: &str, rule: &str) -> Vec<&'a serde_json::Value> {
+    doc[list]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|finding| finding["rule"] == rule)
+        .collect()
+}
+
+fn note_says(doc: &serde_json::Value, message: &str) -> bool {
+    doc["notes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|note| note["message"] == message && note.get("path").is_none())
+}
+
+fn lcov_covered(path: &str, source: &str) -> String {
+    let mut text = format!("SF:{path}\n");
+    for (index, _) in source.lines().enumerate() {
+        text.push_str(&format!("DA:{},1\n", index + 1));
+    }
+    text.push_str("end_of_record\n");
+    text
+}
+
+#[test]
+fn a_coverage_report_older_than_the_change_is_missing() {
+    let root = touched_python("stale-lcov");
+    let decisions = decisions_for_uncovered_crap(Config::builtin().python.f02_gate);
+    let source = cold_source(decisions);
+    write(&root, "pkg/a.py", &source);
+    write(&root, "coverage.lcov", &lcov("pkg/a.py", &source));
+    stamp(&root, "pkg/a.py", 200);
+    stamp(&root, "coverage.lcov", 100);
+
+    let output = run(&root, &["--json", "--coverage=coverage.lcov"]);
+    assert_eq!(output.status.code(), Some(1));
+    let doc = doc_of(output);
+    let rows = rule_rows(&doc, "findings", "S06");
+    assert_eq!(rows.len(), 1, "{doc}");
+    assert!(rows[0]["measured_value"].is_null(), "{doc}");
+    assert_eq!(rows[0]["line"], 1, "{doc}");
+    assert!(rule_rows(&doc, "findings", "F02").is_empty(), "{doc}");
+    assert!(
+        note_says(&doc, "coverage.lcov is older than pkg/a.py"),
+        "{doc}"
+    );
+
+    stamp(&root, "pkg/a.py", 100);
+    stamp(&root, "coverage.lcov", 100);
+    let output = run(&root, &["--json", "--coverage=coverage.lcov"]);
+    assert_eq!(output.status.code(), Some(1));
+    let doc = doc_of(output);
+    assert!(
+        !note_says(&doc, "coverage.lcov is older than pkg/a.py"),
+        "{doc}"
+    );
+    assert_eq!(rule_rows(&doc, "findings", "F02").len(), 1, "{doc}");
+    assert_eq!(rule_rows(&doc, "findings", "S06")[0]["measured_value"], 0.0);
+
+    stamp(&root, "pkg/a.py", 50);
+    write(&root, "notes.txt", "later\n");
+    stamp(&root, "notes.txt", 300);
+    stamp(&root, "coverage.lcov", 100);
+    let output = run(&root, &["--json", "--coverage=coverage.lcov"]);
+    let doc = doc_of(output);
+    assert!(
+        note_says(&doc, "coverage.lcov is older than notes.txt"),
+        "{doc}"
+    );
+    assert!(rule_rows(&doc, "findings", "S06")[0]["measured_value"].is_null());
+    assert!(rule_rows(&doc, "findings", "F02").is_empty(), "{doc}");
+}
+
+#[test]
+fn a_deleted_file_makes_the_coverage_report_missing() {
+    let root = touched_python("deleted-test");
+    write(&root, "tests/hold.py", "def test_hold():\n    return 1\n");
+    git(&root, &["add", "-A"]);
+    git(&root, &["commit", "-m", "hold"]);
+    let edited = "def classify(n):\n    return n + 0\n";
+    write(&root, "pkg/a.py", edited);
+    write(&root, "coverage.lcov", &lcov_covered("pkg/a.py", edited));
+    stamp(&root, "pkg/a.py", 50);
+    stamp(&root, "coverage.lcov", 100);
+    fs::remove_file(root.join("tests/hold.py")).unwrap();
+
+    let output = run(&root, &["--json", "--coverage=coverage.lcov"]);
+    assert_eq!(output.status.code(), Some(1));
+    let doc = doc_of(output);
+    assert!(
+        note_says(&doc, "coverage.lcov is older than tests/hold.py"),
+        "{doc}"
+    );
+    assert!(rule_rows(&doc, "findings", "S06")[0]["measured_value"].is_null());
+}
+
+#[test]
+fn strict_and_outside_git_keep_an_older_file_and_drop_a_newer_one() {
+    let decisions = decisions_for_uncovered_crap(Config::builtin().python.f02_gate);
+    let older = cold_source(decisions);
+    let newer = older.replace("def cold():", "def fresh():");
+    let root = fixture("strict-stale");
+    git(&root, &["init", "-b", "main"]);
+    write(&root, "pkg/old.py", &older);
+    write(&root, "pkg/new.py", &newer);
+    write(
+        &root,
+        "coverage.lcov",
+        &format!(
+            "{}{}",
+            lcov("pkg/old.py", &older),
+            lcov("pkg/new.py", &newer)
+        ),
+    );
+    stamp(&root, "pkg/old.py", 50);
+    stamp(&root, "pkg/new.py", 200);
+    stamp(&root, "coverage.lcov", 100);
+
+    let output = run(&root, &["--strict", "--json", "--coverage=coverage.lcov"]);
+    assert_eq!(output.status.code(), Some(1));
+    let doc = doc_of(output);
+    let f02 = rule_rows(&doc, "findings", "F02");
+    assert_eq!(f02.len(), 1, "{doc}");
+    assert_eq!(f02[0]["symbol"]["name"], "cold");
+    assert!(
+        rule_rows(&doc, "findings", "S06").is_empty()
+            && rule_rows(&doc, "inherited", "S06").len() == 1,
+        "{doc}"
+    );
+    assert_eq!(
+        rule_rows(&doc, "inherited", "S06")[0]["symbol"]["name"],
+        "cold"
+    );
+    assert!(
+        note_says(&doc, "coverage.lcov is older than pkg/new.py"),
+        "{doc}"
+    );
+
+    let outside = fixture("outside-stale");
+    write(&outside, "pkg/old.py", &older);
+    write(&outside, "pkg/new.py", &newer);
+    write(
+        &outside,
+        "coverage.lcov",
+        &format!(
+            "{}{}",
+            lcov("pkg/old.py", &older),
+            lcov("pkg/new.py", &newer)
+        ),
+    );
+    stamp(&outside, "pkg/old.py", 50);
+    stamp(&outside, "pkg/new.py", 200);
+    stamp(&outside, "coverage.lcov", 100);
+    let output = run(&outside, &["--json", "--coverage=coverage.lcov"]);
+    let doc = doc_of(output);
+    assert_eq!(rule_rows(&doc, "findings", "F02").len(), 1, "{doc}");
+    assert_eq!(
+        rule_rows(&doc, "findings", "F02")[0]["symbol"]["name"],
+        "cold"
+    );
+    assert!(rule_rows(&doc, "findings", "S06").is_empty(), "{doc}");
+    assert_eq!(rule_rows(&doc, "inherited", "S06").len(), 1, "{doc}");
+    assert!(
+        note_says(&doc, "coverage.lcov is older than pkg/new.py"),
+        "{doc}"
+    );
+    assert!(
+        doc["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|note| note["message"] == "not a git repository; scoring the whole tree"),
+        "{doc}"
+    );
+}
+
+#[test]
+fn a_mutation_report_older_than_the_change_is_missing() {
+    let root = touched_rust("stale-mutants");
+    let source = fs::read_to_string(root.join("src/lib.rs")).unwrap();
+    write(&root, "coverage.lcov", &lcov_covered("src/lib.rs", &source));
+    write(
+        &root,
+        "outcomes.json",
+        &outcomes("src/lib.rs", &[("CaughtMutant", 2)]),
+    );
+    stamp(&root, "src/lib.rs", 200);
+    stamp(&root, "coverage.lcov", 300);
+    stamp(&root, "outcomes.json", 100);
+
+    let output = run(
+        &root,
+        &[
+            "--json",
+            "--coverage=coverage.lcov",
+            "--mutation-rust=outcomes.json",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(1));
+    let doc = doc_of(output);
+    let rows = rule_rows(&doc, "findings", "S07");
+    assert_eq!(rows.len(), 1, "{doc}");
+    assert!(rows[0]["measured_value"].is_null(), "{doc}");
+    assert_eq!(rows[0]["line"], 1, "{doc}");
+    assert!(rule_rows(&doc, "findings", "S06").is_empty(), "{doc}");
+    assert!(
+        note_says(&doc, "outcomes.json is older than coverage.lcov"),
+        "{doc}"
+    );
+
+    stamp(&root, "src/lib.rs", 100);
+    stamp(&root, "coverage.lcov", 100);
+    stamp(&root, "outcomes.json", 100);
+    let output = run(
+        &root,
+        &[
+            "--json",
+            "--coverage=coverage.lcov",
+            "--mutation-rust=outcomes.json",
+        ],
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let doc = doc_of(output);
+    assert!(rule_rows(&doc, "findings", "S07").is_empty(), "{doc}");
+    assert!(
+        !note_says(&doc, "outcomes.json is older than coverage.lcov"),
+        "{doc}"
+    );
+}
+
+#[test]
+fn strict_drops_a_newer_mutation_file_and_keeps_an_older_one() {
+    let root = fixture("strict-mutation");
+    git(&root, &["init", "-b", "main"]);
+    write(&root, "src/old.rs", "fn old() -> i32 {\n    1\n}\n");
+    write(&root, "src/new.rs", "fn fresh() -> i32 {\n    1\n}\n");
+    write(
+        &root,
+        "outcomes.json",
+        &format!(
+            "{}{}",
+            outcomes("src/old.rs", &[("CaughtMutant", 2), ("MissedMutant", 2)]).trim_end(),
+            ""
+        ),
+    );
+    let old = outcomes("src/old.rs", &[("CaughtMutant", 2), ("MissedMutant", 2)]);
+    let new = outcomes("src/new.rs", &[("CaughtMutant", 2), ("MissedMutant", 2)]);
+    let old_rows = old
+        .trim_start_matches("{\"outcomes\":[")
+        .trim_end_matches("]}");
+    let new_rows = new
+        .trim_start_matches("{\"outcomes\":[")
+        .trim_end_matches("]}");
+    write(
+        &root,
+        "outcomes.json",
+        &format!("{{\"outcomes\":[{old_rows},{new_rows}]}}"),
+    );
+    stamp(&root, "src/old.rs", 50);
+    stamp(&root, "src/new.rs", 200);
+    stamp(&root, "outcomes.json", 100);
+
+    let output = run(
+        &root,
+        &["--strict", "--json", "--mutation-rust=outcomes.json"],
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let doc = doc_of(output);
+    assert!(rule_rows(&doc, "findings", "S07").is_empty(), "{doc}");
+    let inherited = rule_rows(&doc, "inherited", "S07");
+    assert_eq!(inherited.len(), 1, "{doc}");
+    assert_eq!(inherited[0]["symbol"]["name"], "old");
+    assert_eq!(inherited[0]["measured_value"], 0.5);
+    assert!(
+        note_says(&doc, "outcomes.json is older than src/new.rs"),
+        "{doc}"
+    );
+
+    let outside = fixture("outside-mull-stale");
+    write(&outside, "src/old.cpp", "int old() { return 1; }\n");
+    write(&outside, "src/new.cpp", "int fresh() { return 1; }\n");
+    write(
+        &outside,
+        "mull.json",
+        &format!(
+            "{{\"schemaVersion\":\"1.7\",\"files\":{{\"src/old.cpp\":{{\"language\":\"cpp\",\"mutants\":[{}]}},\"src/new.cpp\":{{\"language\":\"cpp\",\"mutants\":[{}]}}}}}}",
+            r#"{"id":"1","mutatorName":"eq","replacement":"!=","location":{"start":{"line":1,"column":1},"end":{"line":1,"column":2}},"status":"Survived"}"#,
+            r#"{"id":"2","mutatorName":"eq","replacement":"!=","location":{"start":{"line":1,"column":1},"end":{"line":1,"column":2}},"status":"Survived"}"#,
+        ),
+    );
+    stamp(&outside, "src/old.cpp", 50);
+    stamp(&outside, "src/new.cpp", 200);
+    stamp(&outside, "mull.json", 100);
+    let output = run(&outside, &["--json", "--mutation-cpp=mull.json"]);
+    let doc = doc_of(output);
+    let inherited = rule_rows(&doc, "inherited", "S07");
+    assert_eq!(inherited.len(), 1, "{doc}");
+    assert_eq!(inherited[0]["symbol"]["path"], "src/old.cpp");
+    assert!(rule_rows(&doc, "findings", "S07").is_empty(), "{doc}");
+    assert!(
+        note_says(&doc, "mull.json is older than src/new.cpp"),
+        "{doc}"
+    );
+}
+
+#[test]
+fn mutmut_uses_the_newest_meta_against_the_diff_and_each_meta_under_strict() {
+    let root = touched_python("stale-mutmut");
+    write_mutmut(
+        &root,
+        r#"{"pkg.a.x_classify__mutmut_1": 1, "pkg.a.x_classify__mutmut_2": 0}"#,
+    );
+    write(
+        &root,
+        "mutants/other.py.meta",
+        "{\"exit_code_by_key\": {}, \"hash_by_function_name\": {}}",
+    );
+    stamp(&root, "pkg/a.py", 150);
+    stamp(&root, "mutants/pkg/a.py.meta", 100);
+    stamp(&root, "mutants/other.py.meta", 400);
+
+    let fresh = run(&root, &["--json", "--mutation-python=mutants"]);
+    assert_eq!(fresh.status.code(), Some(1));
+    let doc = doc_of(fresh);
+    assert_eq!(rule_rows(&doc, "findings", "S07")[0]["measured_value"], 0.5);
+    assert!(
+        !doc["notes"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|note| { note["message"].as_str().unwrap().contains("is older than") }),
+        "{doc}"
+    );
+
+    stamp(&root, "mutants/other.py.meta", 80);
+    let stale = run(&root, &["--json", "--mutation-python=mutants"]);
+    assert_eq!(stale.status.code(), Some(1));
+    let doc = doc_of(stale);
+    assert!(rule_rows(&doc, "findings", "S07")[0]["measured_value"].is_null());
+    assert!(note_says(&doc, "mutants is older than pkg/a.py"), "{doc}");
+
+    let strict = fixture("strict-mutmut");
+    git(&strict, &["init", "-b", "main"]);
+    write(&strict, "pkg/old.py", PY_CLASSIFY);
+    write(&strict, "pkg/new.py", PY_CLASSIFY);
+    write_pair(&strict, "pkg/old.py", "old");
+    write_pair(&strict, "pkg/new.py", "new");
+    stamp(&strict, "pkg/old.py", 50);
+    stamp(&strict, "pkg/new.py", 200);
+    stamp(&strict, "mutants/pkg/old.py.meta", 100);
+    stamp(&strict, "mutants/pkg/new.py.meta", 100);
+    let output = run(
+        &strict,
+        &["--strict", "--json", "--mutation-python=mutants"],
+    );
+    assert_eq!(output.status.code(), Some(0));
+    let doc = doc_of(output);
+    let inherited = rule_rows(&doc, "inherited", "S07");
+    assert_eq!(inherited.len(), 1, "{doc}");
+    assert_eq!(inherited[0]["symbol"]["path"], "pkg/old.py");
+    assert_eq!(inherited[0]["measured_value"], 0.5);
+    assert!(note_says(&doc, "mutants is older than pkg/new.py"), "{doc}");
+}
+
+fn write_pair(root: &Path, file: &str, which: &str) {
+    let mutated = "\
+def x_classify__mutmut_orig(n):
+    return n > 1
+
+def x_classify__mutmut_1(n):
+    return n > 0
+
+def x_classify__mutmut_2(n):
+    return n < 1
+";
+    write(root, &format!("mutants/{file}"), mutated);
+    write(
+        root,
+        &format!("mutants/{file}.meta"),
+        &format!(
+            "{{\"exit_code_by_key\": {{\"pkg.{which}.x_classify__mutmut_1\": 1, \"pkg.{which}.x_classify__mutmut_2\": 0}}, \"hash_by_function_name\": {{}}}}"
+        ),
     );
 }

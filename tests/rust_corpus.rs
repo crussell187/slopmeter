@@ -104,7 +104,13 @@ fn sloppy_outside_this_repo(language: &str) -> PathBuf {
     ));
     let _ = std::fs::remove_dir_all(&dest);
     copy_tree(&corpus().join("sloppy"), &dest);
+    freshen(&dest.join("coverage.lcov"));
     dest
+}
+
+fn freshen(path: &Path) {
+    let file = std::fs::OpenOptions::new().write(true).open(path).unwrap();
+    file.set_modified(std::time::SystemTime::now()).unwrap();
 }
 
 fn copy_tree(from: &Path, to: &Path) {

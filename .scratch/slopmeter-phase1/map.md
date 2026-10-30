@@ -110,6 +110,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Run coverage and mutation in CI and gate the pull request's touched functions](issues/81-ci-coverage-and-mutation.md) — a pull request pins cargo-llvm-cov 0.9.1 and cargo-mutants 27.1.0, then `slopmeter --changed origin/main` fails the job; a push to `main` keeps `--strict` only; this crate lists 4117 mutants and the 20 in `src/explain.rs` took 78 seconds.
 - [Score an empty or swallowing catch](issues/84-score-empty-catch.md) — each adapter records the line of a handler that does nothing, and `rules::evaluate` emits one weight-10 gate at the first such line.
 - [Reject a waiver the change adds and count the held ones](issues/85-reject-added-waivers.md) — a waiver line in the diff's added set does not hold, the row says it was written by this change, and the report counts the waivers that hold.
+- [Treat a report older than the change as missing](issues/86-stale-report-check.md) — a report older than any path the diff changed is missing: touched functions fail S06 or S07, CRAP is absent, and one note names the newest path; under `--strict` and outside git a newer scored file the report matches gets the note and no row; mutmut uses each `.meta` time and the newest `.meta` against the diff; a tie is fresh.
 
 ## Not yet specified
 

@@ -7,9 +7,9 @@ The score grows with the function's cyclomatic complexity and with the
 lines a coverage report leaves uncovered. The score is CC squared times
 the uncovered fraction cubed, plus CC. Coverage is the hit DA lines
 divided by the DA lines in the body span. The tool reads that report
-and does not run the tests. No report, a missing file, or no DA lines
-in the function leaves the score uncomputed, and this rule emits
-nothing. S06 gates a touched function on that same fraction.
+and does not run the tests. No report, a missing file, a stale
+report, or no DA lines in the function leaves the score uncomputed,
+and this rule emits nothing. S06 gates that same fraction.
 A nested function's lines stay with it, and so do a lambda's.
 DA lines that are all zero are coverage 0, and the score is computed.
 The finding is that score, at the function line.

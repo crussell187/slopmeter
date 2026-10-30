@@ -1,8 +1,11 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::adapters::{self, ParseInput};
-use crate::analyzers::{measure, Measurement};
+use crate::analyzers::{measure, Coverage, Measurement, Mutation};
+use crate::fresh::{newest_stale, older_than, Stamped};
 use crate::inputs::{
     cover, coverage_path, load_config, mutation_path, score_cpp, score_python, score_rust, select,
     Config, ConfigError, LcovError, MutationError, SelectError, SelectOptions, Selected,
@@ -262,9 +265,10 @@ fn finish(scan: &Scan<'_>, mut loaded: Loaded) -> Result<Report, CheckError> {
     let prepared = scan.prepared;
     let config = &prepared.config;
     let mut notes = file_notes(&loaded.files, config);
-    let coverage = coverage_notes(scan, &mut loaded)?;
+    let changed = diff_paths(scan)?;
+    let coverage = coverage_notes(scan, &mut loaded, changed.as_ref())?;
     notes.extend(coverage);
-    let mutation = mutation_notes(&mut loaded, scan)?;
+    let mutation = mutation_notes(&mut loaded, scan, changed.as_ref())?;
     notes.extend(mutation);
     let findings = evaluate_spans(&loaded.measurements, &loaded.spans, config);
     let scoped = scope_findings(scan, &loaded.files, &findings)?;
@@ -322,17 +326,45 @@ fn file_notes(files: &[File], config: &Config) -> Vec<Note> {
     notes
 }
 
-fn coverage_notes(scan: &Scan<'_>, loaded: &mut Loaded) -> Result<Vec<Note>, CheckError> {
+fn coverage_notes(
+    scan: &Scan<'_>,
+    loaded: &mut Loaded,
+    changed: Option<&BTreeSet<String>>,
+) -> Result<Vec<Note>, CheckError> {
+    let report = coverage_report(scan);
+    let root = scan.root;
+    if let Some(note) = language_stale(StaleQuery {
+        root,
+        report: report.as_deref(),
+        changed,
+        meta: false,
+    })? {
+        hide_coverage(&mut loaded.measurements);
+        return Ok(vec![note]);
+    }
+    let measurements = &mut loaded.measurements;
+    let scored = scored_paths(&loaded.files);
+    let mut notes =
+        cover(measurements, &scored, report.as_deref()).map_err(CheckError::Coverage)?;
+    if per_file(scan) {
+        notes = drop_stale_coverage(CoverageDrop {
+            root,
+            measurements,
+            report: report.as_deref(),
+            notes,
+        })?;
+    }
+    Ok(notes)
+}
+
+fn coverage_report(scan: &Scan<'_>) -> Option<PathBuf> {
     let prepared = scan.prepared;
     let options = scan.options;
     let coverage = &options.coverage;
     let root = mutation_root(scan.root, &prepared.repo, coverage.is_some());
     let config = &prepared.config;
     let configured = &config.coverage;
-    let report = coverage_path(root, configured.as_deref());
-    let scored = scored_paths(&loaded.files);
-    let measurements = &mut loaded.measurements;
-    cover(measurements, &scored, report.as_deref()).map_err(CheckError::Coverage)
+    coverage_path(root, configured.as_deref())
 }
 
 fn scored_paths(files: &[File]) -> Vec<&str> {
@@ -344,15 +376,48 @@ fn scored_paths(files: &[File]) -> Vec<&str> {
     paths
 }
 
-fn mutation_notes(loaded: &mut Loaded, scan: &Scan<'_>) -> Result<Vec<Note>, CheckError> {
+fn mutation_notes(
+    loaded: &mut Loaded,
+    scan: &Scan<'_>,
+    changed: Option<&BTreeSet<String>>,
+) -> Result<Vec<Note>, CheckError> {
     let mut notes = Vec::new();
-    notes.extend(rust_mutation(loaded, scan)?);
-    notes.extend(python_mutation(loaded, scan)?);
-    notes.extend(cpp_mutation(loaded, scan)?);
+    notes.extend(rust_mutation(loaded, scan, changed)?);
+    notes.extend(python_mutation(loaded, scan, changed)?);
+    notes.extend(cpp_mutation(loaded, scan, changed)?);
     Ok(notes)
 }
 
-fn rust_mutation(loaded: &mut Loaded, scan: &Scan<'_>) -> Result<Vec<Note>, CheckError> {
+fn rust_mutation(
+    loaded: &mut Loaded,
+    scan: &Scan<'_>,
+    changed: Option<&BTreeSet<String>>,
+) -> Result<Vec<Note>, CheckError> {
+    let report = rust_report(scan);
+    let ranges = language_ranges(&loaded.spans, Language::Rust);
+    if let Some(note) = language_stale(StaleQuery {
+        root: scan.root,
+        report: report.as_deref(),
+        changed,
+        meta: false,
+    })? {
+        hide_mutation(&mut loaded.measurements, &ranges);
+        return Ok(vec![note]);
+    }
+    let measurements = &mut loaded.measurements;
+    let notes =
+        score_rust(measurements, &ranges, report.as_deref()).map_err(CheckError::Mutation)?;
+    finish_mutation(MutationFinish {
+        scan,
+        measurements,
+        ranges: &ranges,
+        report: report.as_deref(),
+        notes,
+        meta: false,
+    })
+}
+
+fn rust_report(scan: &Scan<'_>) -> Option<PathBuf> {
     let options = scan.options;
     let flag = &options.mutation_rust;
     let prepared = scan.prepared;
@@ -360,10 +425,7 @@ fn rust_mutation(loaded: &mut Loaded, scan: &Scan<'_>) -> Result<Vec<Note>, Chec
     let configured = &config.mutation_rust;
     let repo = &prepared.repo;
     let root = mutation_root(scan.root, repo, flag.is_some());
-    let report = mutation_path(root, configured.as_deref());
-    let ranges = language_ranges(&loaded.spans, Language::Rust);
-    let measurements = &mut loaded.measurements;
-    score_rust(measurements, &ranges, report.as_deref()).map_err(CheckError::Mutation)
+    mutation_path(root, configured.as_deref())
 }
 
 fn language_ranges(spans: &[(Language, usize, usize)], wanted: Language) -> Vec<(usize, usize)> {
@@ -376,16 +438,67 @@ fn language_ranges(spans: &[(Language, usize, usize)], wanted: Language) -> Vec<
     ranges
 }
 
-fn python_mutation(loaded: &mut Loaded, scan: &Scan<'_>) -> Result<Vec<Note>, CheckError> {
+fn python_mutation(
+    loaded: &mut Loaded,
+    scan: &Scan<'_>,
+    changed: Option<&BTreeSet<String>>,
+) -> Result<Vec<Note>, CheckError> {
     let prepared = scan.prepared;
-    let report = &prepared.python_report;
+    let stored = &prepared.python_report;
+    let report = stored.as_deref();
     let ranges = language_ranges(&loaded.spans, Language::Python);
+    if let Some(note) = language_stale(StaleQuery {
+        root: scan.root,
+        report,
+        changed,
+        meta: true,
+    })? {
+        hide_mutation(&mut loaded.measurements, &ranges);
+        return Ok(vec![note]);
+    }
     let measurements = &mut loaded.measurements;
-    score_python(measurements, &ranges, (report.as_deref(), scan.root))
-        .map_err(CheckError::Mutation)
+    let notes =
+        score_python(measurements, &ranges, (report, scan.root)).map_err(CheckError::Mutation)?;
+    finish_mutation(MutationFinish {
+        scan,
+        measurements,
+        ranges: &ranges,
+        report,
+        notes,
+        meta: true,
+    })
 }
 
-fn cpp_mutation(loaded: &mut Loaded, scan: &Scan<'_>) -> Result<Vec<Note>, CheckError> {
+fn cpp_mutation(
+    loaded: &mut Loaded,
+    scan: &Scan<'_>,
+    changed: Option<&BTreeSet<String>>,
+) -> Result<Vec<Note>, CheckError> {
+    let report = cpp_report(scan);
+    let ranges = language_ranges(&loaded.spans, Language::Cpp);
+    if let Some(note) = language_stale(StaleQuery {
+        root: scan.root,
+        report: report.as_deref(),
+        changed,
+        meta: false,
+    })? {
+        hide_mutation(&mut loaded.measurements, &ranges);
+        return Ok(vec![note]);
+    }
+    let measurements = &mut loaded.measurements;
+    let notes =
+        score_cpp(measurements, &ranges, report.as_deref()).map_err(CheckError::Mutation)?;
+    finish_mutation(MutationFinish {
+        scan,
+        measurements,
+        ranges: &ranges,
+        report: report.as_deref(),
+        notes,
+        meta: false,
+    })
+}
+
+fn cpp_report(scan: &Scan<'_>) -> Option<PathBuf> {
     let options = scan.options;
     let flag = &options.mutation_cpp;
     let prepared = scan.prepared;
@@ -393,10 +506,7 @@ fn cpp_mutation(loaded: &mut Loaded, scan: &Scan<'_>) -> Result<Vec<Note>, Check
     let configured = &config.mutation_cpp;
     let repo = &prepared.repo;
     let root = mutation_root(scan.root, repo, flag.is_some());
-    let report = mutation_path(root, configured.as_deref());
-    let ranges = language_ranges(&loaded.spans, Language::Cpp);
-    let measurements = &mut loaded.measurements;
-    score_cpp(measurements, &ranges, report.as_deref()).map_err(CheckError::Mutation)
+    mutation_path(root, configured.as_deref())
 }
 
 fn departure_notes(config: &Config) -> Vec<Note> {
@@ -522,4 +632,572 @@ fn evaluate_spans(
         ));
     }
     findings
+}
+
+const COVERAGE_MISSING: &str = "No coverage record matches this file.";
+const MUTATION_MISSING: &str = "No mutation record matches this file.";
+
+fn diff_paths(scan: &Scan<'_>) -> Result<Option<BTreeSet<String>>, CheckError> {
+    if !diff_mode(scan) {
+        return Ok(None);
+    }
+    let options = scan.options;
+    let changed = options.changed.as_deref();
+    crate::scope::changed_paths(scan.root, changed)
+        .map(Some)
+        .map_err(CheckError::Scope)
+}
+
+fn diff_mode(scan: &Scan<'_>) -> bool {
+    let options = scan.options;
+    let prepared = scan.prepared;
+    !options.strict && prepared.in_repo
+}
+
+fn per_file(scan: &Scan<'_>) -> bool {
+    let options = scan.options;
+    let prepared = scan.prepared;
+    options.strict || !prepared.in_repo
+}
+
+struct StaleQuery<'a> {
+    root: &'a Path,
+    report: Option<&'a Path>,
+    changed: Option<&'a BTreeSet<String>>,
+    meta: bool,
+}
+
+fn language_stale(query: StaleQuery<'_>) -> Result<Option<Note>, CheckError> {
+    let Some(changed) = query.changed else {
+        return Ok(None);
+    };
+    let Some(report) = query.report else {
+        return Ok(None);
+    };
+    diff_stale(DiffStale {
+        root: query.root,
+        report,
+        changed,
+        meta: query.meta,
+    })
+}
+
+struct DiffStale<'a> {
+    root: &'a Path,
+    report: &'a Path,
+    changed: &'a BTreeSet<String>,
+    meta: bool,
+}
+
+fn diff_stale(query: DiffStale<'_>) -> Result<Option<Note>, CheckError> {
+    let Some(time) = report_time(query.report, query.meta)? else {
+        return Ok(None);
+    };
+    let stamped = stamp_changed(query.root, query.report, query.changed)?;
+    let Some(path) = newest_stale(time, &stamped) else {
+        return Ok(None);
+    };
+    let label = report_label(query.root, query.report);
+    Ok(Some(run_note(&older_than(&label, &path))))
+}
+
+fn report_time(report: &Path, meta: bool) -> Result<Option<SystemTime>, CheckError> {
+    if meta {
+        return newest_meta(report);
+    }
+    if !report.is_file() {
+        return Ok(None);
+    }
+    Ok(Some(required_mtime(report)?))
+}
+
+fn stamp_changed(
+    root: &Path,
+    report: &Path,
+    changed: &BTreeSet<String>,
+) -> Result<Vec<Stamped>, CheckError> {
+    let mut stamped = Vec::new();
+    for path in changed {
+        if report_owns(root, report, path) {
+            continue;
+        }
+        let full = root.join(path);
+        stamped.push(Stamped {
+            path: path.clone(),
+            time: metadata_time(&full)?,
+        });
+    }
+    Ok(stamped)
+}
+
+fn report_owns(root: &Path, report: &Path, path: &str) -> bool {
+    let full = root.join(path);
+    if nested(&full, report) {
+        return true;
+    }
+    let Ok(full) = full.canonicalize() else {
+        return false;
+    };
+    let Ok(report) = report.canonicalize() else {
+        return false;
+    };
+    nested(&full, &report)
+}
+
+fn nested(path: &Path, report: &Path) -> bool {
+    path.starts_with(report)
+}
+
+fn hide_coverage(measurements: &mut [Measurement]) {
+    for measurement in measurements.iter_mut() {
+        measurement.crap = None;
+        measurement.coverage = Some(Coverage::Unshown);
+    }
+}
+
+fn hide_mutation(measurements: &mut [Measurement], ranges: &[(usize, usize)]) {
+    for (start, end) in ranges {
+        hide_range(measurements, *start, *end);
+    }
+}
+
+fn hide_range(measurements: &mut [Measurement], start: usize, end: usize) {
+    let mut index = start;
+    while index < end {
+        let measurement = &mut measurements[index];
+        measurement.mutation = Some(Mutation::Unshown);
+        index += 1;
+    }
+}
+
+struct CoverageDrop<'a> {
+    root: &'a Path,
+    measurements: &'a mut [Measurement],
+    report: Option<&'a Path>,
+    notes: Vec<Note>,
+}
+
+fn drop_stale_coverage(job: CoverageDrop<'_>) -> Result<Vec<Note>, CheckError> {
+    let Some(report) = job.report else {
+        return Ok(job.notes);
+    };
+    if !report.is_file() {
+        return Ok(job.notes);
+    }
+    let paths = measurement_paths(job.measurements);
+    withhold(Withhold {
+        root: job.root,
+        measurements: job.measurements,
+        paths: &paths,
+        notes: job.notes,
+        clock: FileClock::Shared(required_mtime(report)?),
+        report,
+        missing: COVERAGE_MISSING,
+        kind: RowKind::Coverage,
+    })
+}
+
+struct MutationFinish<'a> {
+    scan: &'a Scan<'a>,
+    measurements: &'a mut [Measurement],
+    ranges: &'a [(usize, usize)],
+    report: Option<&'a Path>,
+    notes: Vec<Note>,
+    meta: bool,
+}
+
+fn finish_mutation(job: MutationFinish<'_>) -> Result<Vec<Note>, CheckError> {
+    let scan = job.scan;
+    if !per_file(scan) {
+        return Ok(job.notes);
+    }
+    let Some(report) = job.report else {
+        return Ok(job.notes);
+    };
+    let Some(clock) = mutation_clock(report, job.meta)? else {
+        return Ok(job.notes);
+    };
+    let paths = range_paths(job.measurements, job.ranges);
+    withhold(Withhold {
+        root: scan.root,
+        measurements: job.measurements,
+        paths: &paths,
+        notes: job.notes,
+        clock,
+        report,
+        missing: MUTATION_MISSING,
+        kind: RowKind::Mutation,
+    })
+}
+
+enum FileClock {
+    Shared(SystemTime),
+    Store(PathBuf),
+}
+
+#[derive(Clone, Copy)]
+enum RowKind {
+    Coverage,
+    Mutation,
+}
+
+fn mutation_clock(report: &Path, meta: bool) -> Result<Option<FileClock>, CheckError> {
+    if meta {
+        return store_clock(report);
+    }
+    if !report.is_file() {
+        return Ok(None);
+    }
+    Ok(Some(FileClock::Shared(required_mtime(report)?)))
+}
+
+fn store_clock(report: &Path) -> Result<Option<FileClock>, CheckError> {
+    if !report.is_dir() {
+        return Ok(None);
+    }
+    Ok(Some(FileClock::Store(report.to_path_buf())))
+}
+
+struct Withhold<'a> {
+    root: &'a Path,
+    measurements: &'a mut [Measurement],
+    paths: &'a [String],
+    notes: Vec<Note>,
+    clock: FileClock,
+    report: &'a Path,
+    missing: &'a str,
+    kind: RowKind,
+}
+
+fn withhold(mut job: Withhold<'_>) -> Result<Vec<Note>, CheckError> {
+    let listed = job.paths;
+    let paths = listed.to_vec();
+    let mut stale = Vec::new();
+    let mut newest = None;
+    for path in &paths {
+        newest = track_file(Track {
+            root: job.root,
+            notes: &job.notes,
+            clock: &job.clock,
+            missing: job.missing,
+            path,
+            newest,
+            stale: &mut stale,
+        })?;
+    }
+    let kind = job.kind;
+    clear_rows(job.measurements, &stale, kind);
+    drop_notes(&mut job.notes, &stale);
+    let Some((_, path)) = newest else {
+        return Ok(job.notes);
+    };
+    let label = report_label(job.root, job.report);
+    let message = older_than(&label, &path);
+    let notes = &mut job.notes;
+    notes.push(run_note(&message));
+    Ok(job.notes)
+}
+
+struct Track<'a> {
+    root: &'a Path,
+    notes: &'a [Note],
+    clock: &'a FileClock,
+    missing: &'a str,
+    path: &'a str,
+    newest: Option<(SystemTime, String)>,
+    stale: &'a mut Vec<String>,
+}
+
+fn track_file(mut track: Track<'_>) -> Result<Option<(SystemTime, String)>, CheckError> {
+    let Some(time) = source_newer(&track)? else {
+        return Ok(track.newest);
+    };
+    if !report_matched(track.notes, track.path, track.missing) {
+        return Ok(track.newest);
+    }
+    let path = track.path;
+    let stale = &mut track.stale;
+    stale.push(path.to_string());
+    Ok(Some(prefer_pair(track.newest, time, path)))
+}
+
+fn source_newer(track: &Track<'_>) -> Result<Option<SystemTime>, CheckError> {
+    let Some(report_time) = clock_time(track.clock, track.path)? else {
+        return Ok(None);
+    };
+    let root = track.root;
+    let full = root.join(track.path);
+    let Some(time) = metadata_time(&full)? else {
+        return Ok(None);
+    };
+    if time > report_time {
+        return Ok(Some(time));
+    }
+    Ok(None)
+}
+
+fn clock_time(clock: &FileClock, source: &str) -> Result<Option<SystemTime>, CheckError> {
+    match clock {
+        FileClock::Shared(time) => Ok(Some(*time)),
+        FileClock::Store(store) => meta_time(store, source),
+    }
+}
+
+fn meta_time(store: &Path, source: &str) -> Result<Option<SystemTime>, CheckError> {
+    let name = format!("{source}.meta");
+    let path = store.join(name);
+    metadata_time(&path)
+}
+
+fn prefer_pair(
+    best: Option<(SystemTime, String)>,
+    time: SystemTime,
+    path: &str,
+) -> (SystemTime, String) {
+    let Some((have, name)) = best else {
+        return (time, path.to_string());
+    };
+    if later_rank(
+        &Rank { time, path },
+        &Rank {
+            time: have,
+            path: &name,
+        },
+    ) {
+        return (time, path.to_string());
+    }
+    (have, name)
+}
+
+fn later_rank(next: &Rank<'_>, have: &Rank<'_>) -> bool {
+    let next_time = next.time;
+    let have_time = have.time;
+    if next_time > have_time {
+        return true;
+    }
+    if next_time != have_time {
+        return false;
+    }
+    let next_path = next.path;
+    let have_path = have.path;
+    next_path > have_path
+}
+
+struct Rank<'a> {
+    time: SystemTime,
+    path: &'a str,
+}
+
+fn report_matched(notes: &[Note], path: &str, missing: &str) -> bool {
+    !file_note(notes, path, missing)
+}
+
+fn file_note(notes: &[Note], path: &str, message: &str) -> bool {
+    notes.iter().any(|note| note_is(note, path, message))
+}
+
+fn note_is(note: &Note, path: &str, message: &str) -> bool {
+    let noted = &note.path;
+    let Some(noted) = noted.as_deref() else {
+        return false;
+    };
+    noted == path && note.message == message
+}
+
+fn clear_rows(measurements: &mut [Measurement], stale: &[String], kind: RowKind) {
+    for measurement in measurements.iter_mut() {
+        clear_one(measurement, stale, kind);
+    }
+}
+
+fn clear_one(measurement: &mut Measurement, stale: &[String], kind: RowKind) {
+    let path = &measurement.path;
+    if !listed(stale, path) {
+        return;
+    }
+    match kind {
+        RowKind::Coverage => clear_coverage(measurement),
+        RowKind::Mutation => {
+            measurement.mutation = None;
+        }
+    }
+}
+
+fn clear_coverage(measurement: &mut Measurement) {
+    measurement.crap = None;
+    measurement.coverage = None;
+}
+
+fn drop_notes(notes: &mut Vec<Note>, stale: &[String]) {
+    notes.retain(|note| keep_note(note, stale));
+}
+
+fn keep_note(note: &Note, stale: &[String]) -> bool {
+    let path = &note.path;
+    let Some(path) = path.as_deref() else {
+        return true;
+    };
+    !listed(stale, path)
+}
+
+fn listed(stale: &[String], path: &str) -> bool {
+    stale.iter().any(|item| item == path)
+}
+
+fn measurement_paths(measurements: &[Measurement]) -> Vec<String> {
+    let mut paths = Vec::new();
+    for measurement in measurements {
+        let path = &measurement.path;
+        push_unique(&mut paths, path);
+    }
+    paths
+}
+
+fn range_paths(measurements: &[Measurement], ranges: &[(usize, usize)]) -> Vec<String> {
+    let mut paths = Vec::new();
+    for (start, end) in ranges {
+        collect_paths(SpanPaths {
+            measurements,
+            start: *start,
+            end: *end,
+            paths: &mut paths,
+        });
+    }
+    paths
+}
+
+struct SpanPaths<'a> {
+    measurements: &'a [Measurement],
+    start: usize,
+    end: usize,
+    paths: &'a mut Vec<String>,
+}
+
+fn collect_paths(span: SpanPaths<'_>) {
+    let mut index = span.start;
+    while index < span.end {
+        let measurement = &span.measurements[index];
+        let path = &measurement.path;
+        push_unique(span.paths, path);
+        index += 1;
+    }
+}
+
+fn push_unique(paths: &mut Vec<String>, path: &str) {
+    if paths.iter().any(|have| have == path) {
+        return;
+    }
+    paths.push(path.to_string());
+}
+
+fn newest_meta(dir: &Path) -> Result<Option<SystemTime>, CheckError> {
+    if !dir.is_dir() {
+        return Ok(None);
+    }
+    let mut newest = None;
+    let mut pending = vec![dir.to_path_buf()];
+    while let Some(dir) = next_dir(&mut pending) {
+        let mut walk = MetaWalk {
+            newest: &mut newest,
+            pending: &mut pending,
+        };
+        read_meta_dir(&dir, &mut walk)?;
+    }
+    Ok(newest)
+}
+
+fn next_dir(pending: &mut Vec<PathBuf>) -> Option<PathBuf> {
+    pending.pop()
+}
+
+struct MetaWalk<'a> {
+    newest: &'a mut Option<SystemTime>,
+    pending: &'a mut Vec<PathBuf>,
+}
+
+fn read_meta_dir(dir: &Path, walk: &mut MetaWalk<'_>) -> Result<(), CheckError> {
+    let entries = fs::read_dir(dir).map_err(|err| CheckError::Read(dir.to_path_buf(), err))?;
+    for entry in entries {
+        visit_meta(dir, walk, entry)?;
+    }
+    Ok(())
+}
+
+fn visit_meta(
+    dir: &Path,
+    walk: &mut MetaWalk<'_>,
+    entry: Result<fs::DirEntry, std::io::Error>,
+) -> Result<(), CheckError> {
+    let entry = entry.map_err(|err| CheckError::Read(dir.to_path_buf(), err))?;
+    let path = entry.path();
+    if path.is_dir() {
+        let pending = &mut walk.pending;
+        pending.push(path);
+        return Ok(());
+    }
+    if !meta_name(&path) {
+        return Ok(());
+    }
+    let time = required_mtime(&path)?;
+    let current = *walk.newest;
+    *walk.newest = later_time(current, time);
+    Ok(())
+}
+
+fn meta_name(path: &Path) -> bool {
+    let extension = path.extension();
+    extension.is_some_and(|ext| ext == "meta")
+}
+
+fn later_time(have: Option<SystemTime>, time: SystemTime) -> Option<SystemTime> {
+    match have {
+        Some(have) if have >= time => Some(have),
+        _ => Some(time),
+    }
+}
+
+fn required_mtime(path: &Path) -> Result<SystemTime, CheckError> {
+    let Some(time) = metadata_time(path)? else {
+        return Err(missing_file(path));
+    };
+    Ok(time)
+}
+
+fn missing_file(path: &Path) -> CheckError {
+    CheckError::Read(
+        path.to_path_buf(),
+        std::io::Error::new(std::io::ErrorKind::NotFound, "missing"),
+    )
+}
+
+fn metadata_time(path: &Path) -> Result<Option<SystemTime>, CheckError> {
+    match fs::metadata(path) {
+        Ok(meta) => Ok(Some(modified_at(&meta, path)?)),
+        Err(err) if not_found(&err) => Ok(None),
+        Err(err) => Err(CheckError::Read(path.to_path_buf(), err)),
+    }
+}
+
+fn not_found(err: &std::io::Error) -> bool {
+    let kind = err.kind();
+    kind == std::io::ErrorKind::NotFound
+}
+
+fn modified_at(meta: &fs::Metadata, path: &Path) -> Result<SystemTime, CheckError> {
+    let time = meta.modified();
+    time.map_err(|err| CheckError::Read(path.to_path_buf(), err))
+}
+
+fn report_label(root: &Path, report: &Path) -> String {
+    match report.strip_prefix(root) {
+        Ok(path) => join_components(path),
+        Err(_) => join_components(report),
+    }
+}
+
+fn run_note(message: &str) -> Note {
+    Note {
+        path: None,
+        message: message.to_string(),
+    }
 }

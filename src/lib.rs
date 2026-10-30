@@ -3,6 +3,7 @@ pub mod analyzers;
 mod check;
 pub mod cli;
 pub mod explain;
+mod fresh;
 pub mod inputs;
 pub mod ir;
 pub mod reporters;

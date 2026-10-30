@@ -13,7 +13,7 @@ fraction. A matched span with no DA lines stays off the gate,
 and so does an untouched function whose fraction was never
 produced. An untouched function below 1 is inherited. Under
 --strict every shown row stays inherited, so the score matches
-and coverage does not fail that run. A missing report fails
+and coverage does not fail that run. A missing or stale report fails
 the default run once a function is touched, and adds no row
 under --strict. The finding sits on the first missed line, or
 on the function line when no fraction was produced.
