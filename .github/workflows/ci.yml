@@ -17,3 +17,32 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: cargo test
       - run: cargo run --quiet -- --strict
+
+  pull-request:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-llvm-cov@0.9.1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-mutants@27.1.0
+      - run: cargo llvm-cov --lcov --output-path lcov.info
+      - run: git fetch origin main
+      - run: git diff "$(git merge-base HEAD origin/main)" -- > git.diff
+      - run: |
+          set +e
+          cargo mutants --copy-vcs true --in-diff git.diff
+          code=$?
+          set -e
+          if [ "$code" -ne 0 ] && [ "$code" -ne 2 ] && [ "$code" -ne 3 ]; then
+            exit "$code"
+          fi
+      - run: cargo run --quiet -- --changed origin/main --coverage lcov.info --mutation-rust mutants.out/outcomes.json
