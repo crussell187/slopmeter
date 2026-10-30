@@ -12,3 +12,7 @@ def hold(flag):
 
 def read(path):
     return open(path)
+
+
+def fill(items):
+    items.append(1)

@@ -72,6 +72,7 @@ pub struct Body {
     pub forward: Option<Forward>,
     pub swallowing: Vec<u32>,
     pub io: Vec<CallSite>,
+    pub mutations: Vec<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -138,6 +139,7 @@ mod tests {
                 chains: vec![],
                 swallowing: vec![],
                 io: vec![],
+                mutations: vec![],
                 forward: Some(Forward {
                     line: 87,
                     names: vec![

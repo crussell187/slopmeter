@@ -930,6 +930,7 @@ fn classify(node: Node<'_>, source: &[u8], names: Names<'_>) -> Body {
         chains: classifier.chains,
         swallowing: classifier.swallowing,
         io: record_io(node, source),
+        mutations: Vec::new(),
         forward,
     }
 }
@@ -4522,6 +4523,18 @@ fn load(path: &str) {
         assert_eq!(inner.len(), 1, "{inner:?}");
         assert_eq!(inner[0].name, "TcpStream::connect");
         assert_eq!(inner[0].line, 5);
+    }
+
+    #[test]
+    fn a_mutable_argument_records_nothing() {
+        let source = "\
+fn fill(items: &mut Vec<i32>) {
+    items.push(1);
+}
+";
+        let file = parse("a.rs", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+        assert!(function(&file, "fill").body.mutations.is_empty());
     }
 
     fn member_names(chain: &Chain) -> Vec<&str> {

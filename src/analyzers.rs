@@ -47,6 +47,7 @@ pub struct Measurement {
     pub forward: Option<Forwarding>,
     pub swallowing: Vec<u32>,
     pub io: Vec<crate::ir::CallSite>,
+    pub mutations: Vec<u32>,
     pub waivers: Vec<WaiverLine>,
     pub crap: Option<f64>,
     pub coverage: Option<Coverage>,
@@ -85,6 +86,7 @@ fn measure_function(path: &str, function: &Function, allow: &[&str]) -> Measurem
         forward: body.forward.as_ref().map(forwarding),
         swallowing: body.swallowing.clone(),
         io: body.io.clone(),
+        mutations: body.mutations.clone(),
         waivers: waivers.clone(),
         crap: None,
         coverage: None,
@@ -258,6 +260,7 @@ mod tests {
             chains: vec![],
             swallowing: vec![],
             io: vec![],
+            mutations: vec![],
             forward: None,
         }
     }

@@ -1,0 +1,37 @@
+F10  argument mutation
+
+A function that changes an argument and returns nothing hides
+that result from its caller. It warns, and it does not fail
+the run. Rust is not applicable.
+
+Counting
+One finding per function, at the first site. Python scores a
+function that returns no value and assigns a parameter's
+attribute or subscript, or calls append, extend, insert, pop,
+remove, clear, sort, reverse, update, setdefault, or popitem
+on a parameter. self and cls are not parameters. A return of
+a value records nothing. C++ scores a void function that has
+a non-const reference or non-const pointer parameter, at that
+parameter. A const reference, a pointer to const, and a
+parameter passed by value do not count. Rust does not score
+this rule. There is no gate level.
+
+Threshold
+        warn
+Python   any
+Rust     n/a
+C++      any
+Any such function warns. No gate. Rust is not applicable.
+A waiver line for F10 fails the run, because F10 is not a gate.
+
+Before
+def fill(items):
+    items.append(1)
+
+After
+def fill(items):
+    return items + [1]
+
+Anti-fixes
+Renaming the parameter leaves the mutation in place.
+Returning after the mutation leaves the argument changed.

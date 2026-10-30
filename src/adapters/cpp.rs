@@ -1390,6 +1390,7 @@ fn classify(node: Node<'_>, score: Score<'_>) -> Body {
         chains: classifier.chains,
         swallowing: classifier.swallowing,
         io: record_io(node, score.source),
+        mutations: record_mutations(node, score.source),
         forward,
     }
 }
@@ -2992,6 +2993,178 @@ fn qualified_name(node: Node, source: &[u8]) -> Option<String> {
     Some(format!("{left}::{right}"))
 }
 
+fn record_mutations(node: Node, source: &[u8]) -> Vec<u32> {
+    if !written_void(node, source) {
+        return Vec::new();
+    }
+    let Some(params) = mutation_params(node) else {
+        return Vec::new();
+    };
+    mutable_lines(params, source)
+}
+
+fn written_void(node: Node, source: &[u8]) -> bool {
+    if type_is_void(node, source) {
+        return true;
+    }
+    trailing_is_void(node, source)
+}
+
+fn type_is_void(node: Node, source: &[u8]) -> bool {
+    let Some(ty) = node.child_by_field_name("type") else {
+        return false;
+    };
+    node_text(ty, source) == "void"
+}
+
+fn trailing_is_void(node: Node, source: &[u8]) -> bool {
+    let Some(declarator) = node.child_by_field_name("declarator") else {
+        return false;
+    };
+    let Some(function) = own_declarator(declarator) else {
+        return false;
+    };
+    direct_trailing_void(function, source)
+}
+
+fn own_declarator(node: Node<'_>) -> Option<Node<'_>> {
+    if declarator_kind(node.kind()) {
+        return Some(node);
+    }
+    let inner = node.child_by_field_name("declarator")?;
+    own_declarator(inner)
+}
+
+fn declarator_kind(kind: &str) -> bool {
+    kind == "function_declarator" || kind == "lambda_declarator"
+}
+
+fn direct_trailing_void(function: Node, source: &[u8]) -> bool {
+    for child in named_nodes(function) {
+        if trailing_void(child, source) {
+            return true;
+        }
+    }
+    false
+}
+
+fn trailing_void(child: Node, source: &[u8]) -> bool {
+    if child.kind() != "trailing_return_type" {
+        return false;
+    }
+    let Some(descriptor) = child.named_child(0) else {
+        return false;
+    };
+    let Some(ty) = descriptor.child_by_field_name("type") else {
+        return false;
+    };
+    node_text(ty, source) == "void"
+}
+
+fn mutation_params(node: Node<'_>) -> Option<Node<'_>> {
+    if node.kind() == "lambda_expression" {
+        return params_node_of_lambda(node);
+    }
+    parameter_list(node)
+}
+
+fn mutable_lines(params: Node, source: &[u8]) -> Vec<u32> {
+    let mut found = Vec::new();
+    let mut cursor = params.walk();
+    for child in params.children(&mut cursor) {
+        note_mutable(&mut found, child, source);
+    }
+    found
+}
+
+fn note_mutable(found: &mut Vec<u32>, child: Node, source: &[u8]) {
+    if !param_kind(child.kind()) {
+        return;
+    }
+    if specifier_const(child, source) {
+        return;
+    }
+    if !reference_or_pointer(child) {
+        return;
+    }
+    found.push(line_of(child));
+}
+
+fn param_kind(kind: &str) -> bool {
+    if kind == "parameter_declaration" {
+        return true;
+    }
+    if kind == "optional_parameter_declaration" {
+        return true;
+    }
+    kind == "variadic_parameter_declaration"
+}
+
+fn specifier_const(node: Node, source: &[u8]) -> bool {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if const_qualifier(child, source) {
+            return true;
+        }
+    }
+    false
+}
+
+fn const_qualifier(child: Node, source: &[u8]) -> bool {
+    if child.kind() != "type_qualifier" {
+        return false;
+    }
+    node_text(child, source) == "const"
+}
+
+fn reference_or_pointer(node: Node) -> bool {
+    let Some(declarator) = node.child_by_field_name("declarator") else {
+        return false;
+    };
+    ref_or_ptr(declarator)
+}
+
+fn ref_or_ptr(node: Node) -> bool {
+    if ref_or_ptr_kind(node.kind()) {
+        return true;
+    }
+    if let Some(inner) = node.child_by_field_name("declarator") {
+        if ref_or_ptr(inner) {
+            return true;
+        }
+    }
+    wrapped_ref(node)
+}
+
+fn ref_or_ptr_kind(kind: &str) -> bool {
+    if kind == "reference_declarator" {
+        return true;
+    }
+    if kind == "abstract_reference_declarator" {
+        return true;
+    }
+    if kind == "pointer_declarator" {
+        return true;
+    }
+    kind == "abstract_pointer_declarator"
+}
+
+fn wrapped_ref(node: Node) -> bool {
+    for child in named_nodes(node) {
+        if wrapped_declarator(child) {
+            return true;
+        }
+    }
+    false
+}
+
+fn wrapped_declarator(child: Node) -> bool {
+    if child.kind() != "parenthesized_declarator" {
+        return false;
+    }
+    ref_or_ptr(child)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4227,5 +4400,54 @@ void take(std::ifstream& in) {}
             .collect();
         assert_eq!(names, vec!["fopen", "std::ifstream", "socket"], "{names:?}");
         assert!(function(&file, "take").body.io.is_empty());
+    }
+
+    #[test]
+    fn a_void_function_records_a_non_const_reference_or_pointer() {
+        let source = "\
+void fill(
+    int& n) {
+    n = 1;
+}
+void point(int* n) {}
+void pinned(int* const n) {}
+void moved(int&& n) {}
+void frozen(const int& n) {}
+void east(int const& n) {}
+void readonly(const int* n) {}
+void read(const char* path) {}
+void value(int n) {}
+int give(int& n) { return n; }
+void frozen_ref(const int&& n) {}
+auto trailing(int& n) -> void {}
+const auto lamb = [](int& n) -> void {};
+struct Box {
+    Box(int& n) {}
+    void take(int& n) {}
+};
+void text(std::string& name) {}
+void mixed(
+    const int& a,
+    int* b) {}
+";
+        let file = parse("a.cpp", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+        assert_eq!(function(&file, "fill").body.mutations, vec![2]);
+        assert_eq!(function(&file, "point").body.mutations, vec![5]);
+        assert_eq!(function(&file, "pinned").body.mutations, vec![6]);
+        assert_eq!(function(&file, "moved").body.mutations, vec![7]);
+        assert!(function(&file, "frozen").body.mutations.is_empty());
+        assert!(function(&file, "east").body.mutations.is_empty());
+        assert!(function(&file, "readonly").body.mutations.is_empty());
+        assert!(function(&file, "read").body.mutations.is_empty());
+        assert!(function(&file, "value").body.mutations.is_empty());
+        assert!(function(&file, "give").body.mutations.is_empty());
+        assert!(function(&file, "frozen_ref").body.mutations.is_empty());
+        assert_eq!(function(&file, "trailing").body.mutations, vec![15]);
+        assert_eq!(function(&file, "lamb").body.mutations, vec![16]);
+        assert!(function(&file, "Box::Box").body.mutations.is_empty());
+        assert_eq!(function(&file, "Box::take").body.mutations, vec![19]);
+        assert_eq!(function(&file, "text").body.mutations, vec![21]);
+        assert_eq!(function(&file, "mixed").body.mutations, vec![24]);
     }
 }

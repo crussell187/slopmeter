@@ -213,6 +213,7 @@ fn breaches(measurement: &Measurement, profile: &LanguageProfile) -> Vec<Breach>
     push_lloc(&mut found, measurement, profile);
     push_swallowing(&mut found, measurement);
     push_io(&mut found, measurement, profile);
+    push_mutation(&mut found, measurement);
     found
 }
 
@@ -377,6 +378,21 @@ fn push_io(found: &mut Vec<Breach>, measurement: &Measurement, profile: &Languag
     let count = io_count(measurement, profile);
     found.push(breach(CountSpec {
         rule: "F09",
+        level: Level::Warn,
+        line,
+        measured: count,
+        threshold: 0,
+    }));
+}
+
+fn push_mutation(found: &mut Vec<Breach>, measurement: &Measurement) {
+    let lines = &measurement.mutations;
+    let Some(&line) = lines.first() else {
+        return;
+    };
+    let count = lines.len() as u32;
+    found.push(breach(CountSpec {
+        rule: "F10",
         level: Level::Warn,
         line,
         measured: count,
@@ -593,7 +609,7 @@ fn finding_weight(rule: &str, level: Level) -> u32 {
         Level::Gate => 10,
         Level::Warn => match rule {
             "F03" => 3,
-            "F07" | "F09" => 1,
+            "F07" | "F09" | "F10" => 1,
             _ => 0,
         },
     }
@@ -664,6 +680,9 @@ fn rejection_numbers(
     if rule == "F09" {
         return io_numbers(measurement, profile);
     }
+    if rule == "F10" {
+        return mutation_numbers(measurement);
+    }
     counted_rejection(measurement, profile, rule)
 }
 
@@ -715,6 +734,12 @@ fn swallowing_numbers(measurement: &Measurement) -> (Option<f64>, Option<f64>) {
 fn io_numbers(measurement: &Measurement, profile: &LanguageProfile) -> (Option<f64>, Option<f64>) {
     let count = io_count(measurement, profile);
     (Some(f64::from(count)), Some(0.0))
+}
+
+fn mutation_numbers(measurement: &Measurement) -> (Option<f64>, Option<f64>) {
+    let lines = &measurement.mutations;
+    let count = lines.len() as f64;
+    (Some(count), Some(0.0))
 }
 
 fn attach(classes: &[Classified], rule: &str, measured: Measured) -> Option<Waiver> {
@@ -816,6 +841,7 @@ fn rest_principle(rule: &str) -> String {
     match rule {
         "F07" => "A function that only hands its parameters to one call adds a hop and no behavior.",
         "F09" => "A function that constructs a file, socket, or process hides that dependency from its caller.",
+        "F10" => "A function that changes an argument and returns nothing hides that result from its caller.",
         "F08" => "A member chain that does not start at the receiver may be one deep, and a chain that starts at the receiver may be two deep. Law of Demeter.",
         "F11" => "A function should say little. The count is statements, not wrapped lines.",
         "S06" => "Every executable line of a changed function is hit.",
@@ -850,6 +876,7 @@ fn rest_anti_fix(rule: &str) -> String {
     match rule {
         "F07" => "Renaming the forwarded parameters leaves the ratio in place.",
         "F09" => "Binding the result to a local leaves the construction in place.",
+        "F10" => "Renaming the parameter leaves the mutation in place.",
         "F08" => "Saving the chain in locals leaves the finding in place.",
         "F11" => "Breaking one statement across more lines leaves the count in place.",
         "S06" => "A test that runs the function and asserts nothing marks the lines hit.",
@@ -934,6 +961,10 @@ fn later_fix(breach: &Breach, text: &FixText<'_>) -> String {
             "Pass a file, socket, or process into {name}. It constructs one at line {}.",
             breach.line
         ),
+        "F10" => format!(
+            "Return the new value from {name}. It changes an argument at line {}.",
+            breach.line
+        ),
         "F11" => {
             format!("Split {name}. It has {measured} logical lines, and the gate is {threshold}.")
         }
@@ -1001,6 +1032,7 @@ mod tests {
             forward: None,
             swallowing: vec![],
             io: vec![],
+            mutations: vec![],
             waivers: vec![],
             crap: None,
             coverage: None,
@@ -1861,6 +1893,54 @@ mod tests {
         assert_eq!(
             findings[0].waiver.as_ref().unwrap().rejection.as_deref(),
             Some("F09 is not a gate.")
+        );
+    }
+
+    #[test]
+    fn a_mutation_is_one_warn_at_the_first_site() {
+        let mut measured = base();
+        measured.mutations = vec![9, 14];
+
+        let findings = evaluate(&[measured], &profile());
+
+        assert_eq!(findings.len(), 1);
+        let finding = &findings[0];
+        assert_eq!(finding.rule, "F10");
+        assert_eq!(finding.level, Level::Warn);
+        assert_eq!(finding.line, 9);
+        assert_eq!(finding.measured_value, Some(2.0));
+        assert_eq!(finding.threshold, Some(0.0));
+        assert_eq!(finding.weight, 1);
+        assert_eq!(
+            finding.principle,
+            "A function that changes an argument and returns nothing hides that result from its caller."
+        );
+        assert_eq!(
+            finding.fix_shape,
+            "Return the new value from paint. It changes an argument at line 9."
+        );
+        assert_eq!(
+            finding.anti_fix,
+            "Renaming the parameter leaves the mutation in place."
+        );
+        assert!(finding.waiver.is_none());
+    }
+
+    #[test]
+    fn a_waiver_for_f10_fails() {
+        let mut flagged = base();
+        flagged.mutations = vec![9];
+        flagged.waivers = vec![waiver(4, Some("F10"), Some("1"), Some("in place"))];
+
+        let findings = evaluate(&[flagged], &profile());
+
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule, "F10");
+        assert_eq!(findings[0].level, Level::Gate);
+        assert_eq!(findings[0].weight, 0);
+        assert_eq!(
+            findings[0].waiver.as_ref().unwrap().rejection.as_deref(),
+            Some("F10 is not a gate.")
         );
     }
 

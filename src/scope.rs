@@ -1218,6 +1218,7 @@ def other():
                 chains: vec![],
                 swallowing: vec![],
                 io: vec![],
+                mutations: vec![],
                 forward: None,
             },
             waivers: vec![],

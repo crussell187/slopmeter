@@ -696,6 +696,7 @@ mod tests {
             forward: None,
             swallowing: vec![],
             io: vec![],
+            mutations: vec![],
             waivers: vec![],
             crap: None,
             coverage: None,

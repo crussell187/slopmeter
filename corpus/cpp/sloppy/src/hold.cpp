@@ -15,3 +15,7 @@ int hold(bool flag) {
 void read(const char* path) {
     fopen(path, "r");
 }
+
+void fill(int& n) {
+    n += 1;
+}

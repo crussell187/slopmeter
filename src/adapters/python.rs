@@ -700,6 +700,7 @@ fn classify(node: Node, source: &[u8], names: Names<'_>) -> Body {
         chains: found.chains,
         swallowing: found.swallowing,
         io: record_io(node, source),
+        mutations: record_mutations(node, source, names.ordinary),
         forward,
     }
 }
@@ -2191,6 +2192,269 @@ fn dotted_name(node: Node, source: &[u8]) -> Option<String> {
     let attribute = node.child_by_field_name("attribute")?;
     let right = node_text(attribute, source);
     Some(format!("{left}.{right}"))
+}
+
+const MUTATORS: &[&str] = &[
+    "append",
+    "extend",
+    "insert",
+    "pop",
+    "remove",
+    "clear",
+    "sort",
+    "reverse",
+    "update",
+    "setdefault",
+    "popitem",
+];
+
+struct MutationWalk<'a> {
+    source: &'a [u8],
+    names: &'a [String],
+    found: &'a mut Vec<u32>,
+}
+
+fn record_mutations(node: Node, source: &[u8], ordinary: &[String]) -> Vec<u32> {
+    if node.kind() == "lambda" {
+        return Vec::new();
+    }
+    if returns_value(node) {
+        return Vec::new();
+    }
+    let mut found = Vec::new();
+    let mut walk = MutationWalk {
+        source,
+        names: ordinary,
+        found: &mut found,
+    };
+    walk_mutations(node, &mut walk, true);
+    found
+}
+
+fn returns_value(node: Node) -> bool {
+    let Some(body) = node.child_by_field_name("body") else {
+        return false;
+    };
+    value_return(body)
+}
+
+fn value_return(node: Node) -> bool {
+    if node.kind() == "function_definition" {
+        return false;
+    }
+    if carrying_return(node) {
+        return true;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if value_return(child) {
+            return true;
+        }
+    }
+    false
+}
+
+fn carrying_return(node: Node) -> bool {
+    if node.kind() != "return_statement" {
+        return false;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if returned_value(child) {
+            return true;
+        }
+    }
+    false
+}
+
+fn returned_value(child: Node) -> bool {
+    if !child.is_named() {
+        return false;
+    }
+    child.kind() != "comment"
+}
+
+fn walk_mutations(node: Node, walk: &mut MutationWalk<'_>, root: bool) {
+    if skipped_mutation(node, root) {
+        return;
+    }
+    note_mutation(node, walk);
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_mutations(child, walk, false);
+    }
+}
+
+fn skipped_mutation(node: Node, root: bool) -> bool {
+    if root {
+        return false;
+    }
+    node.kind() == "function_definition"
+}
+
+fn note_mutation(node: Node, walk: &mut MutationWalk<'_>) {
+    if stored_mutation(node, walk) {
+        return;
+    }
+    called_mutation(node, walk);
+}
+
+fn stored_mutation(node: Node, walk: &mut MutationWalk<'_>) -> bool {
+    if !stores(node) {
+        return false;
+    }
+    let Some(left) = node.child_by_field_name("left") else {
+        return false;
+    };
+    if !mutated_target(left, walk) {
+        return false;
+    }
+    let line = line_of(node);
+    let found = &mut walk.found;
+    found.push(line);
+    true
+}
+
+fn stores(node: Node) -> bool {
+    if node.kind() == "augmented_assignment" {
+        return true;
+    }
+    if node.kind() != "assignment" {
+        return false;
+    }
+    let right = node.child_by_field_name("right");
+    right.is_some()
+}
+
+fn called_mutation(node: Node, walk: &mut MutationWalk<'_>) {
+    if node.kind() != "call" {
+        return;
+    }
+    let Some(function) = node.child_by_field_name("function") else {
+        return;
+    };
+    if !mutator_call(function, walk) {
+        return;
+    }
+    let line = line_of(node);
+    let found = &mut walk.found;
+    found.push(line);
+}
+
+fn mutator_call(function: Node, walk: &MutationWalk<'_>) -> bool {
+    if function.kind() != "attribute" {
+        return false;
+    }
+    let Some(object) = function.child_by_field_name("object") else {
+        return false;
+    };
+    let Some(attribute) = function.child_by_field_name("attribute") else {
+        return false;
+    };
+    if !param_name(object, walk) {
+        return false;
+    }
+    mutator(&node_text(attribute, walk.source))
+}
+
+fn mutator(name: &str) -> bool {
+    MUTATORS.contains(&name)
+}
+
+fn mutated_target(node: Node, walk: &MutationWalk<'_>) -> bool {
+    if attribute_or_subscript(node) {
+        return rooted_on_param(node, walk);
+    }
+    if pattern_group(node) {
+        return any_mutated(node, walk);
+    }
+    false
+}
+
+fn attribute_or_subscript(node: Node) -> bool {
+    let kind = node.kind();
+    kind == "attribute" || kind == "subscript"
+}
+
+fn pattern_group(node: Node) -> bool {
+    let kind = node.kind();
+    if kind == "pattern_list" {
+        return true;
+    }
+    if kind == "tuple_pattern" {
+        return true;
+    }
+    if kind == "list_pattern" {
+        return true;
+    }
+    kind == "list_splat_pattern"
+}
+
+fn any_mutated(node: Node, walk: &MutationWalk<'_>) -> bool {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if mutated_target(child, walk) {
+            return true;
+        }
+    }
+    false
+}
+
+fn rooted_on_param(node: Node, walk: &MutationWalk<'_>) -> bool {
+    let node = opened(node);
+    if node.kind() == "identifier" {
+        return param_name(node, walk);
+    }
+    let Some(inner) = target_inner(node) else {
+        return false;
+    };
+    rooted_on_param(inner, walk)
+}
+
+fn target_inner(node: Node<'_>) -> Option<Node<'_>> {
+    if node.kind() == "attribute" {
+        return node.child_by_field_name("object");
+    }
+    if node.kind() == "subscript" {
+        return node.child_by_field_name("value");
+    }
+    None
+}
+
+fn param_name(node: Node, walk: &MutationWalk<'_>) -> bool {
+    let node = opened(node);
+    if node.kind() != "identifier" {
+        return false;
+    }
+    listed(&node_text(node, walk.source), walk.names)
+}
+
+fn opened(node: Node<'_>) -> Node<'_> {
+    if node.kind() != "parenthesized_expression" {
+        return node;
+    }
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if child.is_named() {
+            return opened(child);
+        }
+    }
+    node
+}
+
+fn listed(name: &str, names: &[String]) -> bool {
+    if !kept_name(name) {
+        return false;
+    }
+    let mut kept = names.iter();
+    kept.any(|item| item == name)
+}
+
+fn kept_name(name: &str) -> bool {
+    if name == "self" {
+        return false;
+    }
+    name != "cls"
 }
 
 #[cfg(test)]
@@ -3753,5 +4017,63 @@ def outer(path):
         assert_eq!(inner.len(), 1, "{inner:?}");
         assert_eq!(inner[0].name, "sqlite3.connect");
         assert_eq!(inner[0].line, 3);
+    }
+
+    #[test]
+    fn a_void_function_records_a_parameter_mutation() {
+        let source = "\
+def outer(items, mapping):
+    def inner(chunk):
+        chunk.append(1)
+    items.append(2)
+    items[0] = 3
+    items.x += 4
+    mapping.update(5)
+    head, items.y = 1, 2
+    return
+
+def give(items):
+    items.append(1)
+    return items
+";
+        let file = parse("a.py", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+        assert_eq!(function(&file, "outer").body.mutations, vec![4, 5, 6, 7, 8]);
+        assert_eq!(function(&file, "outer.inner").body.mutations, vec![3]);
+        assert!(function(&file, "give").body.mutations.is_empty());
+    }
+
+    #[test]
+    fn self_cls_and_a_rebound_name_are_not_mutations() {
+        let source = "\
+def rebound(items):
+    items = []
+    other.append(items)
+
+def method(self, items):
+    self.x = 1
+    items.box.append(1)
+
+def named(self):
+    self.append(1)
+
+def factory(cls):
+    cls.update(1)
+
+bound = lambda items: items.append(1)
+
+class Box:
+    def take(self, items):
+        self.x = 1
+        items.append(2)
+";
+        let file = parse("a.py", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+        assert!(function(&file, "rebound").body.mutations.is_empty());
+        assert!(function(&file, "method").body.mutations.is_empty());
+        assert!(function(&file, "named").body.mutations.is_empty());
+        assert!(function(&file, "factory").body.mutations.is_empty());
+        assert!(function(&file, "bound").body.mutations.is_empty());
+        assert_eq!(function(&file, "Box.take").body.mutations, vec![20]);
     }
 }
