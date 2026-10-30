@@ -18,6 +18,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - **Tracker:** local markdown in this directory, including after the GitHub repo exists. The decisions stay files in git. See [Repo, crate layout, CI and where the GitHub repo lives](issues/18-repo-layout.md).
 - **Spec gaps found while charting:** the spec's JSON report schema and escalation example code blocks are empty in the doc. The report schema is therefore a prototype ticket, not a given.
 - **Review of the first build (2026-10-27):** [the Phase 1 review](../../docs/review/2026-10-27-phase1-review.md) ranks what the build got wrong; tickets 46–66 chart its next steps. Its raw artifacts (per-function distributions over the nine corpus repos, adversarial fixtures per language) were left in the review session's scratchpad and are quoted in the tickets that need them.
+- **Gap review (2026-10-29):** with every destination item shipped, the map was checked against the spec's catalog and the gate an agent loop can dodge. Tickets 79–84 chart it: a waiver the change itself writes and a stale report both pass today, the CI self-check never gates coverage or mutation, and the spec's F09, F10, F12 and F15 were never placed on the map.
 - **Spec terms the tool keeps:** the rule IDs (F01…), tiers (A/B/C), gate vs warn, `slop_score` per KLOC, `fix_shape`, `anti_fix`, `principle`, `scope: changed` with `inherited` findings, the six-stage pipeline (inputs → adapters → IR → analyzers → rule engine → reporters).
 
 ## Decisions so far
@@ -105,7 +106,6 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 
 ## Not yet specified
 
-- **Assertion density (spec S05).** S07 fails a changed function when a test runs it and asserts nothing, because the mutant survives. An assertion-per-test floor would still score the tests themselves, which are out of the scored set today.
 - **A member chain saved in locals.** The F08 explain page says that split still leaves the finding. The adapter counts the chain inside one expression, so separate statements clear it.
 - **Multi-package repos.** Cargo workspaces, Python monorepos, C++ projects with several targets: how source selection, `--changed` and the KLOC denominator treat them.
 
@@ -114,8 +114,8 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - **TypeScript / JavaScript adapter.** The spec's first language; deferred in favour of Python, Rust, C++ (charting decision). Returns as its own effort.
 - **Go, Java/Kotlin, C# adapters.** Spec rollout order 4–6.
 - **Module and system scope (Phase 2).** Import graph, cycles, Ce/Ca, interface width, leverage, pass-through ratio, LCOM4, clone detection, hotspots, SARIF.
-- **Gaming defenses and the loop (Phase 3).** Call depth S03, assertion density S05, `previous_slop_score` deltas, escalation, MCP server, pre-commit hook.
-- **Architecture scope (A01–A10) and the Phase 3/4 additions**, LLM-judge pass for Tier C. Mutation testing left this list on 2026-10-27 (ticket 61).
+- **Gaming defenses and the loop (Phase 3).** Call depth S03, assertion density S05, `previous_slop_score` deltas, escalation, MCP server, pre-commit hook. S05 left the fog on 2026-10-29: S07 already fails a changed function whose test runs it and asserts nothing, and an assertion floor would score the tests, which are out of the scored set.
+- **Architecture scope (A01–A10) and the Phase 3/4 additions**, LLM-judge pass for Tier C. Mutation testing left this list on 2026-10-27 (ticket 61). F15, the empty or swallowing catch, is decided by [Whether an empty or swallowing catch ships as F15](issues/83-empty-catch-rule.md), and the spec's unphased warns F09, F10 and F12 by [Place F09, F10 and F12 on the map](issues/82-place-f09-f10-f12.md) (2026-10-29).
 - **The agent acceptance test** (with-tool vs without-tool run scored by an independent ruler). Not part of the done line.
 - **Public distribution** beyond `cargo install` from the repo: crates.io, Homebrew, GitHub Action, npm wrapper.
 - **Commented-out code.** A comment block that would parse as code in the host language. The spec called it F11. This effort keeps F11 as logical lines and does not build the rule ([Reconcile rule ids with the spec and the dropped commented-out-code rule](issues/63-rule-numbering.md)).
