@@ -38,7 +38,7 @@
       "weight": 10,
       "principle": "A member chain that does not start at the receiver may be one deep, and a chain that starts at the receiver may be two deep. Law of Demeter.",
       "fix_shape": "Break the chain at line 2 in city. It is 4 deep, and the limit is 1.",
-      "anti_fix": "Saving the chain in locals leaves the finding in place."
+      "anti_fix": "Assigning the whole chain to one local leaves the hops in place."
     },
     {
       "rule": "F06",

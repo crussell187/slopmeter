@@ -904,7 +904,7 @@ fn rest_anti_fix(rule: &str) -> String {
         "F09" => "Binding the result to a local leaves the construction in place.",
         "F10" => "Renaming the parameter leaves the mutation in place.",
         "F12" => "Replacing nullptr with NULL leaves the literal in place.",
-        "F08" => "Saving the chain in locals leaves the finding in place.",
+        "F08" => "Assigning the whole chain to one local leaves the hops in place.",
         "F11" => "Breaking one statement across more lines leaves the count in place.",
         "S06" => "A test that runs the function and asserts nothing marks the lines hit.",
         "S07" => "A test that does not fail on the mutant.",
@@ -1290,7 +1290,7 @@ mod tests {
         );
         assert_eq!(
             f08.anti_fix,
-            "Saving the chain in locals leaves the finding in place."
+            "Assigning the whole chain to one local leaves the hops in place."
         );
 
         let f11 = &findings[8];

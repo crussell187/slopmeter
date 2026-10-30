@@ -114,10 +114,10 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Score an inline I/O dependency as F09](issues/87-score-f09.md) — a call whose written name is on the language list is one weight-1 warn at the first such call; `[F09] allow` names the calls that do not count, and each name is a departure note.
 - [Score a void function that mutates an argument as F10](issues/88-score-f10.md) — one weight-1 warn at the first site: Python records a parameter attribute, subscript, or known mutator when the function returns no value, C++ records a non-const reference or pointer on a void function, and Rust records nothing.
 - [Score a null literal as F12](issues/89-score-f12.md) — one weight-1 warn at the first site: C++ records a return of `nullptr` or `NULL` and a call argument that is either, a comparison against null is not a site, and Python and Rust record nothing.
+- [Whether a member chain saved in locals still counts](issues/90-chain-saved-in-locals.md) — a chain is one expression, so a per-hop local split clears F08, and assigning the whole chain to one local leaves the hops in place.
 
 ## Not yet specified
 
-- **A member chain saved in locals.** The F08 explain page says that split still leaves the finding. The adapter counts the chain inside one expression, so separate statements clear it.
 - **Multi-package repos.** Cargo workspaces, Python monorepos, C++ projects with several targets: how source selection, `--changed` and the KLOC denominator treat them.
 
 ## Out of scope

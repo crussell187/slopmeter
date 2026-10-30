@@ -36,7 +36,7 @@ A function whose body hands its parameters, other than the receiver, unchanged t
 _Avoid_: wrapper, delegate, pass-through module
 
 **Member chain**:
-Consecutive `.` or `->` accesses in one expression. A chain that starts at the receiver may be two deep; any other chain may be one deep.
+Consecutive `.` or `->` accesses in one expression, so a local that holds an earlier chain starts a new one. A chain from the receiver may be two deep, and any other chain may be one deep.
 _Avoid_: train wreck, dot chain
 
 **Logical line**:
