@@ -2,8 +2,8 @@
 
 Type: task
 Status: open
-Blocked by: 83
+Blocked by: 
 
 ## Question
 
-Build the F15 rule the way [Whether an empty or swallowing catch ships as F15](83-empty-catch-rule.md) decides it. Each adapter records a handler that swallows on the IR function, `rules::evaluate` emits one finding per function at the first such handler with the spec's gate weight, the explain page and goldens are added, and the sloppy corpora gain one swallowing handler per language so the validation tests fail on it.
+Build F15 per [ADR 0037](../../../docs/adr/0037-a-swallowing-handler-is-a-gate.md). Each adapter records on the IR function the line of each handler whose body does nothing: Python an `except` whose body is only `pass`, `...`, `continue`, `break`, or comments; C++ a `catch` whose body is empty apart from comments or only `continue;` or `break;`; Rust `let _ = <call>;`, an expression statement ending in `.ok();`, and an `Err(_)` or `Err(name)` arm or `if let Err` block whose body is empty, `()`, or `{}`. `rules::evaluate` emits one weight-10 gate per function at the first such line with the fix shape and anti-fix from the ADR, the ordinary waiver applies, `explain F15` is written, the goldens gain the rule, and each sloppy corpus gains one swallowing handler so the validation tests fail on it.
