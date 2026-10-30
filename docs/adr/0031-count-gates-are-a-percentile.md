@@ -7,7 +7,7 @@ date: 2026-10-29
 
 Setting each gate to the worst function in the clean repos made the gate flag nothing. A count gate is the nearest-rank percentile of the scored set of that language's three pinned commits. Sort the values and take the one at rank `ceil(p / 100 × n)`. Cyclomatic complexity, the cognitive gate, function length, and logical lines use p95. Parameter count and nesting use p97.5. The cognitive warn uses p90, and when that integer is not below the gate it is one less. A parameter with a default counts, and so do `*args` and `**kwargs`. The member-chain limits are 2 hops from the receiver and 1 otherwise. CRAP stays at 8, the pass-through warn at 80, the coverage gate at 100%, and the mutation gate at 1.
 
-The integers below were measured on 2026-10-29 from the commits already recorded in `corpus/*/pins.txt`. Python had 1,329 functions, Rust 5,610, and C++ 2,879. A `.py` file inside a C++ repo was in neither count. A later measurement may replace these integers. A pin bump on its own does not.
+The integers below were measured on 2026-10-29 from the commits already recorded in `corpus/*/pins.txt`. Python had 1,329 functions, Rust 5,610, and C++ 2,879. A `.py` file inside a C++ repo was in neither count. That exclusion stands for a later measurement: a file of another language stays out of every percentile, and a run still scores it ([A run scores every claimed extension](0032-every-claimed-extension.md)). A later measurement may replace these integers. A pin bump on its own does not.
 
 | Rule | Python | Rust | C++ |
 |---|---:|---:|---:|

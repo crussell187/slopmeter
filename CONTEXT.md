@@ -148,7 +148,7 @@ Member names that add no hop on a member chain. The adapter publishes the langua
 _Avoid_: exemption, ignore list
 
 **Profile**:
-One language's thresholds. A count gate and the cognitive warn are that language's recorded percentile of its clean repos, replaced only by a later measurement. The tool ships the table, including the pass-through ratio and the two chain depths. The config file may change a gate on a count rule, a warn only on cognitive complexity, and names on that language's allow-list. The coverage gate and the mutation gate are not in the profile.
+One language's thresholds. A count gate and the cognitive warn are that language's recorded percentile of its clean repos, replaced only by a later measurement. The percentile is taken from the files of that language in the repos pinned for it. The tool ships the table, including the pass-through ratio and the two chain depths. The config file may change a gate on a count rule, a warn only on cognitive complexity, and names on that language's allow-list. The coverage gate and the mutation gate are not in the profile.
 
 **Departure**:
 A profile value set to something other than that language's built-in. The run names it, and it does not fail the run.

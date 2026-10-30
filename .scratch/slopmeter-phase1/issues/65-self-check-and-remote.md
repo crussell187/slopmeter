@@ -2,7 +2,7 @@
 
 Type: task
 Status: open
-Blocked by: 46, 47, 66, 77
+Blocked by: 46, 47, 66, 77, 78
 
 ## Question
 
@@ -10,4 +10,4 @@ Blocked by: 46, 47, 66, 77
 
 ## Comments
 
-The exclude is in `slopmeter.toml`. A strict run of `corpus/python/sloppy` from this repo exits 0 with no findings, and the corpus tests copy the tree out so they still score it. A strict run of the repo on 2026-10-29 still exits 1: 364 gate findings, 357 in `src/` and 7 in `prototype/ir-schema/`. The CI step stays off until [Whether the self-check joins CI while the crate is over its gates](77-self-check-over-gates.md) is resolved. The public repo is https://github.com/crussell187/slopmeter. `main` and the four `research/*` branches are pushed. `gh` is logged in as crussell187.
+The exclude is in `slopmeter.toml`. A strict run of `corpus/python/sloppy` from this repo exits 0 with no findings, and the corpus tests copy the tree out so they still score it. A strict run of the repo on 2026-10-29 still exits 1: 364 gate findings, 357 in `src/` and 7 in `prototype/ir-schema/`. The CI step stays off until [Bring this crate under the gates](78-under-the-gates.md) is done. [Whether the self-check joins CI while the crate is over its gates](77-self-check-over-gates.md) decided the check joins only once a strict run of this repo exits 0. The public repo is https://github.com/crussell187/slopmeter. `main` and the four `research/*` branches are pushed. `gh` is logged in as crussell187.

@@ -9,7 +9,7 @@ Phase 1 is one crate, `slopmeter`. The pipeline stages are modules, and each lan
 
 The GitHub repo is public, on the personal account, so `cargo install --git` has a URL. The map stays the markdown in `.scratch/`, and the ADRs stay in `docs/adr/`. The research notes live in `docs/research/` on `main`. Tickets do not move to GitHub Issues.
 
-CI on push to `main` and on pull requests is `cargo fmt --check`, `clippy` with warnings denied, and `cargo test`, on stable. `slopmeter --strict` on this repo joins that job after the validation run has tuned the thresholds. The nine-repo validation run is not part of every push.
+CI on push to `main` and on pull requests is `cargo fmt --check`, `clippy` with warnings denied, and `cargo test`, on stable. `slopmeter --strict` on this repo joins that job when that command exits 0 ([The self-check joins CI when this repo passes](0033-self-check-when-the-repo-passes.md)). The nine-repo validation run is not part of every push.
 
 ## Considered options
 
@@ -20,4 +20,4 @@ CI on push to `main` and on pull requests is `cargo fmt --check`, `clippy` with 
 ## Consequences
 
 - `gh` is not installed, so this decision does not create the remote. The remote is created once the CLI is available.
-- The self-check and the corpus run stay off the pull-request job until the thresholds exist.
+- The self-check stays off the pull-request job until a strict run of this repo exits 0. The corpus run stays off that job.
