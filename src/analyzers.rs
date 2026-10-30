@@ -45,6 +45,7 @@ pub struct Measurement {
     pub receiver_chain: Option<ChainDepth>,
     pub other_chain: Option<ChainDepth>,
     pub forward: Option<Forwarding>,
+    pub swallowing: Vec<u32>,
     pub waivers: Vec<WaiverLine>,
     pub crap: Option<f64>,
     pub coverage: Option<Coverage>,
@@ -81,6 +82,7 @@ fn measure_function(path: &str, function: &Function, allow: &[&str]) -> Measurem
         receiver_chain,
         other_chain,
         forward: body.forward.as_ref().map(forwarding),
+        swallowing: body.swallowing.clone(),
         waivers: waivers.clone(),
         crap: None,
         coverage: None,
@@ -252,6 +254,7 @@ mod tests {
             levels: vec![],
             cognitive: vec![],
             chains: vec![],
+            swallowing: vec![],
             forward: None,
         }
     }
@@ -509,5 +512,13 @@ mod tests {
         assert_eq!(measured[0].waivers.len(), 1);
         assert_eq!(measured[0].waivers[0].line, 4);
         assert_eq!(measured[0].crap, None);
+    }
+
+    #[test]
+    fn swallowing_lines_stay_on_the_measurement() {
+        let mut body = empty();
+        body.swallowing = vec![4, 9];
+        let measured = measure(&file(vec![function("paint", vec![], body)]), &[]);
+        assert_eq!(measured[0].swallowing, vec![4, 9]);
     }
 }

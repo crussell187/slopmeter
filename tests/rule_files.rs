@@ -8,7 +8,7 @@ use slopmeter::reporters::{render, Report};
 use slopmeter::rules::evaluate;
 use slopmeter::scope::{partition, ScopeOptions};
 
-const RULES: [(&str, &str); 9] = [
+const RULES: [(&str, &str); 10] = [
     ("F01.py", "F01"),
     ("F02.py", "F02"),
     ("F03.py", "F03"),
@@ -18,6 +18,7 @@ const RULES: [(&str, &str); 9] = [
     ("F07.py", "F07"),
     ("F08.py", "F08"),
     ("F11.py", "F11"),
+    ("F15.py", "F15"),
 ];
 
 fn rules_dir() -> PathBuf {

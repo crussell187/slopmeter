@@ -1,8 +1,8 @@
 {
   "verdict": "fail",
   "scope": "strict",
-  "slop_score": 402.39043824701196,
-  "kloc": 0.251,
+  "slop_score": 433.59375,
+  "kloc": 0.256,
   "tool_version": "0.0.0",
   "findings": [
     {
@@ -159,6 +159,23 @@
       "anti_fix": "Adding a comment inside the nested block leaves the score in place."
     },
     {
+      "rule": "F15",
+      "level": "gate",
+      "symbol": {
+        "path": "tests/rules/F15.py",
+        "name": "load",
+        "param_types": [],
+        "qualifier": ""
+      },
+      "line": 4,
+      "measured_value": 1,
+      "threshold": 0,
+      "weight": 10,
+      "principle": "A handler that does nothing hides the failure.",
+      "fix_shape": "Re-raise, return, or handle the error at line 4 in load.",
+      "anti_fix": "A comment or `...` in place of `pass` leaves the finding in place."
+    },
+    {
       "rule": "F07",
       "level": "warn",
       "symbol": {
@@ -226,6 +243,10 @@
     },
     {
       "path": "tests/rules/F11.py",
+      "message": "No coverage record matches this file."
+    },
+    {
+      "path": "tests/rules/F15.py",
       "message": "No coverage record matches this file."
     }
   ]

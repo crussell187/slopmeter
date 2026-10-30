@@ -1224,6 +1224,7 @@ allow = ["with_timeout"]
         let root = fixture("rejected");
         let rejected = [
             "[profile.python.F07]\nwarn = 80\n",
+            "[profile.python.F15]\ngate = 0\n",
             "[profile.python.S06]\ngate = 1\n",
             "[profile.python.S07]\ngate = 1\n",
             "[profile.python.F01]\nwarn = 10\n",

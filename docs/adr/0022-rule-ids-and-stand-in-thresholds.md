@@ -28,6 +28,7 @@ A value greater than the gate fails. The gate number itself passes. F03 keeps it
 - F07 stays the pass-through warn at 80, with no gate.
 - F08 stays the member-chain gate, 2 hops from the receiver and 1 otherwise, with no warn.
 - F11 is logical lines. The gate is 19, so 19 statements pass and 20 fail. The spec numbered these ids differently. The shipped ids stand ([The shipped rule ids stand](0029-shipped-rule-ids-stand.md)).
+- F15 is a swallowing handler. The threshold is any: one such handler fails. No warn level. The config takes no key ([A swallowing handler is a gate](0037-a-swallowing-handler-is-a-gate.md)).
 - A `warn` key is legal only on a rule that ships one. Today that is F03. F07's ratio and F08's depths stay as already decided, and F08's only config key is `allow`.
 - These numbers are the built-in profile. Per-language calibration waits on the validation run. A project may raise one of these gates to twice that language's built-in ([A count gate may rise to twice the built-in](0028-count-gate-twice-the-built-in.md)). Weights are [A finding's weight is fixed for its rule and level](0025-finding-weight-is-fixed.md).
 - A waiver for any gate is [A waiver excuses one gate up to a stated measurement](0023-a-waiver-excuses-one-gate.md). The rule engine reads the lines the adapter recorded. It does not grow a private escape hatch per rule.

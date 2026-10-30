@@ -558,6 +558,34 @@ fn exclusive_end(start_row: usize, end_row: usize, end_column: usize) -> u32 {
     end_row as u32 + 1
 }
 
+fn except_block(node: Node<'_>) -> Option<Node<'_>> {
+    named_nodes(node)
+        .into_iter()
+        .find(|child| child.kind() == "block")
+}
+
+fn quiet_except(block: Node<'_>) -> bool {
+    named_nodes(block)
+        .iter()
+        .all(|child| quiet_statement(*child))
+}
+
+fn quiet_statement(node: Node<'_>) -> bool {
+    match node.kind() {
+        "pass_statement" | "continue_statement" | "break_statement" | "comment" => true,
+        "expression_statement" => ellipsis_statement(node),
+        _ => false,
+    }
+}
+
+fn ellipsis_statement(node: Node<'_>) -> bool {
+    let children = named_nodes(node);
+    let only_marks = children
+        .iter()
+        .all(|child| matches!(child.kind(), "ellipsis" | "comment"));
+    only_marks && children.iter().any(|child| child.kind() == "ellipsis")
+}
+
 fn named_nodes<'a>(node: Node<'a>) -> Vec<Node<'a>> {
     let mut children = Vec::new();
     for index in 0..node.named_child_count() {
@@ -646,6 +674,7 @@ fn classify(node: Node, source: &[u8], names: Names<'_>) -> Body {
         levels: Vec::new(),
         cognitive: Vec::new(),
         chains: Vec::new(),
+        swallowing: Vec::new(),
     };
     let forward = found.forwarding(node, names.ordinary);
     match node.kind() {
@@ -669,6 +698,7 @@ fn classify(node: Node, source: &[u8], names: Names<'_>) -> Body {
         levels: found.levels,
         cognitive: found.cognitive,
         chains: found.chains,
+        swallowing: found.swallowing,
         forward,
     }
 }
@@ -683,6 +713,7 @@ struct Classifier<'a> {
     levels: Vec<Decision>,
     cognitive: Vec<Cognitive>,
     chains: Vec<Chain>,
+    swallowing: Vec<u32>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -986,12 +1017,22 @@ impl<'a> Classifier<'a> {
     fn walk_except(&mut self, node: Node<'a>, nesting: u32) {
         self.decision(line_of(node), nesting);
         self.structural(line_of(node), nesting);
+        self.note_swallowed_except(node);
         for child in named_nodes(node) {
             if child.kind() == "block" {
                 self.inside(|this| this.walk_block(child, nesting + 1, false));
             } else {
                 self.walk(child, nesting);
             }
+        }
+    }
+
+    fn note_swallowed_except(&mut self, node: Node<'a>) {
+        let Some(block) = except_block(node) else {
+            return;
+        };
+        if quiet_except(block) {
+            self.swallowing.push(line_of(node));
         }
     }
 
@@ -3448,5 +3489,165 @@ bound = lambda z: z
             .iter()
             .find(|function| function.name == name)
             .unwrap_or_else(|| panic!("missing {name}"))
+    }
+
+    #[test]
+    fn an_except_that_does_nothing_records_its_line() {
+        let cases = [
+            (
+                "\
+def load(path):
+    try:
+        path.read()
+    except Exception:
+        pass
+",
+                vec![4],
+            ),
+            (
+                "\
+def load(path):
+    try:
+        path.read()
+    except Exception:
+        ...
+",
+                vec![4],
+            ),
+            (
+                "\
+def load(items):
+    for item in items:
+        try:
+            item.read()
+        except Exception:
+            continue
+",
+                vec![5],
+            ),
+            (
+                "\
+def load(items):
+    for item in items:
+        try:
+            item.read()
+        except Exception:
+            break
+",
+                vec![5],
+            ),
+            (
+                "\
+def load(path):
+    try:
+        path.read()
+    except Exception:
+        # swallowed
+        pass
+",
+                vec![4],
+            ),
+            (
+                "\
+def load(path):
+    try:
+        path.read()
+    except Exception:
+        # swallowed
+",
+                vec![4],
+            ),
+            (
+                "\
+def load(path):
+    try:
+        path.read()
+    except Exception as err:
+        pass
+",
+                vec![4],
+            ),
+            (
+                "\
+def load(path):
+    try:
+        path.read()
+    except TypeError:
+        pass
+    except ValueError:
+        ...
+",
+                vec![4, 6],
+            ),
+        ];
+        for (source, lines) in cases {
+            let file = parse("a.py", source.as_bytes());
+            assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+            assert_eq!(file.functions[0].body.swallowing, lines, "{source}");
+        }
+    }
+
+    #[test]
+    fn an_except_that_handles_the_error_records_nothing() {
+        let cases = [
+            "\
+def load(path):
+    try:
+        path.read()
+    except Exception:
+        return None
+",
+            "\
+def load(path):
+    try:
+        path.read()
+    except Exception:
+        raise
+",
+            "\
+def load(path):
+    try:
+        path.read()
+    except Exception as err:
+        err = None
+",
+            "\
+def load(path):
+    try:
+        path.read()
+    except Exception:
+        log(path)
+",
+            "\
+def load(path):
+    try:
+        path.read()
+    except Exception:
+        pass
+        return None
+",
+        ];
+        for source in cases {
+            let file = parse("a.py", source.as_bytes());
+            assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+            assert!(file.functions[0].body.swallowing.is_empty(), "{source}");
+        }
+    }
+
+    #[test]
+    fn a_swallowing_except_stays_on_the_function_that_writes_it() {
+        let source = "\
+def outer():
+    def inner():
+        try:
+            read()
+        except Exception:
+            pass
+    return inner
+";
+        let file = parse("a.py", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0);
+        assert!(function(&file, "outer").body.swallowing.is_empty());
+        assert_eq!(function(&file, "outer.inner").body.swallowing, vec![5]);
     }
 }

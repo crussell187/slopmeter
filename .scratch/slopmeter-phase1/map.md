@@ -108,6 +108,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Place F09, F10 and F12 on the map](issues/82-place-f09-f10-f12.md) — weight-1 warns, each only where it applies: F09 inline I/O in all three languages with a config `allow`, F10 void-mutates-argument in Python and C++, F12 null literal in C++ only; no gate level, no switch, a waiver for them fails the run ([ADR 0036](../../docs/adr/0036-three-warns-where-they-apply.md)).
 - [Whether an empty or swallowing catch ships as F15](issues/83-empty-catch-rule.md) — a weight-10 gate in all three languages on a handler whose body does nothing; an assignment, a call, a return, a re-raise or a `?` is handling; no config key, ordinary waiver ([ADR 0037](../../docs/adr/0037-a-swallowing-handler-is-a-gate.md)).
 - [Run coverage and mutation in CI and gate the pull request's touched functions](issues/81-ci-coverage-and-mutation.md) — a pull request pins cargo-llvm-cov 0.9.1 and cargo-mutants 27.1.0, then `slopmeter --changed origin/main` fails the job; a push to `main` keeps `--strict` only; this crate lists 4117 mutants and the 20 in `src/explain.rs` took 78 seconds.
+- [Score an empty or swallowing catch](issues/84-score-empty-catch.md) — each adapter records the line of a handler that does nothing, and `rules::evaluate` emits one weight-10 gate at the first such line.
 
 ## Not yet specified
 

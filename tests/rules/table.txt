@@ -7,6 +7,7 @@ F05  gate  deep       tests/rules/F05.py:8  7 > 3
 F04  gate  paint      tests/rules/F04.py:1  20 > 10
 F02  gate  uncovered  tests/rules/F02.py:1  12 > 8
 F03  gate  tangled    tests/rules/F03.py:1  13 > 12
+F15  gate  load       tests/rules/F15.py:4  1 > 0
 F07  warn  get        tests/rules/F07.py:2  100 > 80
 
 inherited
@@ -20,4 +21,5 @@ note  tests/rules/F06.py  No coverage record matches this file.
 note  tests/rules/F07.py  No coverage record matches this file.
 note  tests/rules/F08.py  No coverage record matches this file.
 note  tests/rules/F11.py  No coverage record matches this file.
-slop_score 402.39043824701196  fail
+note  tests/rules/F15.py  No coverage record matches this file.
+slop_score 433.59375  fail

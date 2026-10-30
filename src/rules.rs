@@ -211,6 +211,7 @@ fn breaches(measurement: &Measurement, profile: &LanguageProfile) -> Vec<Breach>
     push_forward(&mut found, measurement, profile);
     push_chain_breach(&mut found, measurement, profile);
     push_lloc(&mut found, measurement, profile);
+    push_swallowing(&mut found, measurement);
     found
 }
 
@@ -350,6 +351,21 @@ fn push_chain_breach(
         line: hit.line,
         measured: hit.depth,
         threshold: hit.limit,
+    }));
+}
+
+fn push_swallowing(found: &mut Vec<Breach>, measurement: &Measurement) {
+    let lines = &measurement.swallowing;
+    let Some(&line) = lines.first() else {
+        return;
+    };
+    let count = lines.len() as u32;
+    found.push(breach(CountSpec {
+        rule: "F15",
+        level: Level::Gate,
+        line,
+        measured: count,
+        threshold: 0,
     }));
 }
 
@@ -597,6 +613,17 @@ fn rejection_numbers(
     profile: &LanguageProfile,
     rule: &str,
 ) -> (Option<f64>, Option<f64>) {
+    if rule == "F15" {
+        return swallowing_numbers(measurement);
+    }
+    counted_rejection(measurement, profile, rule)
+}
+
+fn counted_rejection(
+    measurement: &Measurement,
+    profile: &LanguageProfile,
+    rule: &str,
+) -> (Option<f64>, Option<f64>) {
     match rule {
         "F01" => (
             Some(f64::from(measurement.cyclomatic)),
@@ -629,6 +656,12 @@ fn rejection_numbers(
         ),
         _ => (None, None),
     }
+}
+
+fn swallowing_numbers(measurement: &Measurement) -> (Option<f64>, Option<f64>) {
+    let lines = &measurement.swallowing;
+    let count = lines.len() as f64;
+    (Some(count), Some(0.0))
 }
 
 fn attach(classes: &[Classified], rule: &str, measured: Measured) -> Option<Waiver> {
@@ -702,7 +735,7 @@ fn number_outcome(rule: &str, number: Option<&str>, has_reason: bool) -> Outcome
 fn gate_id(rule: &str) -> bool {
     matches!(
         rule,
-        "F01" | "F02" | "F03" | "F04" | "F05" | "F06" | "F08" | "F11"
+        "F01" | "F02" | "F03" | "F04" | "F05" | "F06" | "F08" | "F11" | "F15"
     )
 }
 
@@ -733,6 +766,7 @@ fn rest_principle(rule: &str) -> String {
         "F11" => "A function should say little. The count is statements, not wrapped lines.",
         "S06" => "Every executable line of a changed function is hit.",
         "S07" => "Every valid mutant of a changed function is detected.",
+        "F15" => "A handler that does nothing hides the failure.",
         _ => "A waiver excuses one gate, and this line does not name one.",
     }
     .to_string()
@@ -765,12 +799,20 @@ fn rest_anti_fix(rule: &str) -> String {
         "F11" => "Breaking one statement across more lines leaves the count in place.",
         "S06" => "A test that runs the function and asserts nothing marks the lines hit.",
         "S07" => "A test that does not fail on the mutant.",
+        "F15" => "A comment or `...` in place of `pass` leaves the finding in place.",
         _ => "Deleting the waiver line leaves the run with no such line.",
     }
     .to_string()
 }
 
 fn fix_shape(breach: &Breach, name: &str) -> String {
+    if breach.rule == "F15" {
+        return swallowing_fix(breach, name);
+    }
+    counted_fix(breach, name)
+}
+
+fn counted_fix(breach: &Breach, name: &str) -> String {
     let measured = breach.measured.to_string();
     let threshold = breach.threshold.to_string();
     match breach.rule {
@@ -808,6 +850,13 @@ fn fix_shape(breach: &Breach, name: &str) -> String {
         }
         _ => String::new(),
     }
+}
+
+fn swallowing_fix(breach: &Breach, name: &str) -> String {
+    format!(
+        "Re-raise, return, or handle the error at line {} in {name}.",
+        breach.line
+    )
 }
 
 fn complexity_band(level: Level) -> &'static str {
@@ -860,6 +909,7 @@ mod tests {
             receiver_chain: None,
             other_chain: None,
             forward: None,
+            swallowing: vec![],
             waivers: vec![],
             crap: None,
             coverage: None,
@@ -1630,5 +1680,63 @@ mod tests {
             findings[0].waiver.as_ref().unwrap().rejection.as_deref(),
             Some("The waiver line has no number.")
         );
+    }
+
+    #[test]
+    fn a_swallowing_handler_is_one_gate_at_the_first_line() {
+        let mut measured = base();
+        measured.swallowing = vec![12, 40];
+
+        let findings = evaluate(&[measured], &profile());
+
+        assert_eq!(findings.len(), 1);
+        let finding = &findings[0];
+        assert_eq!(finding.rule, "F15");
+        assert_eq!(finding.level, Level::Gate);
+        assert_eq!(finding.line, 12);
+        assert_eq!(finding.measured_value, Some(2.0));
+        assert_eq!(finding.threshold, Some(0.0));
+        assert_eq!(finding.weight, 10);
+        assert_eq!(
+            finding.principle,
+            "A handler that does nothing hides the failure."
+        );
+        assert_eq!(
+            finding.fix_shape,
+            "Re-raise, return, or handle the error at line 12 in paint."
+        );
+        assert_eq!(
+            finding.anti_fix,
+            "A comment or `...` in place of `pass` leaves the finding in place."
+        );
+        assert!(finding.waiver.is_none());
+    }
+
+    #[test]
+    fn a_waiver_at_the_swallowing_count_holds() {
+        let mut held = base();
+        held.swallowing = vec![12, 40];
+        held.waivers = vec![waiver(4, Some("F15"), Some("2"), Some("logged upstream"))];
+        let mut short = base();
+        short.name = "load".to_string();
+        short.swallowing = vec![8];
+        short.waivers = vec![waiver(3, Some("F15"), Some("0"), Some("still swallowed"))];
+
+        let findings = evaluate(&[held, short], &profile());
+        let kept = findings
+            .iter()
+            .find(|finding| finding.name == "paint")
+            .unwrap();
+        assert_eq!(kept.level, Level::Gate);
+        assert_eq!(kept.weight, 10);
+        assert!(kept.waiver.as_ref().unwrap().holds);
+        assert_eq!(kept.waiver.as_ref().unwrap().excused, Some(2.0));
+
+        let open = findings
+            .iter()
+            .find(|finding| finding.name == "load")
+            .unwrap();
+        assert!(!open.waiver.as_ref().unwrap().holds);
+        assert!(open.waiver.as_ref().unwrap().rejection.is_none());
     }
 }

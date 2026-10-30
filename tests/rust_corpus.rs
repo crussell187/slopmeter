@@ -91,6 +91,7 @@ fn the_sloppy_tree_gates_every_gating_rule_and_warns_on_f07() {
         ("F07", "warn"),
         ("F08", "gate"),
         ("F11", "gate"),
+        ("F15", "gate"),
     ]);
     assert_eq!(found, expected, "{stdout}");
     assert_wide_margin(&doc, &stdout);
@@ -138,6 +139,11 @@ fn assert_wide_margin(doc: &serde_json::Value, stdout: &str) {
     for (rule, (measured, threshold)) in worst {
         if rule == "F07" {
             assert_eq!(measured, 100.0, "{stdout}");
+            continue;
+        }
+        if rule == "F15" {
+            assert_eq!(measured, 1.0, "{stdout}");
+            assert_eq!(threshold, 0.0, "{stdout}");
             continue;
         }
         assert!(

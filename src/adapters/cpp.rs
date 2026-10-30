@@ -1378,6 +1378,7 @@ fn classify(node: Node<'_>, score: Score<'_>) -> Body {
         levels: Vec::new(),
         cognitive: Vec::new(),
         chains: Vec::new(),
+        swallowing: Vec::new(),
     };
     let forward = classifier.forwarding(node, score.ordinary);
     classifier.walk_root(node);
@@ -1387,6 +1388,7 @@ fn classify(node: Node<'_>, score: Score<'_>) -> Body {
         levels: classifier.levels,
         cognitive: classifier.cognitive,
         chains: classifier.chains,
+        swallowing: classifier.swallowing,
         forward,
     }
 }
@@ -1418,6 +1420,7 @@ struct Classifier<'a> {
     levels: Vec<Decision>,
     cognitive: Vec<Cognitive>,
     chains: Vec<Chain>,
+    swallowing: Vec<u32>,
 }
 
 impl<'a> Classifier<'a> {
@@ -1792,8 +1795,18 @@ impl<'a> Classifier<'a> {
         self.lloc += 1;
         self.decision(line_of(node), nesting);
         self.structural(line_of(node), nesting);
+        self.note_swallowed_catch(node);
         if let Some(body) = node.child_by_field_name("body") {
             self.inside(|this| this.walk(body, nesting + 1));
+        }
+    }
+
+    fn note_swallowed_catch(&mut self, node: Node<'a>) {
+        let Some(body) = node.child_by_field_name("body") else {
+            return;
+        };
+        if quiet_catch(body) {
+            self.swallowing.push(line_of(node));
         }
     }
 
@@ -2716,6 +2729,17 @@ fn operator_text(node: Node, source: &[u8]) -> String {
         }
     }
     String::new()
+}
+
+fn quiet_catch(body: Node<'_>) -> bool {
+    if body.kind() == "compound_statement" {
+        return code_nodes(body).iter().all(quiet_catch_stmt);
+    }
+    quiet_catch_stmt(&body)
+}
+
+fn quiet_catch_stmt(node: &Node<'_>) -> bool {
+    matches!(node.kind(), "continue_statement" | "break_statement")
 }
 
 fn code_nodes(node: Node<'_>) -> Vec<Node<'_>> {
@@ -3884,6 +3908,172 @@ bool both(int a, int b) { return CHECK(a && b); }
         assert_eq!(file.unscored_macros, 6, "{source}");
         assert_eq!(function(&file, "run").body.decisions.len(), 0);
         assert_eq!(function(&file, "both").body.decisions.len(), 1);
+    }
+
+    #[test]
+    fn an_empty_catch_records_its_line() {
+        let cases = [
+            (
+                "\
+void load() {
+    try {
+        read();
+    } catch (...) {
+    }
+}
+",
+                "load",
+                vec![4],
+            ),
+            (
+                "\
+void load() {
+    try {
+        read();
+    } catch (...) {
+        // swallowed
+    }
+}
+",
+                "load",
+                vec![4],
+            ),
+            (
+                "\
+void load() {
+    while (ready()) {
+        try {
+            read();
+        } catch (...) {
+            continue;
+        }
+    }
+}
+",
+                "load",
+                vec![5],
+            ),
+            (
+                "\
+void load() {
+    while (ready()) {
+        try {
+            read();
+        } catch (...) {
+            break;
+        }
+    }
+}
+",
+                "load",
+                vec![5],
+            ),
+            (
+                "\
+void load() {
+    while (ready()) {
+        try {
+            read();
+        } catch (int) {
+        } catch (...) {
+            continue;
+        }
+    }
+}
+",
+                "load",
+                vec![5, 6],
+            ),
+            (
+                "\
+void load() {
+    auto inner = [] {
+        try {
+            read();
+        } catch (...) {
+        }
+    };
+}
+",
+                "load",
+                vec![5],
+            ),
+            (
+                "\
+struct P {
+    int x, y;
+    P(int a, int b) try : x(a), y(b) { if (a) throw 1; } catch (...) {}
+};
+",
+                "P::P",
+                vec![3],
+            ),
+        ];
+        for (source, name, lines) in cases {
+            let file = parse("a.hpp", source.as_bytes());
+            assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+            assert_eq!(function(&file, name).body.swallowing, lines, "{source}");
+        }
+    }
+
+    #[test]
+    fn a_catch_that_handles_the_error_records_nothing() {
+        let cases = [
+            "\
+void load() {
+    try {
+        read();
+    } catch (...) {
+        throw;
+    }
+}
+",
+            "\
+void load() {
+    try {
+        read();
+    } catch (...) {
+        return;
+    }
+}
+",
+            "\
+void load() {
+    try {
+        read();
+    } catch (...) {
+        log();
+    }
+}
+",
+            "\
+void load() {
+    int x = 0;
+    try {
+        read();
+    } catch (...) {
+        x = 1;
+    }
+}
+",
+            "\
+void load() {
+    try {
+        read();
+    } catch (...) {
+        ;
+    }
+}
+",
+        ];
+        for source in cases {
+            let file = parse("a.hpp", source.as_bytes());
+            assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+            assert!(
+                function(&file, "load").body.swallowing.is_empty(),
+                "{source}"
+            );
+        }
     }
 
     #[test]

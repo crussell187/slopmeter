@@ -5,5 +5,9 @@ int hold(bool flag) {
     if (flag) {
         return 2;
     }
+    try {
+        (void)flag;
+    } catch (...) {
+    }
     return 0;
 }

@@ -64,6 +64,7 @@ pub struct Body {
     pub cognitive: Vec<Cognitive>,
     pub chains: Vec<Chain>,
     pub forward: Option<Forward>,
+    pub swallowing: Vec<u32>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -128,6 +129,7 @@ mod tests {
                 levels: vec![],
                 cognitive: vec![],
                 chains: vec![],
+                swallowing: vec![],
                 forward: Some(Forward {
                     line: 87,
                     names: vec![

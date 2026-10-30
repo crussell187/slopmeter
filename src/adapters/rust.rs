@@ -908,6 +908,7 @@ fn classify(node: Node<'_>, source: &[u8], names: Names<'_>) -> Body {
         levels: Vec::new(),
         cognitive: Vec::new(),
         chains: Vec::new(),
+        swallowing: Vec::new(),
     };
     let forward = classifier.forwarding(node, names.ordinary);
     match node.kind() {
@@ -927,6 +928,7 @@ fn classify(node: Node<'_>, source: &[u8], names: Names<'_>) -> Body {
         levels: classifier.levels,
         cognitive: classifier.cognitive,
         chains: classifier.chains,
+        swallowing: classifier.swallowing,
         forward,
     }
 }
@@ -990,6 +992,7 @@ struct Classifier<'a> {
     levels: Vec<Decision>,
     cognitive: Vec<Cognitive>,
     chains: Vec<Chain>,
+    swallowing: Vec<u32>,
 }
 
 impl<'a> Classifier<'a> {
@@ -1042,9 +1045,55 @@ impl<'a> Classifier<'a> {
 
     fn walk_expression_statement(&mut self, node: Node<'a>, nesting: u32) {
         let children = code_nodes(node);
+        self.note_ok_statement(node, &children);
         match children.as_slice() {
             [child] => self.note_expression(*child, nesting),
             _ => self.walk_expression_parts(&children, nesting),
+        }
+    }
+
+    fn note_ok_statement(&mut self, node: Node<'a>, children: &[Node<'a>]) {
+        let [only] = children else {
+            return;
+        };
+        if ends_ok(*only, self.source) {
+            self.swallowing.push(line_of(node));
+        }
+    }
+
+    fn note_swallowed_if(&mut self, node: Node<'a>) {
+        let Some(condition) = node.child_by_field_name("condition") else {
+            return;
+        };
+        if !swallows_err(condition, self.source) {
+            return;
+        }
+        let Some(body) = node.child_by_field_name("consequence") else {
+            return;
+        };
+        if quiet_body(body) {
+            self.swallowing.push(line_of(node));
+        }
+    }
+
+    fn note_swallowed_arm(&mut self, node: Node<'a>) {
+        let Some(pattern) = node.child_by_field_name("pattern") else {
+            return;
+        };
+        if !err_pattern(pattern, self.source) {
+            return;
+        }
+        let Some(value) = node.child_by_field_name("value") else {
+            return;
+        };
+        if quiet_body(value) {
+            self.swallowing.push(line_of(node));
+        }
+    }
+
+    fn note_discarded_let(&mut self, node: Node<'a>) {
+        if discarded_call(node) {
+            self.swallowing.push(line_of(node));
         }
     }
 
@@ -1199,6 +1248,7 @@ impl<'a> Classifier<'a> {
         let line = line_of(node);
         self.note_if_branch(line, nesting, else_if);
         self.decision(line, nesting);
+        self.note_swallowed_if(node);
         self.walk_if_condition(node, nesting);
         self.walk_if_body(node, nesting);
         self.walk_if_else(node, nesting);
@@ -1312,6 +1362,7 @@ impl<'a> Classifier<'a> {
     fn walk_arm(&mut self, node: Node<'a>, nesting: u32) {
         let line = line_of(node);
         self.note_arm_labels(node, line, nesting);
+        self.note_swallowed_arm(node);
         self.walk_arm_guard(node, nesting);
         self.walk_arm_value(node, nesting);
     }
@@ -1357,6 +1408,7 @@ impl<'a> Classifier<'a> {
     }
     fn walk_let(&mut self, node: Node<'a>, nesting: u32) {
         self.lloc += 1;
+        self.note_discarded_let(node);
         if let Some(value) = node.child_by_field_name("value") {
             self.walk(value, nesting);
         }
@@ -2733,6 +2785,142 @@ fn bool_op(node: Node, source: &[u8]) -> Option<BoolOp> {
     }
 }
 
+fn discarded_call(node: Node<'_>) -> bool {
+    wildcard_let(node) && call_value(node)
+}
+
+fn wildcard_let(node: Node<'_>) -> bool {
+    let pattern = node.child_by_field_name("pattern");
+    pattern.is_some_and(is_wildcard)
+}
+
+fn is_wildcard(node: Node<'_>) -> bool {
+    node.kind() == "_" || node.kind() == "wildcard_pattern"
+}
+
+fn call_value(node: Node<'_>) -> bool {
+    let value = node.child_by_field_name("value");
+    value.is_some_and(|value| value.kind() == "call_expression")
+}
+
+fn ends_ok(node: Node<'_>, source: &[u8]) -> bool {
+    if node.kind() != "call_expression" {
+        return false;
+    }
+    let Some(function) = node.child_by_field_name("function") else {
+        return false;
+    };
+    ok_field(function, source) && empty_args(node)
+}
+
+fn ok_field(function: Node<'_>, source: &[u8]) -> bool {
+    if function.kind() != "field_expression" {
+        return false;
+    }
+    let field = function.child_by_field_name("field");
+    field.is_some_and(|field| node_text(field, source) == "ok")
+}
+
+fn empty_args(node: Node<'_>) -> bool {
+    let args = node.child_by_field_name("arguments");
+    args.is_some_and(|args| args.named_child_count() == 0)
+}
+
+fn swallows_err(node: Node<'_>, source: &[u8]) -> bool {
+    match node.kind() {
+        "let_condition" => let_swallows(node, source),
+        "let_chain" => chain_swallows(node, source),
+        _ => false,
+    }
+}
+
+fn let_swallows(node: Node<'_>, source: &[u8]) -> bool {
+    let pattern = node.child_by_field_name("pattern");
+    pattern.is_some_and(|pattern| err_pattern(pattern, source))
+}
+
+fn chain_swallows(node: Node<'_>, source: &[u8]) -> bool {
+    let children = named_nodes(node);
+    let mut iter = children.iter();
+    iter.any(|child| swallows_err(*child, source))
+}
+
+fn err_pattern(node: Node<'_>, source: &[u8]) -> bool {
+    let Some(pattern) = bare_pattern(node) else {
+        return false;
+    };
+    err_tuple(pattern, source)
+}
+
+fn bare_pattern(node: Node<'_>) -> Option<Node<'_>> {
+    if node.kind() != "match_pattern" {
+        return Some(node);
+    }
+    named_nodes(node)
+        .into_iter()
+        .find(|child| node.child_by_field_name("condition") != Some(*child))
+}
+
+fn err_tuple(pattern: Node<'_>, source: &[u8]) -> bool {
+    if pattern.kind() != "tuple_struct_pattern" {
+        return false;
+    }
+    err_type(pattern, source) && one_plain_payload(pattern)
+}
+
+fn err_type(pattern: Node<'_>, source: &[u8]) -> bool {
+    let ty = pattern.child_by_field_name("type");
+    ty.is_some_and(|ty| node_text(ty, source) == "Err")
+}
+
+fn one_plain_payload(pattern: Node<'_>) -> bool {
+    let payloads = payloads_of(pattern);
+    match payloads.as_slice() {
+        [only] => plain_name(*only),
+        _ => false,
+    }
+}
+
+fn payloads_of(pattern: Node<'_>) -> Vec<Node<'_>> {
+    all_children(pattern)
+        .into_iter()
+        .filter(|child| pattern.child_by_field_name("type") != Some(*child))
+        .filter(|child| child.is_named() || is_wildcard(*child))
+        .collect()
+}
+
+fn plain_name(node: Node<'_>) -> bool {
+    is_wildcard(node) || node.kind() == "identifier"
+}
+
+fn quiet_body(node: Node<'_>) -> bool {
+    match node.kind() {
+        "unit_expression" => true,
+        "block" => quiet_block(node),
+        _ => false,
+    }
+}
+
+fn quiet_block(node: Node<'_>) -> bool {
+    let children = code_nodes(node);
+    match children.as_slice() {
+        [] => true,
+        [only] => unit_value(*only),
+        _ => false,
+    }
+}
+
+fn unit_value(node: Node<'_>) -> bool {
+    if node.kind() == "unit_expression" {
+        return true;
+    }
+    if node.kind() != "expression_statement" {
+        return false;
+    }
+    let children = code_nodes(node);
+    matches!(children.as_slice(), [only] if only.kind() == "unit_expression")
+}
+
 fn is_statement(kind: &str) -> bool {
     matches!(
         kind,
@@ -4002,6 +4190,228 @@ fn whole_line() -> i32 { 3 }
                 Some("measured on purpose")
             )]
         );
+    }
+
+    #[test]
+    fn a_swallowed_result_records_its_line() {
+        let cases = [
+            (
+                "\
+fn load() {
+    let _ = read();
+}
+",
+                "load",
+                vec![2],
+            ),
+            (
+                "\
+fn load() {
+    let _ = path.read();
+}
+",
+                "load",
+                vec![2],
+            ),
+            (
+                "\
+fn load() {
+    read().ok();
+}
+",
+                "load",
+                vec![2],
+            ),
+            (
+                "\
+fn load() {
+    path.read().ok();
+}
+",
+                "load",
+                vec![2],
+            ),
+            (
+                "\
+fn load(value: Result<i32, ()>) -> i32 {
+    match value {
+        Ok(n) => n,
+        Err(_) => {},
+    }
+}
+",
+                "load",
+                vec![4],
+            ),
+            (
+                "\
+fn load(value: Result<i32, i32>) -> i32 {
+    match value {
+        Ok(n) => n,
+        Err(err) => (),
+    }
+}
+",
+                "load",
+                vec![4],
+            ),
+            (
+                "\
+fn load(value: Result<i32, ()>) -> i32 {
+    match value {
+        Ok(n) => n,
+        Err(_) => {
+            ()
+        },
+    }
+}
+",
+                "load",
+                vec![4],
+            ),
+            (
+                "\
+fn load(value: Result<i32, ()>) {
+    if let Err(_) = value {}
+}
+",
+                "load",
+                vec![2],
+            ),
+            (
+                "\
+fn load(value: Result<i32, ()>) {
+    if let Err(err) = value {
+        ()
+    }
+}
+",
+                "load",
+                vec![2],
+            ),
+            (
+                "\
+fn load() {
+    let _ = read();
+    read().ok();
+}
+",
+                "load",
+                vec![2, 3],
+            ),
+            (
+                "\
+fn load() {
+    let inner = || {
+        let _ = read();
+    };
+}
+",
+                "load",
+                vec![3],
+            ),
+        ];
+        for (source, name, lines) in cases {
+            let file = parse("a.rs", source.as_bytes());
+            assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+            assert_eq!(function(&file, name).body.swallowing, lines, "{source}");
+        }
+    }
+
+    #[test]
+    fn a_handled_result_records_nothing() {
+        let cases = [
+            "\
+fn load() {
+    let _ = 1;
+}
+",
+            "\
+fn load() {
+    let _ = read()?;
+}
+",
+            "\
+fn load() {
+    let value = read();
+}
+",
+            "\
+fn load() {
+    read().ok()?;
+}
+",
+            "\
+fn load() {
+    let x = read().ok();
+}
+",
+            "\
+fn load() {
+    read().ok().unwrap();
+}
+",
+            "\
+fn load() {
+    read().ok(1);
+}
+",
+            "\
+fn load(value: Result<i32, i32>) -> i32 {
+    match value {
+        Ok(n) => n,
+        Err(err) => err,
+    }
+}
+",
+            "\
+fn load(value: Result<i32, ()>) -> i32 {
+    match value {
+        Ok(n) => n,
+        Err(_) => {
+            return 0;
+        },
+    }
+}
+",
+            "\
+fn load(value: Result<i32, ()>) {
+    if let Err(err) = value {
+        return;
+    }
+}
+",
+            "\
+fn load(value: Result<i32, ()>) -> i32 {
+    if let Ok(n) = value {
+    }
+    0
+}
+",
+        ];
+        for source in cases {
+            let file = parse("a.rs", source.as_bytes());
+            assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+            assert!(
+                function(&file, "load").body.swallowing.is_empty(),
+                "{source}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_swallowed_result_stays_on_the_function_that_writes_it() {
+        let source = "\
+fn outer() {
+    fn inner() {
+        let _ = read();
+    }
+}
+";
+        let file = parse("a.rs", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0);
+        assert!(function(&file, "outer").body.swallowing.is_empty());
+        assert_eq!(function(&file, "outer::inner").body.swallowing, vec![3]);
     }
 
     fn member_names(chain: &Chain) -> Vec<&str> {

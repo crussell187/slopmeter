@@ -35,7 +35,7 @@ fn explain_prints_the_shipped_threshold_when_the_config_raises_a_gate() {
 #[test]
 fn explain_prints_the_shipped_page_and_exits_0() {
     for rule in [
-        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F11", "S06", "S07",
+        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F11", "F15", "S06", "S07",
     ] {
         let output = run(&["explain", rule]);
         assert_eq!(output.status.code(), Some(0), "{rule}");

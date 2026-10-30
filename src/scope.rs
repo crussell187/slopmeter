@@ -1066,6 +1066,7 @@ def other():
                 levels: vec![],
                 cognitive: vec![],
                 chains: vec![],
+                swallowing: vec![],
                 forward: None,
             },
             waivers: vec![],

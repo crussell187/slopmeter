@@ -1,0 +1,44 @@
+F15  swallowing handler
+
+A handler that does nothing hides the failure.
+
+Counting
+One finding per function, at the first such handler. In Python an
+except whose body is only pass, ..., continue, break, or comments.
+In C++ a catch whose body is empty apart from comments, or only
+continue; or break;. Rust has no catch, so it is `let _ = <call>;`,
+an expression statement that ends in `.ok();`, and an `Err(_)` or
+`Err(name)` arm or `if let Err` block whose body is empty, `()`,
+or `{}`. An assignment, a call, a return, a raise, a throw;, or a
+`?` is handling, and that handler is not scored. A comment alone
+inside the handler is still swallowing.
+
+Threshold
+        gate
+Python   any
+Rust     any
+C++      any
+Any swallowing handler fails. No warn level. The config takes no
+key.
+A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
+above the function excuses this gate in Python, and the same tokens
+after `//` do so in Rust and C++, with a whole number except on F02,
+which may be fractional.
+
+Before
+def load(path):
+    try:
+        return path.read_text()
+    except OSError:
+        pass
+
+After
+def load(path):
+    try:
+        return path.read_text()
+    except OSError:
+        raise
+
+Anti-fixes
+A comment or `...` in place of `pass` leaves the finding in place.
+`continue` or `break` in the handler leaves the finding in place.

@@ -15,6 +15,7 @@ fn function_page(rule: &str) -> Option<&'static str> {
         "F06" => include_str!("../docs/explain/F06.txt"),
         "F07" => include_str!("../docs/explain/F07.txt"),
         "F08" => include_str!("../docs/explain/F08.txt"),
+        "F15" => include_str!("../docs/explain/F15.txt"),
         _ => return None,
     })
 }
@@ -32,10 +33,12 @@ fn scope_page(rule: &str) -> Option<&'static str> {
 mod tests {
     use super::page;
 
-    const RULES: [&str; 11] = [
-        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F11", "S06", "S07",
+    const RULES: [&str; 12] = [
+        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F11", "F15", "S06", "S07",
     ];
-    const GATES: [&str; 8] = ["F01", "F02", "F03", "F04", "F05", "F06", "F08", "F11"];
+    const GATES: [&str; 9] = [
+        "F01", "F02", "F03", "F04", "F05", "F06", "F08", "F11", "F15",
+    ];
     const WAIVER: &str = "A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly above the function excuses this gate in Python, and the same tokens after `//` do so in Rust and C++, with a whole number except on F02, which may be fractional.";
 
     #[test]
@@ -132,6 +135,10 @@ mod tests {
             (
                 "F11",
                 "        gate\nPython    19\nRust      17\nC++       25\n",
+            ),
+            (
+                "F15",
+                "        gate\nPython   any\nRust     any\nC++      any\n",
             ),
             (
                 "S06",

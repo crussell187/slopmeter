@@ -7,7 +7,7 @@ date: 2026-10-27
 
 `slop_score` stays in the report. It is the sum of every finding's weight, inherited findings included, divided by the thousands of physical lines in the scored set. A diff run and `--strict` score the same tree. The score does not fail the run. A weight of 0 made that field a constant and made weight-sorting a no-op, so the spec's "reduce `slop_score` below 5" had nothing to reduce.
 
-The weight is a fixed number for the rule and the level. How far the measurement sits over the threshold orders the table, and it does not change the weight. Every gate weighs 10: F01, F02, F03 at gate level, F04, F05, F06, F08, F11, S06, and S07. F03's warn weighs 3. F07 weighs 1. One gate per two thousand lines is a score of 5. Three cognitive warns weigh 9, just under one gate. Ten pass-throughs weigh the same as one gate.
+The weight is a fixed number for the rule and the level. How far the measurement sits over the threshold orders the table, and it does not change the weight. Every gate weighs 10: F01, F02, F03 at gate level, F04, F05, F06, F08, F11, F15, S06, and S07. F03's warn weighs 3. F07 weighs 1. One gate per two thousand lines is a score of 5. Three cognitive warns weigh 9, just under one gate. Ten pass-throughs weigh the same as one gate.
 
 A waiver that holds keeps that weight. The score describes the tree, and the verdict describes the change. A rejected waiver line that stands as its own finding weighs 0, so a malformed line does not move the score.
 
