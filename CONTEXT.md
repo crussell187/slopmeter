@@ -83,7 +83,7 @@ _Avoid_: error rate, parse failure
 How trustworthy a rule's signal is: A is deterministic and gate-worthy, B is deterministic but noisy and warns by default, C needs semantics the tool lacks and is not computed.
 
 **Gate**:
-A finding at gate level in a touched function. It fails the run. A waiver on that finding keeps it a gate, and the verdict ignores it. A lower warn level on the same rule does not.
+A finding at gate level in a touched function. It fails the run. A waiver on that finding keeps it a gate, and the verdict ignores it unless the change under review added the waiver line. A lower warn level on the same rule does not.
 _Avoid_: error, blocker, hard fail
 
 **Waiver**:
