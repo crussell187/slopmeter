@@ -16,8 +16,8 @@ _Avoid_: check, lint, policy
 The unit a rule measures: function, module (file, class or package), system (whole repo or diff), or architecture.
 
 **Scored set**:
-The claimed files a run measures. Tests are out of it unless a run turns them on.
-_Avoid_: codebase, sources
+The claimed files in the directory a run starts in. A package boundary does not split it, and tests are out unless a run turns them on.
+_Avoid_: codebase, sources, package
 
 **Function**:
 A named definition with a body the programmer wrote, including one nested inside another, or a lambda or closure bound to a name outside any function. Declarations, compiler-generated bodies, decorators, and attributes sit outside it; a generic or template counts once, and any other lambda or closure belongs to the function that contains it. The contents of a macro invocation written inside a function belong to that function. A macro invocation outside any function is not a function. A Rust macro definition written outside any function is itself a function; one written inside a function belongs to that function. A C++ `#define` is not a function.

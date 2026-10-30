@@ -5,13 +5,16 @@ date: 2026-10-26
 
 # The default scored set leaves tests out
 
-The gate is for the code under review, and a test is often long and branchy on purpose. `assert` already adds 1 to cyclomatic complexity, so the same gates would fail clean repos on their tests. A second profile for tests would be another set of thresholds, and those numbers wait on a corpus. The default scored set is every claimed file in the repo. It is not limited to `src/`. Tests are out until a switch turns them on. Gitignore, a short list of dependency and build directories, and well-known protobuf names stay out even when an include glob names them.
+The gate is for the code under review, and a test is often long and branchy on purpose. `assert` already adds 1 to cyclomatic complexity, so the same gates would fail clean repos on their tests. A second profile for tests would be another set of thresholds, and those numbers wait on a corpus. The default scored set is every claimed file in the directory the run starts in. It is not limited to `src/`. Tests are out until a switch turns them on. Gitignore, a short list of dependency and build directories, and well-known protobuf names stay out even when an include glob names them.
+
+A package boundary does not split that set. A Cargo workspace, a Python monorepo, or a C++ tree with several targets is one set from the git root, and the member's subtree when the run starts inside that member. `slopmeter.toml` is read from the git root, a nested file is ignored, and no manifest is read. `--changed` and the KLOC denominator follow the files that walk loaded.
 
 ## Considered options
 
 - **Score tests with the same gates.** Rejected. Table-driven tests and `assert` would dominate the validation run.
 - **Score tests under a separate profile.** Rejected for Phase 1. The production thresholds are not calibrated yet, and a second table would double that problem.
 - **Default to `src/` only.** Rejected. Python and C++ trees do not share that layout, so most of a repo would be invisible.
+- **Detect a package and score only that.** Rejected. Cargo, Python, and C++ do not share a manifest, and the directory the run starts in already selects one member.
 
 ## Consequences
 
