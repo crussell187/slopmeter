@@ -17,4 +17,4 @@ The thresholds exist, and `slopmeter --strict` on this repo still exits 1. Measu
 
 - [One crate, a public repo, and notes on main](0014-one-crate-public-repo.md) no longer joins the self-check as soon as the thresholds exist. The nine-repo validation run stays off every push.
 - `exclude = ["corpus"]` stays. Include, exclude, and coverage are not departures.
-- The workflow is unchanged until that strict run exits 0. The work is [Bring this crate under the gates](../../.scratch/slopmeter-phase1/issues/78-under-the-gates.md).
+- The self-check is `cargo run --quiet -- --strict` on the fmt, clippy, and test job. The nine-repo validation run stays off every push.

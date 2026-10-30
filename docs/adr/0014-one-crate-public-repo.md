@@ -19,5 +19,5 @@ CI on push to `main` and on pull requests is `cargo fmt --check`, `clippy` with 
 
 ## Consequences
 
-- `gh` is not installed, so this decision does not create the remote. The remote is created once the CLI is available.
-- The self-check stays off the pull-request job until a strict run of this repo exits 0. The corpus run stays off that job.
+- The remote is the public repo https://github.com/crussell187/slopmeter.
+- The self-check is `cargo run --quiet -- --strict` on that job. The corpus run stays off that job.
