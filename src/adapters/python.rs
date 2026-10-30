@@ -4,8 +4,8 @@ use std::collections::BTreeSet;
 use tree_sitter::Node;
 
 use crate::ir::{
-    Body, Chain, Cognitive, CognitiveKind, Decision, File, Forward, Function, Language, Member,
-    Param, Span, WaiverLine,
+    Body, CallSite, Chain, Cognitive, CognitiveKind, Decision, File, Forward, Function, Language,
+    Member, Param, Span, WaiverLine,
 };
 
 pub const ALLOW: &[&str] = &[
@@ -699,6 +699,7 @@ fn classify(node: Node, source: &[u8], names: Names<'_>) -> Body {
         cognitive: found.cognitive,
         chains: found.chains,
         swallowing: found.swallowing,
+        io: record_io(node, source),
         forward,
     }
 }
@@ -2108,6 +2109,88 @@ fn latin1_to_utf8(source: &[u8]) -> Vec<u8> {
         }
     }
     out
+}
+
+const IO_NAMES: &[&str] = &[
+    "open",
+    "sqlite3.connect",
+    "socket.socket",
+    "subprocess.run",
+    "subprocess.Popen",
+    "urllib.request.urlopen",
+    "requests.Session",
+    "httpx.Client",
+    "httpx.AsyncClient",
+];
+
+struct IoWalk<'a> {
+    source: &'a [u8],
+    found: &'a mut Vec<CallSite>,
+}
+
+fn record_io(node: Node, source: &[u8]) -> Vec<CallSite> {
+    let mut found = Vec::new();
+    let mut walk = IoWalk {
+        source,
+        found: &mut found,
+    };
+    walk_io(node, &mut walk, true);
+    found
+}
+
+fn walk_io(node: Node, walk: &mut IoWalk<'_>, root: bool) {
+    if skipped_io(node, root) {
+        return;
+    }
+    note_io(node, walk);
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_io(child, walk, false);
+    }
+}
+
+fn skipped_io(node: Node, root: bool) -> bool {
+    !root && node.kind() == "function_definition"
+}
+
+fn note_io(node: Node, walk: &mut IoWalk<'_>) {
+    let Some(name) = io_name(node, walk.source) else {
+        return;
+    };
+    if !io_listed(&name) {
+        return;
+    }
+    let line = line_of(node);
+    let found = &mut walk.found;
+    found.push(CallSite { line, name });
+}
+
+fn io_listed(name: &str) -> bool {
+    IO_NAMES.contains(&name)
+}
+
+fn io_name(node: Node, source: &[u8]) -> Option<String> {
+    if node.kind() != "call" {
+        return None;
+    }
+    let function = node.child_by_field_name("function")?;
+    written_name(function, source)
+}
+
+fn written_name(node: Node, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "identifier" => Some(node_text(node, source)),
+        "attribute" => dotted_name(node, source),
+        _ => None,
+    }
+}
+
+fn dotted_name(node: Node, source: &[u8]) -> Option<String> {
+    let object = node.child_by_field_name("object")?;
+    let left = written_name(object, source)?;
+    let attribute = node.child_by_field_name("attribute")?;
+    let right = node_text(attribute, source);
+    Some(format!("{left}.{right}"))
 }
 
 #[cfg(test)]
@@ -3649,5 +3732,26 @@ def outer():
         assert_eq!(file.unparsed_ratio, 0.0);
         assert!(function(&file, "outer").body.swallowing.is_empty());
         assert_eq!(function(&file, "outer.inner").body.swallowing, vec![5]);
+    }
+
+    #[test]
+    fn an_inline_open_stays_on_the_function_that_writes_it() {
+        let source = "\
+def outer(path):
+    def inner():
+        return sqlite3.connect(path)
+    handle = open(path)
+    return requests.get(path)
+";
+        let file = parse("a.py", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+        let outer = &function(&file, "outer").body.io;
+        assert_eq!(outer.len(), 1, "{outer:?}");
+        assert_eq!(outer[0].name, "open");
+        assert_eq!(outer[0].line, 4);
+        let inner = &function(&file, "outer.inner").body.io;
+        assert_eq!(inner.len(), 1, "{inner:?}");
+        assert_eq!(inner[0].name, "sqlite3.connect");
+        assert_eq!(inner[0].line, 3);
     }
 }

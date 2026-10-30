@@ -57,6 +57,12 @@ pub struct Forward {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallSite {
+    pub line: u32,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Body {
     pub lloc: u32,
     pub decisions: Vec<Decision>,
@@ -65,6 +71,7 @@ pub struct Body {
     pub chains: Vec<Chain>,
     pub forward: Option<Forward>,
     pub swallowing: Vec<u32>,
+    pub io: Vec<CallSite>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -130,6 +137,7 @@ mod tests {
                 cognitive: vec![],
                 chains: vec![],
                 swallowing: vec![],
+                io: vec![],
                 forward: Some(Forward {
                     line: 87,
                     names: vec![

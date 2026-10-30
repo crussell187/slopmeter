@@ -8,3 +8,7 @@ pub fn hold(flag: bool) -> i32 {
     let _ = notify();
     0
 }
+
+pub fn read(path: &str) {
+    let _file = File::open(path);
+}

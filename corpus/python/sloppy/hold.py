@@ -8,3 +8,7 @@ def hold(flag):
     except Exception:
         pass
     return 0
+
+
+def read(path):
+    return open(path)

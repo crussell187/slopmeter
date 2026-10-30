@@ -11,3 +11,7 @@ int hold(bool flag) {
     }
     return 0;
 }
+
+void read(const char* path) {
+    fopen(path, "r");
+}

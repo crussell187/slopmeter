@@ -695,6 +695,7 @@ mod tests {
             other_chain: None,
             forward: None,
             swallowing: vec![],
+            io: vec![],
             waivers: vec![],
             crap: None,
             coverage: None,

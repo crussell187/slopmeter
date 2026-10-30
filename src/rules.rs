@@ -212,6 +212,7 @@ fn breaches(measurement: &Measurement, profile: &LanguageProfile) -> Vec<Breach>
     push_chain_breach(&mut found, measurement, profile);
     push_lloc(&mut found, measurement, profile);
     push_swallowing(&mut found, measurement);
+    push_io(&mut found, measurement, profile);
     found
 }
 
@@ -367,6 +368,50 @@ fn push_swallowing(found: &mut Vec<Breach>, measurement: &Measurement) {
         measured: count,
         threshold: 0,
     }));
+}
+
+fn push_io(found: &mut Vec<Breach>, measurement: &Measurement, profile: &LanguageProfile) {
+    let Some(line) = first_io(measurement, profile) else {
+        return;
+    };
+    let count = io_count(measurement, profile);
+    found.push(breach(CountSpec {
+        rule: "F09",
+        level: Level::Warn,
+        line,
+        measured: count,
+        threshold: 0,
+    }));
+}
+
+fn first_io(measurement: &Measurement, profile: &LanguageProfile) -> Option<u32> {
+    let sites = &measurement.io;
+    let allow = &profile.f09_allow;
+    for site in sites {
+        if exempt(&site.name, allow) {
+            continue;
+        }
+        return Some(site.line);
+    }
+    None
+}
+
+fn io_count(measurement: &Measurement, profile: &LanguageProfile) -> u32 {
+    let sites = &measurement.io;
+    let allow = &profile.f09_allow;
+    let mut count = 0;
+    for site in sites {
+        if exempt(&site.name, allow) {
+            continue;
+        }
+        count += 1;
+    }
+    count
+}
+
+fn exempt(name: &str, allow: &[String]) -> bool {
+    let mut names = allow.iter();
+    names.any(|kept| kept == name)
 }
 
 fn push_lloc(found: &mut Vec<Breach>, measurement: &Measurement, profile: &LanguageProfile) {
@@ -548,7 +593,7 @@ fn finding_weight(rule: &str, level: Level) -> u32 {
         Level::Gate => 10,
         Level::Warn => match rule {
             "F03" => 3,
-            "F07" => 1,
+            "F07" | "F09" => 1,
             _ => 0,
         },
     }
@@ -616,6 +661,9 @@ fn rejection_numbers(
     if rule == "F15" {
         return swallowing_numbers(measurement);
     }
+    if rule == "F09" {
+        return io_numbers(measurement, profile);
+    }
     counted_rejection(measurement, profile, rule)
 }
 
@@ -662,6 +710,11 @@ fn swallowing_numbers(measurement: &Measurement) -> (Option<f64>, Option<f64>) {
     let lines = &measurement.swallowing;
     let count = lines.len() as f64;
     (Some(count), Some(0.0))
+}
+
+fn io_numbers(measurement: &Measurement, profile: &LanguageProfile) -> (Option<f64>, Option<f64>) {
+    let count = io_count(measurement, profile);
+    (Some(f64::from(count)), Some(0.0))
 }
 
 fn attach(classes: &[Classified], rule: &str, measured: Measured) -> Option<Waiver> {
@@ -762,6 +815,7 @@ fn count_principle(rule: &str) -> String {
 fn rest_principle(rule: &str) -> String {
     match rule {
         "F07" => "A function that only hands its parameters to one call adds a hop and no behavior.",
+        "F09" => "A function that constructs a file, socket, or process hides that dependency from its caller.",
         "F08" => "A member chain that does not start at the receiver may be one deep, and a chain that starts at the receiver may be two deep. Law of Demeter.",
         "F11" => "A function should say little. The count is statements, not wrapped lines.",
         "S06" => "Every executable line of a changed function is hit.",
@@ -795,6 +849,7 @@ fn count_anti_fix(rule: &str) -> String {
 fn rest_anti_fix(rule: &str) -> String {
     match rule {
         "F07" => "Renaming the forwarded parameters leaves the ratio in place.",
+        "F09" => "Binding the result to a local leaves the construction in place.",
         "F08" => "Saving the chain in locals leaves the finding in place.",
         "F11" => "Breaking one statement across more lines leaves the count in place.",
         "S06" => "A test that runs the function and asserts nothing marks the lines hit.",
@@ -813,9 +868,30 @@ fn fix_shape(breach: &Breach, name: &str) -> String {
 }
 
 fn counted_fix(breach: &Breach, name: &str) -> String {
-    let measured = breach.measured.to_string();
-    let threshold = breach.threshold.to_string();
-    match breach.rule {
+    let measured = breach.measured;
+    let threshold = breach.threshold;
+    let text = FixText {
+        name,
+        measured: measured.to_string(),
+        threshold: threshold.to_string(),
+    };
+    if let Some(shape) = count_fix(breach, &text) {
+        return shape;
+    }
+    later_fix(breach, &text)
+}
+
+struct FixText<'a> {
+    name: &'a str,
+    measured: String,
+    threshold: String,
+}
+
+fn count_fix(breach: &Breach, text: &FixText<'_>) -> Option<String> {
+    let name = text.name;
+    let measured = &text.measured;
+    let threshold = &text.threshold;
+    Some(match breach.rule {
         "F01" => format!(
             "Split {name}. Its cyclomatic complexity is {measured}, and the gate is {threshold}."
         ),
@@ -838,11 +914,24 @@ fn counted_fix(breach: &Breach, name: &str) -> String {
         "F06" => {
             format!("Shorten {name}. Its body is {measured} lines, and the gate is {threshold}.")
         }
+        _ => return None,
+    })
+}
+
+fn later_fix(breach: &Breach, text: &FixText<'_>) -> String {
+    let name = text.name;
+    let measured = &text.measured;
+    let threshold = &text.threshold;
+    match breach.rule {
         "F07" => format!(
             "Inline {name}. It forwards {measured} percent of its ordinary parameters, and the limit is {threshold}."
         ),
         "F08" => format!(
             "Break the chain at line {} in {name}. It is {measured} deep, and the limit is {threshold}.",
+            breach.line
+        ),
+        "F09" => format!(
+            "Pass a file, socket, or process into {name}. It constructs one at line {}.",
             breach.line
         ),
         "F11" => {
@@ -889,6 +978,7 @@ mod tests {
             f08_receiver_hops: F08_RECEIVER_HOPS,
             f08_other_hops: F08_OTHER_HOPS,
             f08_allow: Vec::new(),
+            f09_allow: Vec::new(),
             f11_gate: F11_GATE,
         }
     }
@@ -910,6 +1000,7 @@ mod tests {
             other_chain: None,
             forward: None,
             swallowing: vec![],
+            io: vec![],
             waivers: vec![],
             crap: None,
             coverage: None,
@@ -1710,6 +1801,67 @@ mod tests {
             "A comment or `...` in place of `pass` leaves the finding in place."
         );
         assert!(finding.waiver.is_none());
+    }
+
+    #[test]
+    fn an_inline_open_is_one_warn_at_the_first_call() {
+        let mut measured = base();
+        measured.io = vec![
+            crate::ir::CallSite {
+                line: 11,
+                name: "open".to_string(),
+            },
+            crate::ir::CallSite {
+                line: 14,
+                name: "socket.socket".to_string(),
+            },
+        ];
+
+        let findings = evaluate(&[measured], &profile());
+
+        assert_eq!(findings.len(), 1);
+        let finding = &findings[0];
+        assert_eq!(finding.rule, "F09");
+        assert_eq!(finding.level, Level::Warn);
+        assert_eq!(finding.line, 11);
+        assert_eq!(finding.measured_value, Some(2.0));
+        assert_eq!(finding.threshold, Some(0.0));
+        assert_eq!(finding.weight, 1);
+        assert_eq!(
+            finding.principle,
+            "A function that constructs a file, socket, or process hides that dependency from its caller."
+        );
+        assert!(finding.waiver.is_none());
+    }
+
+    #[test]
+    fn an_allowed_name_does_not_count_and_a_waiver_for_f09_fails() {
+        let mut measured = base();
+        measured.io = vec![crate::ir::CallSite {
+            line: 11,
+            name: "open".to_string(),
+        }];
+        let mut allowed = profile();
+        allowed.f09_allow = vec!["open".to_string()];
+
+        let cleared = evaluate(&[measured], &allowed);
+        assert!(cleared.is_empty());
+
+        let mut flagged = base();
+        flagged.io = vec![crate::ir::CallSite {
+            line: 11,
+            name: "open".to_string(),
+        }];
+        flagged.waivers = vec![waiver(4, Some("F09"), Some("1"), Some("wrapper"))];
+        let findings = evaluate(&[flagged], &profile());
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].rule, "F09");
+        assert_eq!(findings[0].level, Level::Gate);
+        assert_eq!(findings[0].weight, 0);
+        assert_eq!(
+            findings[0].waiver.as_ref().unwrap().rejection.as_deref(),
+            Some("F09 is not a gate.")
+        );
     }
 
     #[test]

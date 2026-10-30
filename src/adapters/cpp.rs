@@ -4,8 +4,8 @@ use std::ops::Range;
 use tree_sitter::Node;
 
 use crate::ir::{
-    Body, Chain, Cognitive, CognitiveKind, Decision, File, Forward, Function, Language, Member,
-    Param, Span, WaiverLine,
+    Body, CallSite, Chain, Cognitive, CognitiveKind, Decision, File, Forward, Function, Language,
+    Member, Param, Span, WaiverLine,
 };
 
 pub const ALLOW: &[&str] = &[
@@ -1389,6 +1389,7 @@ fn classify(node: Node<'_>, score: Score<'_>) -> Body {
         cognitive: classifier.cognitive,
         chains: classifier.chains,
         swallowing: classifier.swallowing,
+        io: record_io(node, score.source),
         forward,
     }
 }
@@ -2870,6 +2871,127 @@ fn member_from_hop(hop: Hop) -> Member {
     }
 }
 
+const IO_NAMES: &[&str] = &[
+    "std::ifstream",
+    "std::ofstream",
+    "std::fstream",
+    "fopen",
+    "socket",
+    "popen",
+    "system",
+];
+
+struct IoWalk<'a> {
+    source: &'a [u8],
+    found: &'a mut Vec<CallSite>,
+}
+
+fn record_io(node: Node, source: &[u8]) -> Vec<CallSite> {
+    let mut found = Vec::new();
+    let mut walk = IoWalk {
+        source,
+        found: &mut found,
+    };
+    walk_io(node, &mut walk, true);
+    found
+}
+
+fn walk_io(node: Node, walk: &mut IoWalk<'_>, root: bool) {
+    if skipped_io(node, root) {
+        return;
+    }
+    note_io(node, walk);
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_io(child, walk, false);
+    }
+}
+
+fn skipped_io(node: Node, root: bool) -> bool {
+    !root && node.kind() == "function_definition"
+}
+
+fn note_io(node: Node, walk: &mut IoWalk<'_>) {
+    let Some(name) = io_name(node, walk.source) else {
+        return;
+    };
+    if !io_listed(&name) {
+        return;
+    }
+    let line = line_of(node);
+    let found = &mut walk.found;
+    found.push(CallSite { line, name });
+}
+
+fn io_listed(name: &str) -> bool {
+    IO_NAMES.contains(&name)
+}
+
+fn io_name(node: Node, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "call_expression" => call_io(node, source),
+        "declaration" => declaration_io(node, source),
+        _ => None,
+    }
+}
+
+fn call_io(node: Node, source: &[u8]) -> Option<String> {
+    let function = node.child_by_field_name("function")?;
+    written_name(function, source)
+}
+
+fn declaration_io(node: Node, source: &[u8]) -> Option<String> {
+    if !constructed(node) {
+        return None;
+    }
+    let ty = node.child_by_field_name("type")?;
+    written_name(ty, source)
+}
+
+fn constructed(node: Node) -> bool {
+    let value = node.child_by_field_name("value");
+    if value.is_some() {
+        return true;
+    }
+    declarator_args(node)
+}
+
+fn declarator_args(node: Node) -> bool {
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        if argument_list(child) {
+            return true;
+        }
+        if child.kind() == "init_declarator" && constructed(child) {
+            return true;
+        }
+    }
+    false
+}
+
+fn argument_list(node: Node) -> bool {
+    matches!(
+        node.kind(),
+        "argument_list" | "initializer_list" | "function_declarator"
+    )
+}
+
+fn written_name(node: Node, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "identifier" | "type_identifier" | "namespace_identifier" => Some(node_text(node, source)),
+        "qualified_identifier" => qualified_name(node, source),
+        _ => None,
+    }
+}
+
+fn qualified_name(node: Node, source: &[u8]) -> Option<String> {
+    let scope = node.child_by_field_name("scope")?;
+    let left = written_name(scope, source)?;
+    let name = node.child_by_field_name("name")?;
+    let right = written_name(name, source)?;
+    Some(format!("{left}::{right}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4082,5 +4204,28 @@ void load() {
         let file = parse("broken.hpp", source);
         assert_eq!(file.language, Language::Cpp);
         assert!(file.unparsed_ratio > 0.0);
+    }
+
+    #[test]
+    fn an_inline_open_records_the_call_and_the_constructed_stream() {
+        let source = "\
+void load(const char* path) {
+    fopen(path, \"r\");
+    std::ifstream in(path);
+    std::ifstream bare;
+    socket(1, 2, 3);
+}
+void take(std::ifstream& in) {}
+";
+        let file = parse("a.cpp", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{}", file.unparsed_ratio);
+        let names: Vec<_> = function(&file, "load")
+            .body
+            .io
+            .iter()
+            .map(|site| site.name.as_str())
+            .collect();
+        assert_eq!(names, vec!["fopen", "std::ifstream", "socket"], "{names:?}");
+        assert!(function(&file, "take").body.io.is_empty());
     }
 }

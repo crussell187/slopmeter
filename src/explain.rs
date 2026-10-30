@@ -6,6 +6,14 @@ pub fn page(rule: &str) -> Option<&'static str> {
 }
 
 fn function_page(rule: &str) -> Option<&'static str> {
+    let early = count_page(rule);
+    if early.is_some() {
+        return early;
+    }
+    later_page(rule)
+}
+
+fn count_page(rule: &str) -> Option<&'static str> {
     Some(match rule {
         "F01" => include_str!("../docs/explain/F01.txt"),
         "F02" => include_str!("../docs/explain/F02.txt"),
@@ -13,8 +21,15 @@ fn function_page(rule: &str) -> Option<&'static str> {
         "F04" => include_str!("../docs/explain/F04.txt"),
         "F05" => include_str!("../docs/explain/F05.txt"),
         "F06" => include_str!("../docs/explain/F06.txt"),
+        _ => return None,
+    })
+}
+
+fn later_page(rule: &str) -> Option<&'static str> {
+    Some(match rule {
         "F07" => include_str!("../docs/explain/F07.txt"),
         "F08" => include_str!("../docs/explain/F08.txt"),
+        "F09" => include_str!("../docs/explain/F09.txt"),
         "F15" => include_str!("../docs/explain/F15.txt"),
         _ => return None,
     })
@@ -33,8 +48,8 @@ fn scope_page(rule: &str) -> Option<&'static str> {
 mod tests {
     use super::page;
 
-    const RULES: [&str; 12] = [
-        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F11", "F15", "S06", "S07",
+    const RULES: [&str; 13] = [
+        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F09", "F11", "F15", "S06", "S07",
     ];
     const GATES: [&str; 9] = [
         "F01", "F02", "F03", "F04", "F05", "F06", "F08", "F11", "F15",
@@ -46,7 +61,7 @@ mod tests {
         for rule in RULES {
             assert!(page(rule).is_some(), "{rule}");
         }
-        assert!(page("F09").is_none());
+        assert!(page("F10").is_none());
         assert!(page("f01").is_none());
     }
 
@@ -77,6 +92,9 @@ mod tests {
         let f07 = page("F07").unwrap();
         assert!(f07.contains("A waiver line for F07 fails the run, because F07 is not a gate."));
         assert!(!f07.contains("excuses this gate"));
+        let f09 = page("F09").unwrap();
+        assert!(f09.contains("A waiver line for F09 fails the run, because F09 is not a gate."));
+        assert!(!f09.contains("excuses this gate"));
         let s06 = page("S06").unwrap();
         assert!(s06.contains("A waiver line for S06 fails the run."));
         assert!(!s06.contains("excuses this gate"));
@@ -131,6 +149,10 @@ mod tests {
             (
                 "F08",
                 "        receiver  other\nPython         2      1\nRust           2      1\nC++            2      1\n",
+            ),
+            (
+                "F09",
+                "        warn\nPython   any\nRust     any\nC++      any\n",
             ),
             (
                 "F11",

@@ -56,6 +56,7 @@ pub struct LanguageProfile {
     pub f08_receiver_hops: u32,
     pub f08_other_hops: u32,
     pub f08_allow: Vec<String>,
+    pub f09_allow: Vec<String>,
     pub f11_gate: u32,
 }
 
@@ -258,6 +259,7 @@ fn profile_from(gates: BuiltinGates) -> LanguageProfile {
         f08_receiver_hops: gates.f08_receiver,
         f08_other_hops: gates.f08_other,
         f08_allow: Vec::new(),
+        f09_allow: Vec::new(),
         f11_gate: gates.f11,
     }
 }
@@ -454,6 +456,7 @@ fn apply_profile_rule(
     match rule.name {
         "F03" => apply_f03(config, language, rule.body)?,
         "F08" => apply_f08(config, language, rule.body)?,
+        "F09" => apply_f09(config, language, rule.body)?,
         other => {
             return Err(ConfigError::UnknownKey(format!(
                 "profile.{}.{other}",
@@ -679,6 +682,66 @@ fn apply_f08(
     Ok(())
 }
 
+fn apply_f09(
+    config: &mut Config,
+    language: Language,
+    value: &toml::Value,
+) -> Result<(), ConfigError> {
+    let label = language_name(language);
+    let names = f09_names(value, label)?;
+    reject_io_names(&names)?;
+    let profile = config.profile_mut(language);
+    profile.f09_allow = names;
+    Ok(())
+}
+
+fn f09_names(value: &toml::Value, label: &str) -> Result<Vec<String>, ConfigError> {
+    let Some(table) = value.as_table() else {
+        return Err(ConfigError::WrongType(format!("profile.{label}.F09")));
+    };
+    if table.is_empty() {
+        return Err(ConfigError::EmptyOverride(format!("profile.{label}.F09")));
+    }
+    let mut allow = None;
+    for (key, item) in table {
+        allow = one_f09_allow(key.as_str(), item, label)?;
+    }
+    allow.ok_or_else(|| ConfigError::EmptyOverride(format!("profile.{label}.F09")))
+}
+
+fn one_f09_allow(
+    key: &str,
+    item: &toml::Value,
+    label: &str,
+) -> Result<Option<Vec<String>>, ConfigError> {
+    match key {
+        "allow" => {
+            let names = string_list(item, &format!("profile.{label}.F09.allow"))?;
+            Ok(Some(names))
+        }
+        other => Err(ConfigError::UnknownKey(format!(
+            "profile.{label}.F09.{other}"
+        ))),
+    }
+}
+
+fn reject_io_names(names: &[String]) -> Result<(), ConfigError> {
+    for name in names {
+        if bad_io_name(name) {
+            return Err(ConfigError::InvalidName(name.clone()));
+        }
+    }
+    Ok(())
+}
+
+fn bad_io_name(name: &str) -> bool {
+    if name.is_empty() {
+        return true;
+    }
+    let mut chars = name.chars();
+    chars.any(char::is_whitespace)
+}
+
 fn f08_names(value: &toml::Value, label: &str) -> Result<Vec<String>, ConfigError> {
     let Some(table) = value.as_table() else {
         return Err(ConfigError::WrongType(format!("profile.{label}.F08")));
@@ -874,6 +937,7 @@ fn note_language(notes: &mut Vec<String>, seen: &Departure<'_>) {
     note_rule(notes, seen, "F05");
     note_rule(notes, seen, "F06");
     note_f08_allow(notes, seen);
+    note_f09_allow(notes, seen);
     note_rule(notes, seen, "F11");
 }
 
@@ -926,6 +990,15 @@ fn note_f08_allow(notes: &mut Vec<String>, seen: &Departure<'_>) {
     let listed = allow.join(", ");
     let name = seen.name;
     notes.push(format!("{name} F08 allow adds {listed}"));
+}
+
+fn note_f09_allow(notes: &mut Vec<String>, seen: &Departure<'_>) {
+    let current = seen.current;
+    let allow = &current.f09_allow;
+    let name = seen.name;
+    for listed in allow {
+        notes.push(format!("{name} F09 allow adds {listed}"));
+    }
 }
 
 fn note_gate(notes: &mut Vec<String>, note: GateNote<'_>) {
@@ -1088,6 +1161,37 @@ allow = ["with_timeout"]
             config.profile(Language::Rust).f07_percent,
             F07_PASS_THROUGH_PERCENT
         );
+    }
+
+    #[test]
+    fn an_f09_allow_is_a_departure_per_name_and_a_gate_key_fails() {
+        let root = fixture("f09");
+        write_config(
+            &root,
+            "[profile.python.F09]\nallow = [\"open\", \"sqlite3.connect\"]\n",
+        );
+        let config = load_config(&root).unwrap();
+        assert_eq!(
+            config.profile(Language::Python).f09_allow,
+            vec!["open".to_string(), "sqlite3.connect".to_string()]
+        );
+        assert_eq!(
+            departures(&config),
+            vec![
+                "Python F09 allow adds open".to_string(),
+                "Python F09 allow adds sqlite3.connect".to_string(),
+            ]
+        );
+
+        write_config(&root, "[profile.python.F09]\ngate = 1\n");
+        let err = load_config(&root).unwrap_err().to_string();
+        assert!(err.contains("profile.python.F09.gate"), "{err}");
+
+        write_config(&root, "[profile.rust.F09]\nallow = [\"\"]\n");
+        assert!(matches!(
+            load_config(&root).unwrap_err(),
+            ConfigError::InvalidName(_)
+        ));
     }
 
     #[test]

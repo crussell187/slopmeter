@@ -111,6 +111,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Score an empty or swallowing catch](issues/84-score-empty-catch.md) — each adapter records the line of a handler that does nothing, and `rules::evaluate` emits one weight-10 gate at the first such line.
 - [Reject a waiver the change adds and count the held ones](issues/85-reject-added-waivers.md) — a waiver line in the diff's added set does not hold, the row says it was written by this change, and the report counts the waivers that hold.
 - [Treat a report older than the change as missing](issues/86-stale-report-check.md) — a report older than any path the diff changed is missing: touched functions fail S06 or S07, CRAP is absent, and one note names the newest path; under `--strict` and outside git a newer scored file the report matches gets the note and no row; mutmut uses each `.meta` time and the newest `.meta` against the diff; a tie is fresh.
+- [Score an inline I/O dependency as F09](issues/87-score-f09.md) — a call whose written name is on the language list is one weight-1 warn at the first such call; `[F09] allow` names the calls that do not count, and each name is a departure note.
 
 ## Not yet specified
 

@@ -3,8 +3,8 @@ use std::collections::BTreeSet;
 use tree_sitter::Node;
 
 use crate::ir::{
-    Body, Chain, Cognitive, CognitiveKind, Decision, File, Forward, Function, Language, Member,
-    Param, Span, WaiverLine,
+    Body, CallSite, Chain, Cognitive, CognitiveKind, Decision, File, Forward, Function, Language,
+    Member, Param, Span, WaiverLine,
 };
 
 pub const ALLOW: &[&str] = &[
@@ -929,6 +929,7 @@ fn classify(node: Node<'_>, source: &[u8], names: Names<'_>) -> Body {
         cognitive: classifier.cognitive,
         chains: classifier.chains,
         swallowing: classifier.swallowing,
+        io: record_io(node, source),
         forward,
     }
 }
@@ -3049,6 +3050,92 @@ fn operator_text(node: Node, source: &[u8]) -> String {
     String::new()
 }
 
+const IO_NAMES: &[&str] = &[
+    "File::open",
+    "File::create",
+    "TcpStream::connect",
+    "TcpListener::bind",
+    "Command::new",
+    "reqwest::Client::new",
+    "reqwest::blocking::Client::new",
+];
+
+struct IoWalk<'a> {
+    source: &'a [u8],
+    found: &'a mut Vec<CallSite>,
+}
+
+fn record_io(node: Node, source: &[u8]) -> Vec<CallSite> {
+    let mut found = Vec::new();
+    let mut walk = IoWalk {
+        source,
+        found: &mut found,
+    };
+    walk_io(node, &mut walk, true);
+    found
+}
+
+fn walk_io(node: Node, walk: &mut IoWalk<'_>, root: bool) {
+    if skipped_io(node, root) {
+        return;
+    }
+    note_io(node, walk);
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_io(child, walk, false);
+    }
+}
+
+fn skipped_io(node: Node, root: bool) -> bool {
+    !root && node.kind() == "function_item"
+}
+
+fn note_io(node: Node, walk: &mut IoWalk<'_>) {
+    let Some(name) = io_name(node, walk.source) else {
+        return;
+    };
+    if !io_listed(&name) {
+        return;
+    }
+    let line = line_of(node);
+    let found = &mut walk.found;
+    found.push(CallSite { line, name });
+}
+
+fn io_listed(name: &str) -> bool {
+    IO_NAMES.contains(&name)
+}
+
+fn io_name(node: Node, source: &[u8]) -> Option<String> {
+    if node.kind() != "call_expression" {
+        return None;
+    }
+    let function = node.child_by_field_name("function")?;
+    written_name(function, source)
+}
+
+fn written_name(node: Node, source: &[u8]) -> Option<String> {
+    match node.kind() {
+        "identifier" => Some(node_text(node, source)),
+        "scoped_identifier" => scoped_name(node, source),
+        "generic_function" => generic_name(node, source),
+        _ => None,
+    }
+}
+
+fn generic_name(node: Node, source: &[u8]) -> Option<String> {
+    let function = node.child_by_field_name("function")?;
+    written_name(function, source)
+}
+
+fn scoped_name(node: Node, source: &[u8]) -> Option<String> {
+    let path = node.child_by_field_name("path")?;
+    let left = written_name(path, source)?;
+    let name = node.child_by_field_name("name")?;
+    let right = node_text(name, source);
+    Some(format!("{left}::{right}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4412,6 +4499,29 @@ fn outer() {
         assert_eq!(file.unparsed_ratio, 0.0);
         assert!(function(&file, "outer").body.swallowing.is_empty());
         assert_eq!(function(&file, "outer::inner").body.swallowing, vec![3]);
+    }
+
+    #[test]
+    fn an_inline_open_stays_on_the_function_that_writes_it() {
+        let source = "\
+fn load(path: &str) {
+    let _file = File::open(path);
+    let _full = std::fs::File::open(path);
+    fn inner() {
+        TcpStream::connect(path);
+    }
+}
+";
+        let file = parse("a.rs", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0);
+        let outer = &function(&file, "load").body.io;
+        assert_eq!(outer.len(), 1, "{outer:?}");
+        assert_eq!(outer[0].name, "File::open");
+        assert_eq!(outer[0].line, 2);
+        let inner = &function(&file, "load::inner").body.io;
+        assert_eq!(inner.len(), 1, "{inner:?}");
+        assert_eq!(inner[0].name, "TcpStream::connect");
+        assert_eq!(inner[0].line, 5);
     }
 
     fn member_names(chain: &Chain) -> Vec<&str> {

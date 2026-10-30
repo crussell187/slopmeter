@@ -46,6 +46,7 @@ pub struct Measurement {
     pub other_chain: Option<ChainDepth>,
     pub forward: Option<Forwarding>,
     pub swallowing: Vec<u32>,
+    pub io: Vec<crate::ir::CallSite>,
     pub waivers: Vec<WaiverLine>,
     pub crap: Option<f64>,
     pub coverage: Option<Coverage>,
@@ -83,6 +84,7 @@ fn measure_function(path: &str, function: &Function, allow: &[&str]) -> Measurem
         other_chain,
         forward: body.forward.as_ref().map(forwarding),
         swallowing: body.swallowing.clone(),
+        io: body.io.clone(),
         waivers: waivers.clone(),
         crap: None,
         coverage: None,
@@ -255,6 +257,7 @@ mod tests {
             cognitive: vec![],
             chains: vec![],
             swallowing: vec![],
+            io: vec![],
             forward: None,
         }
     }

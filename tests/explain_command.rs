@@ -35,7 +35,7 @@ fn explain_prints_the_shipped_threshold_when_the_config_raises_a_gate() {
 #[test]
 fn explain_prints_the_shipped_page_and_exits_0() {
     for rule in [
-        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F11", "F15", "S06", "S07",
+        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F09", "F11", "F15", "S06", "S07",
     ] {
         let output = run(&["explain", rule]);
         assert_eq!(output.status.code(), Some(0), "{rule}");
@@ -48,7 +48,7 @@ fn explain_prints_the_shipped_page_and_exits_0() {
 
 #[test]
 fn an_unknown_rule_exits_2() {
-    for rule in ["F09", "f08"] {
+    for rule in ["F10", "f08"] {
         let output = run(&["explain", rule]);
         assert_eq!(output.status.code(), Some(2), "{rule}");
         assert!(output.stdout.is_empty(), "{rule}");
@@ -63,7 +63,7 @@ fn explain_with_the_wrong_number_of_arguments_exits_2() {
     assert!(missing.stdout.is_empty());
     assert_eq!(missing.stderr, b"explain needs a rule\n");
 
-    let extra = run(&["explain", "F08", "F09"]);
+    let extra = run(&["explain", "F08", "F10"]);
     assert_eq!(extra.status.code(), Some(2));
     assert!(extra.stdout.is_empty());
     assert_eq!(extra.stderr, b"explain takes one rule\n");

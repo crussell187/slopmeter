@@ -1,0 +1,40 @@
+F09  inline I/O
+
+A function that constructs a file, socket, or process hides that
+dependency from its caller. It warns, and it does not fail the run.
+
+Counting
+One finding per function, at the first call whose written name is on
+the language list. The match is the text as written. A longer path
+and a name not on the list do not count. Python lists open,
+sqlite3.connect, socket.socket, subprocess.run, subprocess.Popen,
+urllib.request.urlopen, requests.Session, httpx.Client, and
+httpx.AsyncClient. Rust lists File::open, File::create,
+TcpStream::connect, TcpListener::bind, Command::new,
+reqwest::Client::new, and reqwest::blocking::Client::new. C++ lists
+std::ifstream, std::ofstream, std::fstream, fopen, socket, popen,
+and system. A C++ variable of one of those types counts when it is
+constructed with arguments. [profile.<language>.F09] allow names
+the calls that do not count, and each name is a departure note.
+There is no gate level.
+
+Threshold
+        warn
+Python   any
+Rust     any
+C++      any
+Any listed construction warns. No gate.
+A waiver line for F09 fails the run, because F09 is not a gate.
+
+Before
+def load(path):
+    return open(path)
+
+After
+def load(path, handle):
+    return handle.read()
+
+Anti-fixes
+Binding the result to a local leaves the construction in place.
+Writing std::fs::File::open instead of File::open leaves that call
+off the list, because the written name is what counts.
