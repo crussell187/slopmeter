@@ -127,38 +127,70 @@ def derive(fn, language):
     }
     if not encoded:
         return result
-    decisions = fn["body"]["decisions"]
+    fill_metrics(result, fn, language)
+    return result
+
+
+def fill_metrics(result, fn, language):
+    body = fn["body"]
+    decisions = body["decisions"]
     result["cc"] = 1 + len(decisions)
     result["nesting"] = max((d["depth"] for d in decisions), default=0)
-    result["lloc"] = fn["body"]["lloc"]
-    forward = fn["body"]["forward"]
+    result["lloc"] = body["lloc"]
+    fill_forward(result, body["forward"])
+    result["chains"] = ranked_chains(body["chains"], language)
+
+
+def fill_forward(result, forward):
     if forward is None:
         result["forward"] = None
-    else:
-        ordinary = result["ordinary"]
-        result["forward"] = {
-            "line": forward["line"],
-            "forwarded": forward["names"],
-            "ratio": None
-            if not ordinary
-            else len(forward["names"]) / len(ordinary),
-        }
-        unknown = [n for n in forward["names"] if n not in ordinary]
-        if unknown:
-            result["forward_names_not_ordinary"] = unknown
+        return
+    ordinary = result["ordinary"]
+    names = forward["names"]
+    result["forward"] = forward_view(forward, ordinary, names)
+    unknown = unknown_forward(names, ordinary)
+    if not unknown:
+        return
+    result["forward_names_not_ordinary"] = unknown
+
+
+def unknown_forward(names, ordinary):
+    return [n for n in names if n not in ordinary]
+
+
+def forward_view(forward, ordinary, names):
+    return {
+        "line": forward["line"],
+        "forwarded": names,
+        "ratio": forward_ratio(names, ordinary),
+    }
+
+
+def forward_ratio(names, ordinary):
+    if not ordinary:
+        return None
+    return len(names) / len(ordinary)
+
+
+def ranked_chains(chains, language):
     ranked = []
-    for ch in fn["body"]["chains"]:
-        ranked.append(
-            {
-                "line": ch["line"],
-                "rooted": ch["rooted"],
-                "depth": chain_depth(ch["members"], language),
-                "text": chain_text(ch),
-            }
-        )
-    ranked.sort(key=lambda item: (-item["depth"], item["line"]))
-    result["chains"] = ranked
-    return result
+    for ch in chains:
+        ranked.append(chain_view(ch, language))
+    ranked.sort(key=chain_sort_key)
+    return ranked
+
+
+def chain_view(ch, language):
+    return {
+        "line": ch["line"],
+        "rooted": ch["rooted"],
+        "depth": chain_depth(ch["members"], language),
+        "text": chain_text(ch),
+    }
+
+
+def chain_sort_key(item):
+    return (-item["depth"], item["line"])
 
 
 FILES = [

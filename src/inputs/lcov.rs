@@ -90,74 +90,125 @@ pub fn cover(
     Ok(apply(measurements, scored, &coverage))
 }
 
+struct Records<'a> {
+    path: &'a Path,
+    sections: Vec<Section>,
+    current: Option<Section>,
+}
+
 fn parse_lcov(path: &Path, text: &str) -> Result<Coverage, LcovError> {
-    let mut sections = Vec::new();
-    let mut current = None;
+    let mut records = Records {
+        path,
+        sections: Vec::new(),
+        current: None,
+    };
     for (index, raw) in text.lines().enumerate() {
-        let line_no = index + 1;
-        let line = raw.trim();
-        if line.is_empty() {
-            continue;
-        }
-        if line == "end_of_record" {
-            if let Some(section) = current.take() {
-                push_section(&mut sections, section);
-            }
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("SF:") {
-            if let Some(section) = current.take() {
-                push_section(&mut sections, section);
-            }
-            let sf = normalize(rest.trim());
-            if sf.is_empty() {
-                return Err(LcovError::BadRecord {
-                    path: path.to_path_buf(),
-                    line: line_no,
-                });
-            }
-            current = Some(Section {
-                path: sf,
-                lines: BTreeMap::new(),
-            });
-            continue;
-        }
-        if let Some(rest) = line.strip_prefix("DA:") {
-            let Some(section) = current.as_mut() else {
-                return Err(LcovError::BadRecord {
-                    path: path.to_path_buf(),
-                    line: line_no,
-                });
-            };
-            let Some((listed, hit)) = parse_da(rest) else {
-                return Err(LcovError::BadRecord {
-                    path: path.to_path_buf(),
-                    line: line_no,
-                });
-            };
-            let slot = section.lines.entry(listed).or_insert(false);
-            if hit {
-                *slot = true;
-            }
-            continue;
-        }
+        read_line(&mut records, index, raw)?;
     }
-    if let Some(section) = current.take() {
-        push_section(&mut sections, section);
+    close_record(&mut records);
+    Ok(Coverage {
+        sections: records.sections,
+    })
+}
+
+fn read_line(records: &mut Records<'_>, index: usize, raw: &str) -> Result<(), LcovError> {
+    let line_no = index + 1;
+    let line = raw.trim();
+    if line.is_empty() {
+        return Ok(());
     }
-    Ok(Coverage { sections })
+    if line == "end_of_record" {
+        close_record(records);
+        return Ok(());
+    }
+    if let Some(rest) = line.strip_prefix("SF:") {
+        return read_source(records, line_no, rest);
+    }
+    if let Some(rest) = line.strip_prefix("DA:") {
+        return read_hits(records, line_no, rest);
+    }
+    Ok(())
+}
+
+fn close_record(records: &mut Records<'_>) {
+    let current = &mut records.current;
+    let Some(section) = current.take() else {
+        return;
+    };
+    push_section(&mut records.sections, section);
+}
+
+fn read_source(records: &mut Records<'_>, line_no: usize, rest: &str) -> Result<(), LcovError> {
+    close_record(records);
+    let sf = normalize(rest.trim());
+    if sf.is_empty() {
+        return Err(bad_record(records.path, line_no));
+    }
+    records.current = Some(Section {
+        path: sf,
+        lines: BTreeMap::new(),
+    });
+    Ok(())
+}
+
+fn read_hits(records: &mut Records<'_>, line_no: usize, rest: &str) -> Result<(), LcovError> {
+    let current = &records.current;
+    if current.is_none() {
+        return Err(bad_record(records.path, line_no));
+    }
+    let Some((listed, hit)) = parse_da(rest) else {
+        return Err(bad_record(records.path, line_no));
+    };
+    note_hit(records, listed, hit);
+    Ok(())
+}
+
+fn note_hit(records: &mut Records<'_>, listed: u32, hit: bool) {
+    let current = &mut records.current;
+    let Some(section) = current.as_mut() else {
+        return;
+    };
+    let lines = &mut section.lines;
+    let slot = lines.entry(listed).or_insert(false);
+    if hit {
+        *slot = true;
+    }
+}
+
+fn bad_record(path: &Path, line: usize) -> LcovError {
+    LcovError::BadRecord {
+        path: path.to_path_buf(),
+        line,
+    }
 }
 
 fn parse_da(rest: &str) -> Option<(u32, bool)> {
     let mut parts = rest.split(',');
-    let line = parts.next()?.trim().parse().ok()?;
-    let count: u64 = parts.next()?.trim().parse().ok()?;
-    match parts.next() {
-        None => {}
-        Some(_) if parts.next().is_none() => {}
-        Some(_) => return None,
+    let line = parsed_u32(parts.next()?)?;
+    let count = parsed_u64(parts.next()?)?;
+    if !checksum_ok(&mut parts) {
+        return None;
     }
     Some((line, count > 0))
+}
+
+fn parsed_u32(field: &str) -> Option<u32> {
+    let trimmed = field.trim();
+    trimmed.parse().ok()
+}
+
+fn parsed_u64(field: &str) -> Option<u64> {
+    let trimmed = field.trim();
+    trimmed.parse().ok()
+}
+
+fn checksum_ok<'a>(parts: &mut impl Iterator<Item = &'a str>) -> bool {
+    let third = parts.next();
+    let Some(_) = third else {
+        return true;
+    };
+    let fourth = parts.next();
+    fourth.is_none()
 }
 
 fn push_section(sections: &mut Vec<Section>, section: Section) {
@@ -180,114 +231,269 @@ struct Owned {
     matched: bool,
 }
 
+struct Score<'a> {
+    measurements: &'a mut [Measurement],
+    described: &'a [(String, String, Span)],
+    notes: &'a mut Vec<Note>,
+}
+
+#[derive(Clone, Copy)]
+struct Hit<'a> {
+    file: &'a Owned,
+    key: &'a str,
+    index: usize,
+}
+
+struct Prepared {
+    cyclomatic: u32,
+    name: String,
+    found: Option<(f64, Option<u32>)>,
+}
+
+struct Saved {
+    index: usize,
+    cyclomatic: u32,
+    hit_fraction: f64,
+    first_miss: Option<u32>,
+}
+
 fn apply(measurements: &mut [Measurement], scored: &[&str], coverage: &Coverage) -> Vec<Note> {
-    let mut owned: Vec<Owned> = file_list(measurements, scored)
+    let mut owned = own_files(measurements, scored);
+    assign_all(&mut owned, coverage);
+    let described = describe(measurements);
+    score_owned(measurements, &described, &owned)
+}
+
+fn own_files(measurements: &[Measurement], scored: &[&str]) -> Vec<Owned> {
+    file_list(measurements, scored)
         .into_iter()
-        .map(|original| Owned {
-            original,
-            lines: BTreeMap::new(),
-            tied: false,
-            matched: false,
-        })
-        .collect();
-    for section in &coverage.sections {
-        assign_section(&mut owned, section);
+        .map(owned_file)
+        .collect()
+}
+
+fn owned_file(original: String) -> Owned {
+    Owned {
+        original,
+        lines: BTreeMap::new(),
+        tied: false,
+        matched: false,
     }
-    let described: Vec<(String, String, Span)> = measurements
-        .iter()
-        .map(|measurement| {
-            (
-                normalize(&measurement.path),
-                measurement.name.clone(),
-                measurement.span,
-            )
-        })
-        .collect();
+}
+
+fn assign_all(owned: &mut [Owned], coverage: &Coverage) {
+    for section in &coverage.sections {
+        assign_section(owned, section);
+    }
+}
+
+fn describe(measurements: &[Measurement]) -> Vec<(String, String, Span)> {
+    measurements.iter().map(describe_one).collect()
+}
+
+fn describe_one(measurement: &Measurement) -> (String, String, Span) {
+    let path = normalize(&measurement.path);
+    let name = measurement.name.clone();
+    (path, name, measurement.span)
+}
+
+fn score_owned(
+    measurements: &mut [Measurement],
+    described: &[(String, String, Span)],
+    owned: &[Owned],
+) -> Vec<Note> {
     let mut notes = Vec::new();
-    for file in &owned {
-        if file.tied {
-            mark_file_unshown(measurements, &described, &normalize(&file.original));
-            notes.push(Note {
-                path: Some(file.original.clone()),
-                message: TIE.to_string(),
-            });
-            continue;
-        }
-        if !file.matched {
-            mark_file_unshown(measurements, &described, &normalize(&file.original));
-            notes.push(Note {
-                path: Some(file.original.clone()),
-                message: MISSING.to_string(),
-            });
-            continue;
-        }
-        let key = normalize(&file.original);
-        for (index, measurement) in measurements.iter_mut().enumerate() {
-            if described[index].0 != key {
-                continue;
-            }
-            let holes = holes(&described, index, &key, measurement.span);
-            match fraction(&file.lines, measurement.span, &holes) {
-                Some((hit_fraction, first_miss)) => {
-                    measurement.crap = Some(crap(measurement.cyclomatic, hit_fraction));
-                    if let Some(line) = first_miss {
-                        measurement.coverage = Some(Shown::Fraction {
-                            fraction: hit_fraction,
-                            line,
-                        });
-                    }
-                }
-                None => notes.push(Note {
-                    path: Some(file.original.clone()),
-                    message: format!("{} has no DA lines.", described[index].1),
-                }),
-            }
+    {
+        let mut score = Score {
+            measurements,
+            described,
+            notes: &mut notes,
+        };
+        for file in owned {
+            score_file(file, &mut score);
         }
     }
     notes
 }
 
-fn assign_section(owned: &mut [Owned], section: &Section) {
-    let mut seen = BTreeSet::new();
-    let matches: Vec<usize> = owned
-        .iter()
-        .enumerate()
-        .filter(|(_, file)| {
-            let key = normalize(&file.original);
-            boundary_suffix(&section.path, &key) && seen.insert(key)
-        })
-        .map(|(index, _)| index)
-        .collect();
-    let Some(best) = matches
-        .iter()
-        .map(|index| normalize(&owned[*index].original).len())
-        .max()
-    else {
-        return;
-    };
-    let winners: Vec<usize> = matches
-        .into_iter()
-        .filter(|index| normalize(&owned[*index].original).len() == best)
-        .collect();
-    if winners.len() > 1 {
-        for index in winners {
-            owned[index].tied = true;
-            owned[index].matched = false;
-            owned[index].lines.clear();
-        }
+fn score_file(file: &Owned, score: &mut Score<'_>) {
+    if file.tied {
+        note_gap(score, file, TIE);
         return;
     }
-    let index = winners[0];
+    if !file.matched {
+        note_gap(score, file, MISSING);
+        return;
+    }
+    score_matched(file, score);
+}
+
+fn note_gap(score: &mut Score<'_>, file: &Owned, message: &str) {
+    let key = normalize(&file.original);
+    mark_file_unshown(score.measurements, score.described, &key);
+    push_note(score, file, message);
+}
+
+fn push_note(score: &mut Score<'_>, file: &Owned, message: &str) {
+    let path = file.original.clone();
+    let notes = &mut score.notes;
+    notes.push(Note {
+        path: Some(path),
+        message: message.to_string(),
+    });
+}
+
+fn score_matched(file: &Owned, score: &mut Score<'_>) {
+    let key = normalize(&file.original);
+    let count = measurement_count(score);
+    for index in 0..count {
+        let hit = Hit {
+            file,
+            key: &key,
+            index,
+        };
+        cover_at(score, hit);
+    }
+}
+
+fn measurement_count(score: &Score<'_>) -> usize {
+    let measurements = &score.measurements;
+    measurements.len()
+}
+
+fn cover_at(score: &mut Score<'_>, hit: Hit<'_>) {
+    if !path_matches(score.described, hit.index, hit.key) {
+        return;
+    }
+    write_coverage(score, hit);
+}
+
+fn path_matches(described: &[(String, String, Span)], index: usize, key: &str) -> bool {
+    let path = &described[index].0;
+    path == key
+}
+
+fn write_coverage(score: &mut Score<'_>, hit: Hit<'_>) {
+    let prepared = prepare_coverage(score, hit);
+    store_coverage(score, hit, prepared);
+}
+
+fn prepare_coverage(score: &Score<'_>, hit: Hit<'_>) -> Prepared {
+    let measurement = &score.measurements[hit.index];
+    let span = measurement.span;
+    let cyclomatic = measurement.cyclomatic;
+    let name = name_at(score.described, hit.index);
+    let gaps = holes(score.described, hit.index, span);
+    let file = hit.file;
+    let lines = &file.lines;
+    Prepared {
+        cyclomatic,
+        name,
+        found: fraction(lines, span, &gaps),
+    }
+}
+
+fn name_at(described: &[(String, String, Span)], index: usize) -> String {
+    let name = &described[index].1;
+    name.clone()
+}
+
+fn store_coverage(score: &mut Score<'_>, hit: Hit<'_>, prepared: Prepared) {
+    let Some((hit_fraction, first_miss)) = prepared.found else {
+        let message = format!("{} has no DA lines.", prepared.name);
+        push_note(score, hit.file, &message);
+        return;
+    };
+    save_measurement(
+        score,
+        Saved {
+            index: hit.index,
+            cyclomatic: prepared.cyclomatic,
+            hit_fraction,
+            first_miss,
+        },
+    );
+}
+
+fn save_measurement(score: &mut Score<'_>, saved: Saved) {
+    let measurement = &mut score.measurements[saved.index];
+    measurement.crap = Some(crap(saved.cyclomatic, saved.hit_fraction));
+    let Some(line) = saved.first_miss else {
+        return;
+    };
+    measurement.coverage = Some(Shown::Fraction {
+        fraction: saved.hit_fraction,
+        line,
+    });
+}
+
+fn assign_section(owned: &mut [Owned], section: &Section) {
+    let matches = matching_indexes(owned, section);
+    let Some(best) = longest_match(owned, &matches) else {
+        return;
+    };
+    let winners = winners_of(owned, matches, best);
+    if winners.len() > 1 {
+        mark_tied(owned, &winners);
+        return;
+    }
+    keep_section(owned, winners[0], section);
+}
+
+fn matching_indexes(owned: &[Owned], section: &Section) -> Vec<usize> {
+    let mut seen = BTreeSet::new();
+    owned
+        .iter()
+        .enumerate()
+        .filter(|(_, file)| newly_matched(section, file, &mut seen))
+        .map(|(index, _)| index)
+        .collect()
+}
+
+fn newly_matched(section: &Section, file: &Owned, seen: &mut BTreeSet<String>) -> bool {
+    let key = normalize(&file.original);
+    let matched = boundary_suffix(&section.path, &key);
+    matched && seen.insert(key)
+}
+
+fn longest_match(owned: &[Owned], matches: &[usize]) -> Option<usize> {
+    matches.iter().map(|index| path_len(owned, *index)).max()
+}
+
+fn path_len(owned: &[Owned], index: usize) -> usize {
+    let path = &owned[index].original;
+    normalize(path).len()
+}
+
+fn winners_of(owned: &[Owned], matches: Vec<usize>, best: usize) -> Vec<usize> {
+    matches
+        .into_iter()
+        .filter(|index| path_len(owned, *index) == best)
+        .collect()
+}
+
+fn mark_tied(owned: &mut [Owned], winners: &[usize]) {
+    for index in winners {
+        clear_file(&mut owned[*index]);
+    }
+}
+
+fn clear_file(file: &mut Owned) {
+    file.tied = true;
+    file.matched = false;
+    let lines = &mut file.lines;
+    lines.clear();
+}
+
+fn keep_section(owned: &mut [Owned], index: usize, section: &Section) {
     if owned[index].tied {
         return;
     }
     if owned[index].matched {
-        owned[index].tied = true;
-        owned[index].matched = false;
-        owned[index].lines.clear();
+        clear_file(&mut owned[index]);
         return;
     }
-    merge_lines(&mut owned[index].lines, &section.lines);
+    let lines = &mut owned[index].lines;
+    merge_lines(lines, &section.lines);
     owned[index].matched = true;
 }
 
@@ -328,7 +534,8 @@ fn mark_file_unshown(
     }
 }
 
-fn holes(described: &[(String, String, Span)], index: usize, key: &str, span: Span) -> Vec<Span> {
+fn holes(described: &[(String, String, Span)], index: usize, span: Span) -> Vec<Span> {
+    let key = &described[index].0;
     described
         .iter()
         .enumerate()
@@ -345,32 +552,59 @@ fn strictly_inside(inner: Span, outer: Span) -> bool {
         && (inner.start > outer.start || inner.end < outer.end)
 }
 
+struct Tally {
+    hit: u32,
+    first_miss: Option<u32>,
+}
+
 fn fraction(lines: &BTreeMap<u32, bool>, span: Span, holes: &[Span]) -> Option<(f64, Option<u32>)> {
     let mut total = 0u32;
-    let mut hit = 0u32;
-    let mut first_miss = None;
+    let mut tally = Tally {
+        hit: 0,
+        first_miss: None,
+    };
     for (line, was_hit) in lines {
-        if *line < span.start || *line > span.end {
-            continue;
-        }
-        if holes
-            .iter()
-            .any(|hole| *line >= hole.start && *line <= hole.end)
-        {
+        if !line_counts(*line, span, holes) {
             continue;
         }
         total += 1;
-        if *was_hit {
-            hit += 1;
-        } else if first_miss.is_none() {
-            first_miss = Some(*line);
-        }
+        note_line(&mut tally, *was_hit, *line);
     }
+    finish_fraction(tally.hit, total, tally.first_miss)
+}
+
+fn line_counts(line: u32, span: Span, holes: &[Span]) -> bool {
+    if line < span.start || line > span.end {
+        return false;
+    }
+    !hole_contains(line, holes)
+}
+
+fn hole_contains(line: u32, holes: &[Span]) -> bool {
+    holes.iter().any(|hole| span_contains(*hole, line))
+}
+
+fn span_contains(hole: Span, line: u32) -> bool {
+    line >= hole.start && line <= hole.end
+}
+
+fn note_line(tally: &mut Tally, was_hit: bool, line: u32) {
+    if was_hit {
+        tally.hit += 1;
+        return;
+    }
+    let miss = &tally.first_miss;
+    if miss.is_some() {
+        return;
+    }
+    tally.first_miss = Some(line);
+}
+
+fn finish_fraction(hit: u32, total: u32, first_miss: Option<u32>) -> Option<(f64, Option<u32>)> {
     if total == 0 {
-        None
-    } else {
-        Some((f64::from(hit) / f64::from(total), first_miss))
+        return None;
     }
+    Some((f64::from(hit) / f64::from(total), first_miss))
 }
 
 fn crap(cyclomatic: u32, coverage: f64) -> f64 {

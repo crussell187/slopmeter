@@ -1,4 +1,11 @@
 pub fn page(rule: &str) -> Option<&'static str> {
+    if let Some(text) = function_page(rule) {
+        return Some(text);
+    }
+    scope_page(rule)
+}
+
+fn function_page(rule: &str) -> Option<&'static str> {
     Some(match rule {
         "F01" => include_str!("../docs/explain/F01.txt"),
         "F02" => include_str!("../docs/explain/F02.txt"),
@@ -8,6 +15,12 @@ pub fn page(rule: &str) -> Option<&'static str> {
         "F06" => include_str!("../docs/explain/F06.txt"),
         "F07" => include_str!("../docs/explain/F07.txt"),
         "F08" => include_str!("../docs/explain/F08.txt"),
+        _ => return None,
+    })
+}
+
+fn scope_page(rule: &str) -> Option<&'static str> {
+    Some(match rule {
         "F11" => include_str!("../docs/explain/F11.txt"),
         "S06" => include_str!("../docs/explain/S06.txt"),
         "S07" => include_str!("../docs/explain/S07.txt"),

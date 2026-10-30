@@ -1,4 +1,7 @@
-use crate::ir::{Body, Chain, CognitiveKind, File, Function, Member, Span, WaiverLine};
+use crate::ir::{
+    Body, Chain, Cognitive, CognitiveKind, Decision, File, Forward, Function, Member, Span,
+    WaiverLine,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ChainDepth {
@@ -56,48 +59,62 @@ pub fn measure(file: &File, allow: &[&str]) -> Vec<Measurement> {
 }
 
 fn measure_function(path: &str, function: &Function, allow: &[&str]) -> Measurement {
-    let (receiver_chain, other_chain) = chain_depths(&function.body, allow);
+    let body = &function.body;
+    let (receiver_chain, other_chain) = chain_depths(body, allow);
+    let decisions = &body.decisions;
+    let name = &function.name;
+    let param_types = &function.param_types;
+    let qualifier = &function.qualifier;
+    let waivers = &function.waivers;
     Measurement {
         path: path.to_string(),
-        name: function.name.clone(),
-        param_types: function.param_types.clone(),
-        qualifier: function.qualifier.clone(),
+        name: name.clone(),
+        param_types: param_types.clone(),
+        qualifier: qualifier.clone(),
         span: function.span,
-        cyclomatic: 1 + function.body.decisions.len() as u32,
-        cognitive: cognitive(&function.body),
-        nesting: nesting(&function.body),
-        nesting_line: nesting_line(&function.body),
+        cyclomatic: 1 + decisions.len() as u32,
+        cognitive: cognitive(body),
+        nesting: nesting(body),
+        nesting_line: nesting_line(body),
         params: parameter_count(function),
-        lloc: function.body.lloc,
+        lloc: body.lloc,
         receiver_chain,
         other_chain,
-        forward: function.body.forward.as_ref().map(|forward| Forwarding {
-            line: forward.line,
-            forwarded: forward.names.len() as u32,
-        }),
-        waivers: function.waivers.clone(),
+        forward: body.forward.as_ref().map(forwarding),
+        waivers: waivers.clone(),
         crap: None,
         coverage: None,
         mutation: None,
     }
 }
 
+fn forwarding(forward: &Forward) -> Forwarding {
+    let names = &forward.names;
+    Forwarding {
+        line: forward.line,
+        forwarded: names.len() as u32,
+    }
+}
+
 fn cognitive(body: &Body) -> u32 {
-    body.cognitive
-        .iter()
-        .map(|increment| match increment.kind {
-            CognitiveKind::Structural => 1 + increment.depth,
-            CognitiveKind::Hybrid | CognitiveKind::Fundamental => 1,
-        })
-        .sum()
+    let increments = &body.cognitive;
+    increments.iter().map(cognitive_increment).sum()
+}
+
+fn cognitive_increment(increment: &Cognitive) -> u32 {
+    match increment.kind {
+        CognitiveKind::Structural => structural_cost(increment),
+        CognitiveKind::Hybrid | CognitiveKind::Fundamental => 1,
+    }
+}
+
+fn structural_cost(increment: &Cognitive) -> u32 {
+    1 + increment.depth
 }
 
 fn nesting(body: &Body) -> u32 {
-    body.levels
-        .iter()
-        .map(|level| level.depth)
-        .max()
-        .unwrap_or(0)
+    let levels = &body.levels;
+    levels.iter().map(level_depth).max().unwrap_or(0)
 }
 
 fn nesting_line(body: &Body) -> Option<u32> {
@@ -105,19 +122,25 @@ fn nesting_line(body: &Body) -> Option<u32> {
     if depth == 0 {
         return None;
     }
-    body.levels
+    let levels = &body.levels;
+    levels
         .iter()
-        .filter(|level| level.depth == depth)
-        .map(|level| level.line)
+        .filter(|level| level_depth(level) == depth)
+        .map(level_line)
         .min()
 }
 
+fn level_depth(level: &Decision) -> u32 {
+    level.depth
+}
+
+fn level_line(level: &Decision) -> u32 {
+    level.line
+}
+
 fn parameter_count(function: &Function) -> u32 {
-    function
-        .params
-        .iter()
-        .filter(|param| !param.receiver)
-        .count() as u32
+    let params = &function.params;
+    params.iter().filter(|param| !param.receiver).count() as u32
 }
 
 fn chain_depths(body: &Body, allow: &[&str]) -> (Option<ChainDepth>, Option<ChainDepth>) {

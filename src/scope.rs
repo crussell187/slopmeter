@@ -48,69 +48,179 @@ impl std::error::Error for ScopeError {}
 
 const NOT_A_REPOSITORY: &str = "not a git repository; scoring the whole tree";
 
-pub fn partition(
-    root: &Path,
-    files: &[File],
-    findings: &[Finding],
+macro_rules! define_partition {
+    () => {
+        pub fn partition(
+            root: &Path,
+            files: &[File],
+            findings: &[Finding],
+            options: ScopeOptions,
+        ) -> Result<Scoped, ScopeError> {
+            apply_scope(
+                root,
+                ScopeJob {
+                    files,
+                    findings,
+                    options,
+                },
+            )
+        }
+    };
+}
+
+define_partition!();
+
+struct ScopeJob<'a> {
+    files: &'a [File],
+    findings: &'a [Finding],
     options: ScopeOptions,
-) -> Result<Scoped, ScopeError> {
-    if options.strict {
+}
+
+fn apply_scope(root: &Path, job: ScopeJob<'_>) -> Result<Scoped, ScopeError> {
+    if strict_job(&job) {
+        let findings = job.findings;
         return Ok(whole(findings, Vec::new()));
     }
-    if !work_tree(root)? {
-        if options.changed.is_some() {
-            return Err(ScopeError::ChangedOutsideGit);
-        }
-        return Ok(whole(
-            findings,
-            vec![Note {
-                path: None,
-                message: NOT_A_REPOSITORY.to_string(),
-            }],
-        ));
+    if missing_repo(root, &job)? {
+        return Ok(outside_note(&job));
     }
-    let change = load_change(root, options.changed.as_deref())?;
+    score_diff(root, &job)
+}
+
+fn strict_job(job: &ScopeJob<'_>) -> bool {
+    let options = &job.options;
+    options.strict
+}
+
+fn missing_repo(root: &Path, job: &ScopeJob<'_>) -> Result<bool, ScopeError> {
+    if work_tree(root)? {
+        return Ok(false);
+    }
+    require_repo(job)?;
+    Ok(true)
+}
+
+fn require_repo(job: &ScopeJob<'_>) -> Result<(), ScopeError> {
+    let options = &job.options;
+    let changed = &options.changed;
+    if changed.is_some() {
+        return Err(ScopeError::ChangedOutsideGit);
+    }
+    Ok(())
+}
+
+fn outside_note(job: &ScopeJob<'_>) -> Scoped {
+    let findings = job.findings;
+    let message = NOT_A_REPOSITORY.to_string();
+    whole(
+        findings,
+        vec![Note {
+            path: None,
+            message,
+        }],
+    )
+}
+
+fn score_diff(root: &Path, job: &ScopeJob<'_>) -> Result<Scoped, ScopeError> {
+    let changed = changed_ref(job);
+    let change = load_change(root, changed)?;
+    let files = job.files;
     let touched = touched_symbols(root, files, &change);
-    let mut kept = Vec::new();
-    let mut inherited = Vec::new();
+    let findings = job.findings;
+    Ok(bucket_findings(findings, &touched))
+}
+
+fn changed_ref<'a, 'b>(job: &'a ScopeJob<'b>) -> Option<&'a str> {
+    let options = &job.options;
+    let changed = &options.changed;
+    changed.as_deref()
+}
+
+struct Buckets {
+    kept: Vec<Finding>,
+    inherited: Vec<Finding>,
+}
+
+fn bucket_findings(findings: &[Finding], touched: &BTreeSet<Symbol>) -> Scoped {
+    let mut buckets = Buckets {
+        kept: Vec::new(),
+        inherited: Vec::new(),
+    };
     for finding in findings {
-        if diff_only(finding) && finding.measured_value.is_none() {
-            if touched.contains(&symbol(finding)) {
-                kept.push(finding.clone());
-            }
-            continue;
-        }
-        if touched.contains(&symbol(finding)) {
-            kept.push(finding.clone());
-        } else {
-            inherited.push(finding.clone());
-        }
+        place_changed(finding, touched, &mut buckets);
     }
-    Ok(Scoped {
+    Scoped {
         scope: Scope::Changed,
-        findings: kept,
-        inherited,
+        findings: buckets.kept,
+        inherited: buckets.inherited,
         notes: Vec::new(),
-    })
+    }
+}
+
+fn place_changed(finding: &Finding, touched: &BTreeSet<Symbol>, buckets: &mut Buckets) {
+    if diff_only(finding) && unmeasured(finding) {
+        keep_touched(finding, touched, buckets);
+        return;
+    }
+    if symbol_touched(touched, finding) {
+        push_kept(buckets, finding);
+        return;
+    }
+    push_inherited(buckets, finding);
+}
+
+fn unmeasured(finding: &Finding) -> bool {
+    let measured = finding.measured_value;
+    measured.is_none()
+}
+
+fn symbol_touched(touched: &BTreeSet<Symbol>, finding: &Finding) -> bool {
+    let symbol = symbol(finding);
+    touched.contains(&symbol)
+}
+
+fn keep_touched(finding: &Finding, touched: &BTreeSet<Symbol>, buckets: &mut Buckets) {
+    if symbol_touched(touched, finding) {
+        push_kept(buckets, finding);
+    }
+}
+
+fn push_kept(buckets: &mut Buckets, finding: &Finding) {
+    let kept = &mut buckets.kept;
+    kept.push(finding.clone());
+}
+
+fn push_inherited(buckets: &mut Buckets, finding: &Finding) {
+    let inherited = &mut buckets.inherited;
+    inherited.push(finding.clone());
 }
 
 fn whole(findings: &[Finding], notes: Vec<Note>) -> Scoped {
     let mut kept = Vec::new();
     let mut inherited = Vec::new();
     for finding in findings {
-        if diff_only(finding) {
-            if finding.measured_value.is_some() {
-                inherited.push(finding.clone());
-            }
-        } else {
-            kept.push(finding.clone());
-        }
+        place_strict(finding, &mut kept, &mut inherited);
     }
     Scoped {
         scope: Scope::Strict,
         findings: kept,
         inherited,
         notes,
+    }
+}
+
+fn place_strict(finding: &Finding, kept: &mut Vec<Finding>, inherited: &mut Vec<Finding>) {
+    if !diff_only(finding) {
+        kept.push(finding.clone());
+        return;
+    }
+    keep_measured(finding, inherited);
+}
+
+fn keep_measured(finding: &Finding, inherited: &mut Vec<Finding>) {
+    let measured = finding.measured_value;
+    if measured.is_some() {
+        inherited.push(finding.clone());
     }
 }
 
@@ -162,69 +272,203 @@ fn symbol_of(path: &str, function: &Function) -> Symbol {
     }
 }
 
+struct Touch<'a> {
+    root: &'a Path,
+    change: &'a Change,
+    touched: &'a mut BTreeSet<Symbol>,
+}
+
 fn touched_symbols(root: &Path, files: &[File], change: &Change) -> BTreeSet<Symbol> {
     let mut touched = BTreeSet::new();
-    for file in files {
-        let delta = change.files.get(&file.path);
-        let old = delta.map(|delta| old_spans(root, &change.base, file, delta));
-        for function in &file.functions {
-            let hit = change.untracked.contains(&file.path)
-                || delta.is_some_and(|delta| {
-                    delta
-                        .added
-                        .iter()
-                        .any(|line| contains(*line, function.touch))
-                        || old
-                            .as_ref()
-                            .is_some_and(|old| deleted_hit(old, delta, function))
-                });
-            if hit {
-                touched.insert(symbol_of(&file.path, function));
-            }
+    {
+        let mut state = Touch {
+            root,
+            change,
+            touched: &mut touched,
+        };
+        for file in files {
+            touch_file(file, &mut state);
         }
     }
     touched
 }
 
-fn deleted_hit(old: &OldSpans, delta: &Delta, function: &Function) -> bool {
-    match old {
-        OldSpans::None => false,
-        OldSpans::Whole => !delta.deleted.is_empty(),
-        OldSpans::Precise(functions) => functions.iter().any(|before| {
-            before.name == function.name
-                && before.param_types == function.param_types
-                && before.qualifier == function.qualifier
-                && delta
-                    .deleted
-                    .iter()
-                    .any(|line| contains(*line, before.touch))
-        }),
+fn touch_file(file: &File, state: &mut Touch<'_>) {
+    let change = state.change;
+    let listed = &change.files;
+    let path = file_path(file);
+    let delta = listed.get(path);
+    let old = delta.map(|delta| old_spans(state, file, delta));
+    let query = HitQuery {
+        change,
+        file,
+        delta,
+        old: &old,
+    };
+    for function in file_functions(file) {
+        if function_hit(&query, function) {
+            remember(state, file, function);
+        }
     }
 }
 
-fn old_spans(root: &Path, base: &str, file: &File, delta: &Delta) -> OldSpans {
-    if delta.deleted.is_empty() {
+fn file_path(file: &File) -> &str {
+    let path = &file.path;
+    path.as_str()
+}
+
+fn file_functions(file: &File) -> &[Function] {
+    &file.functions
+}
+
+struct HitQuery<'a> {
+    change: &'a Change,
+    file: &'a File,
+    delta: Option<&'a Delta>,
+    old: &'a Option<OldSpans>,
+}
+
+fn function_hit(query: &HitQuery<'_>, function: &Function) -> bool {
+    if tracked_new(query) {
+        return true;
+    }
+    let Some(delta) = query.delta else {
+        return false;
+    };
+    added_touches(delta, function) || removed_touches(query, delta, function)
+}
+
+fn tracked_new(query: &HitQuery<'_>) -> bool {
+    let change = query.change;
+    let untracked = &change.untracked;
+    let file = query.file;
+    untracked.contains(file_path(file))
+}
+
+fn added_touches(delta: &Delta, function: &Function) -> bool {
+    let added = &delta.added;
+    let touch = function.touch;
+    added.iter().any(|line| contains(*line, touch))
+}
+
+fn removed_touches(query: &HitQuery<'_>, delta: &Delta, function: &Function) -> bool {
+    let old = query.old;
+    let spans = old.as_ref();
+    spans.is_some_and(|spans| deleted_hit(spans, delta, function))
+}
+
+fn remember(state: &mut Touch<'_>, file: &File, function: &Function) {
+    let symbol = symbol_of(file_path(file), function);
+    let touched = &mut state.touched;
+    touched.insert(symbol);
+}
+
+fn deleted_hit(old: &OldSpans, delta: &Delta, function: &Function) -> bool {
+    match old {
+        OldSpans::None => false,
+        OldSpans::Whole => deletions_present(delta),
+        OldSpans::Precise(functions) => precise_deleted(functions, delta, function),
+    }
+}
+
+fn deletions_present(delta: &Delta) -> bool {
+    let deleted = &delta.deleted;
+    !deleted.is_empty()
+}
+
+fn precise_deleted(functions: &[Function], delta: &Delta, function: &Function) -> bool {
+    functions
+        .iter()
+        .any(|before| same_function(before, function) && deleted_line(delta, before.touch))
+}
+
+fn same_function(before: &Function, function: &Function) -> bool {
+    before.name == function.name
+        && before.param_types == function.param_types
+        && before.qualifier == function.qualifier
+}
+
+fn deleted_line(delta: &Delta, touch: Span) -> bool {
+    let deleted = &delta.deleted;
+    deleted.iter().any(|line| contains(*line, touch))
+}
+
+struct OldQuery<'a> {
+    root: &'a Path,
+    base: &'a str,
+    language: Language,
+}
+
+fn old_spans(state: &Touch<'_>, file: &File, delta: &Delta) -> OldSpans {
+    if no_deletions(delta) {
         return OldSpans::None;
     }
-    let Some(old_path) = delta.old_path.as_deref() else {
+    let Some(old_path) = previous_path(delta) else {
         return OldSpans::Whole;
     };
-    match load_old(root, base, file.language, old_path) {
+    loaded_spans(state, file, old_path)
+}
+
+fn no_deletions(delta: &Delta) -> bool {
+    let deleted = &delta.deleted;
+    deleted.is_empty()
+}
+
+fn previous_path(delta: &Delta) -> Option<&str> {
+    let old_path = &delta.old_path;
+    old_path.as_deref()
+}
+
+fn loaded_spans(state: &Touch<'_>, file: &File, old_path: &str) -> OldSpans {
+    let query = OldQuery {
+        root: state.root,
+        base: change_base(state),
+        language: file_language(file),
+    };
+    match load_old(&query, old_path) {
         Some(functions) => OldSpans::Precise(functions),
         None => OldSpans::Whole,
     }
 }
 
-fn load_old(root: &Path, base: &str, language: Language, old_path: &str) -> Option<Vec<Function>> {
+fn change_base<'a>(state: &'a Touch<'_>) -> &'a str {
+    let change = state.change;
+    let base = &change.base;
+    base.as_str()
+}
+
+fn file_language(file: &File) -> Language {
+    file.language
+}
+
+fn load_old(query: &OldQuery<'_>, old_path: &str) -> Option<Vec<Function>> {
+    let root = query.root;
     let prefix = work_tree_prefix(root).ok()?;
+    let base = query.base;
     let spec = format!("{base}:{prefix}{old_path}");
     let out = git(root, &["--no-pager", "show", &spec]).ok()?;
-    if !out.status.success() {
+    if !succeeded(&out) {
         return None;
     }
-    crate::adapters::parse(language, old_path, &out.stdout, false)
-        .ok()
-        .map(|file| file.functions)
+    parse_old(query, old_path, &out)
+}
+
+fn parse_old(query: &OldQuery<'_>, old_path: &str, out: &Output) -> Option<Vec<Function>> {
+    let source = &out.stdout;
+    let language = query.language;
+    let parsed = crate::adapters::parse(
+        language,
+        crate::adapters::ParseInput {
+            path: old_path,
+            source,
+            include_tests: false,
+        },
+    );
+    parsed.ok().map(owned_functions)
+}
+
+fn owned_functions(file: File) -> Vec<Function> {
+    file.functions
 }
 
 fn contains(line: u32, span: Span) -> bool {
@@ -258,7 +502,7 @@ fn resolve_base(root: &Path, changed: Option<&str>) -> Result<String, ScopeError
 
 fn merge_base(root: &Path, name: &str) -> Result<String, ScopeError> {
     let out = git(root, &["merge-base", "HEAD", name])?;
-    if !out.status.success() {
+    if !succeeded(&out) {
         return Err(ScopeError::NoBase);
     }
     let sha = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -274,7 +518,7 @@ pub fn repo_root(start: &Path) -> Result<Option<PathBuf>, ScopeError> {
         return Ok(None);
     }
     let out = git(start, &["rev-parse", "--show-toplevel"])?;
-    if !out.status.success() {
+    if !succeeded(&out) {
         return Ok(None);
     }
     let printed = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -291,7 +535,7 @@ fn work_tree(root: &Path) -> Result<bool, ScopeError> {
 
 fn work_tree_prefix(root: &Path) -> Result<String, ScopeError> {
     let out = git(root, &["rev-parse", "--show-prefix"])?;
-    if !out.status.success() {
+    if !succeeded(&out) {
         return Err(ScopeError::Git(command_error(&out)));
     }
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
@@ -307,7 +551,7 @@ fn relative_to_prefix(prefix: &str, path: &str) -> Option<String> {
 fn rev_exists(root: &Path, rev: &str) -> Result<bool, ScopeError> {
     let spec = format!("{rev}^{{commit}}");
     let out = git(root, &["rev-parse", "--verify", "--quiet", &spec])?;
-    Ok(out.status.success())
+    Ok(succeeded(&out))
 }
 
 fn diff_files(root: &Path, base: &str) -> Result<BTreeMap<String, Delta>, ScopeError> {
@@ -332,7 +576,7 @@ fn diff_files(root: &Path, base: &str) -> Result<BTreeMap<String, Delta>, ScopeE
             base,
         ],
     )?;
-    if !out.status.success() {
+    if !succeeded(&out) {
         return Err(ScopeError::Git(command_error(&out)));
     }
     Ok(parse_diff(&String::from_utf8_lossy(&out.stdout)))
@@ -349,7 +593,7 @@ fn untracked_paths(root: &Path) -> Result<BTreeSet<String>, ScopeError> {
             "--untracked-files=all",
         ],
     )?;
-    if !out.status.success() {
+    if !succeeded(&out) {
         return Err(ScopeError::Git(command_error(&out)));
     }
     let prefix = work_tree_prefix(root)?;
@@ -380,26 +624,47 @@ fn parse_diff(diff: &str) -> BTreeMap<String, Delta> {
     let mut files = BTreeMap::new();
     let mut open = Open::default();
     for line in diff.lines() {
-        if line.starts_with("diff --git ") {
-            flush(&mut open, &mut files);
-            continue;
-        }
-        if let Some(side) = parse_side(line, "--- ") {
-            open.old_path = path_of(side);
-            continue;
-        }
-        if let Some(side) = parse_side(line, "+++ ") {
-            open.new_path = path_of(side);
-            continue;
-        }
-        let Some((old_start, old_count, new_start, new_count)) = parse_hunk(line) else {
-            continue;
-        };
-        insert_lines(&mut open.deleted, old_start, old_count);
-        insert_lines(&mut open.added, new_start, new_count);
+        read_diff_line(line, &mut open, &mut files);
     }
     flush(&mut open, &mut files);
     files
+}
+
+fn read_diff_line(line: &str, open: &mut Open, files: &mut BTreeMap<String, Delta>) {
+    if diff_header(line) {
+        flush(open, files);
+        return;
+    }
+    if apply_side(line, open) {
+        return;
+    }
+    apply_hunk(line, open);
+}
+
+fn diff_header(line: &str) -> bool {
+    line.starts_with("diff --git ")
+}
+
+fn apply_side(line: &str, open: &mut Open) -> bool {
+    if let Some(side) = parse_side(line, "--- ") {
+        open.old_path = path_of(side);
+        return true;
+    }
+    if let Some(side) = parse_side(line, "+++ ") {
+        open.new_path = path_of(side);
+        return true;
+    }
+    false
+}
+
+fn apply_hunk(line: &str, open: &mut Open) {
+    let Some((old_start, old_count, new_start, new_count)) = parse_hunk(line) else {
+        return;
+    };
+    let deleted = &mut open.deleted;
+    insert_lines(deleted, old_start, old_count);
+    let added = &mut open.added;
+    insert_lines(added, new_start, new_count);
 }
 
 fn path_of(side: Side) -> Option<String> {
@@ -421,53 +686,118 @@ fn insert_lines(lines: &mut BTreeSet<u32>, start: u32, count: u32) {
 }
 
 fn flush(open: &mut Open, files: &mut BTreeMap<String, Delta>) {
-    let finished = std::mem::take(open);
-    let Some(path) = finished.new_path else {
+    let mut finished = std::mem::take(open);
+    let Some(path) = take_path(&mut finished) else {
         return;
     };
-    if finished.added.is_empty() && finished.deleted.is_empty() {
+    if empty_change(&finished) {
         return;
     }
-    files
-        .entry(path)
-        .and_modify(|delta| {
-            delta.added.extend(&finished.added);
-            delta.deleted.extend(&finished.deleted);
-            if delta.old_path.is_none() {
-                delta.old_path.clone_from(&finished.old_path);
-            }
-        })
-        .or_insert(Delta {
-            old_path: finished.old_path,
-            added: finished.added,
-            deleted: finished.deleted,
-        });
+    store_delta(files, path, finished);
+}
+
+fn take_path(finished: &mut Open) -> Option<String> {
+    let path = &mut finished.new_path;
+    path.take()
+}
+
+fn empty_change(finished: &Open) -> bool {
+    let added = &finished.added;
+    let deleted = &finished.deleted;
+    added.is_empty() && deleted.is_empty()
+}
+
+fn store_delta(files: &mut BTreeMap<String, Delta>, path: String, finished: Open) {
+    let slot = files.entry(path);
+    let updated = slot.and_modify(|delta| merge_delta(delta, &finished));
+    updated.or_insert(new_delta(finished));
+}
+
+fn merge_delta(delta: &mut Delta, finished: &Open) {
+    extend_lines(&mut delta.added, &finished.added);
+    extend_lines(&mut delta.deleted, &finished.deleted);
+    if missing_old(delta) {
+        copy_old(delta, finished);
+    }
+}
+
+fn extend_lines(lines: &mut BTreeSet<u32>, extra: &BTreeSet<u32>) {
+    lines.extend(extra);
+}
+
+fn missing_old(delta: &Delta) -> bool {
+    let old_path = &delta.old_path;
+    old_path.is_none()
+}
+
+fn copy_old(delta: &mut Delta, finished: &Open) {
+    let old_path = &mut delta.old_path;
+    let source = &finished.old_path;
+    old_path.clone_from(source);
+}
+
+fn new_delta(finished: Open) -> Delta {
+    Delta {
+        old_path: finished.old_path,
+        added: finished.added,
+        deleted: finished.deleted,
+    }
 }
 
 fn parse_untracked(bytes: &[u8]) -> BTreeSet<String> {
     let mut paths = BTreeSet::new();
     let mut rest = bytes;
     while !rest.is_empty() {
-        let Some(end) = rest.iter().position(|byte| *byte == 0) else {
+        let Some(next) = read_untracked_entry(rest, &mut paths) else {
             break;
         };
-        let entry = &rest[..end];
-        rest = &rest[end + 1..];
-        if entry
-            .first()
-            .is_some_and(|byte| *byte == b'R' || *byte == b'C')
-        {
-            if let Some(extra) = rest.iter().position(|byte| *byte == 0) {
-                rest = &rest[extra + 1..];
-            }
-        }
-        if let Some(path) = entry.strip_prefix(b"?? ") {
-            if let Ok(path) = std::str::from_utf8(path) {
-                paths.insert(path.to_string());
-            }
-        }
+        rest = next;
     }
     paths
+}
+
+fn read_untracked_entry<'a>(rest: &'a [u8], paths: &mut BTreeSet<String>) -> Option<&'a [u8]> {
+    let Some(end) = null_at(rest) else {
+        return None;
+    };
+    let entry = &rest[..end];
+    let mut next = &rest[end + 1..];
+    next = skip_rename(entry, next);
+    keep_untracked(entry, paths);
+    Some(next)
+}
+
+fn null_at(rest: &[u8]) -> Option<usize> {
+    rest.iter().position(|byte| *byte == 0)
+}
+
+fn skip_rename<'a>(entry: &[u8], rest: &'a [u8]) -> &'a [u8] {
+    if !renamed(entry) {
+        return rest;
+    }
+    let Some(extra) = null_at(rest) else {
+        return rest;
+    };
+    &rest[extra + 1..]
+}
+
+fn renamed(entry: &[u8]) -> bool {
+    let first = entry.first();
+    first.is_some_and(is_rename)
+}
+
+fn is_rename(byte: &u8) -> bool {
+    *byte == b'R' || *byte == b'C'
+}
+
+fn keep_untracked(entry: &[u8], paths: &mut BTreeSet<String>) {
+    let Some(path) = entry.strip_prefix(b"?? ") else {
+        return;
+    };
+    let Ok(path) = std::str::from_utf8(path) else {
+        return;
+    };
+    paths.insert(path.to_string());
 }
 
 enum Side {
@@ -476,42 +806,74 @@ enum Side {
 }
 
 fn parse_side(line: &str, prefix: &str) -> Option<Side> {
-    let rest = line.strip_prefix(prefix)?.trim_end();
+    let Some(stripped) = line.strip_prefix(prefix) else {
+        return None;
+    };
+    let rest = stripped.trim_end();
     let raw = unquote(rest)?;
     if raw == "/dev/null" {
         return Some(Side::Null);
     }
-    let marker = if prefix.starts_with("+++") {
+    let marker = side_marker(prefix);
+    let Some(path) = raw.strip_prefix(marker) else {
+        return None;
+    };
+    Some(Side::Path(path.to_string()))
+}
+
+fn side_marker(prefix: &str) -> &'static str {
+    if prefix.starts_with("+++") {
         "b/"
     } else {
         "a/"
-    };
-    Some(Side::Path(raw.strip_prefix(marker)?.to_string()))
+    }
 }
 
 fn unquote(raw: &str) -> Option<String> {
     if !raw.starts_with('"') {
         return Some(raw.to_string());
     }
-    if raw.len() < 2 || !raw.ends_with('"') {
+    if short_quote(raw) {
         return None;
     }
     let mut out = String::new();
-    let mut chars = raw[1..raw.len() - 1].chars();
+    let mut chars = quote_chars(raw);
     while let Some(ch) = chars.next() {
-        if ch != '\\' {
-            out.push(ch);
-            continue;
-        }
-        match chars.next()? {
-            'n' => out.push('\n'),
-            't' => out.push('\t'),
-            '"' => out.push('"'),
-            '\\' => out.push('\\'),
-            other => out.push(other),
-        }
+        push_unquoted(&mut out, ch, &mut chars)?;
     }
     Some(out)
+}
+
+fn short_quote(raw: &str) -> bool {
+    let len = raw.len();
+    len < 2 || !raw.ends_with('"')
+}
+
+fn quote_chars(raw: &str) -> std::str::Chars<'_> {
+    let len = raw.len();
+    let inner = &raw[1..len - 1];
+    inner.chars()
+}
+
+fn push_unquoted(out: &mut String, ch: char, chars: &mut std::str::Chars<'_>) -> Option<()> {
+    if ch != '\\' {
+        out.push(ch);
+        return Some(());
+    }
+    let next = chars.next()?;
+    push_escape(out, next)
+}
+
+fn push_escape(out: &mut String, ch: char) -> Option<()> {
+    let decoded = match ch {
+        'n' => '\n',
+        't' => '\t',
+        '"' => '"',
+        '\\' => '\\',
+        other => other,
+    };
+    out.push(decoded);
+    Some(())
 }
 
 fn parse_hunk(line: &str) -> Option<(u32, u32, u32, u32)> {
@@ -544,20 +906,24 @@ fn split_number(input: &str) -> Option<(u32, &str)> {
 }
 
 fn git(root: &Path, args: &[&str]) -> Result<Output, ScopeError> {
-    Command::new("git")
-        .args(args)
-        .current_dir(root)
-        .env("GIT_CONFIG_NOSYSTEM", "1")
-        .env("GIT_CONFIG_GLOBAL", "/dev/null")
-        .env("GIT_CONFIG_SYSTEM", "/dev/null")
-        .env_remove("GIT_DIR")
-        .env_remove("GIT_WORK_TREE")
-        .env_remove("GIT_INDEX_FILE")
-        .env_remove("GIT_CEILING_DIRECTORIES")
-        .output()
-        .map_err(|err| ScopeError::Git(err.to_string()))
+    let mut command = Command::new("git");
+    command.args(args);
+    command.current_dir(root);
+    command.env("GIT_CONFIG_NOSYSTEM", "1");
+    command.env("GIT_CONFIG_GLOBAL", "/dev/null");
+    command.env("GIT_CONFIG_SYSTEM", "/dev/null");
+    command.env_remove("GIT_DIR");
+    command.env_remove("GIT_WORK_TREE");
+    command.env_remove("GIT_INDEX_FILE");
+    command.env_remove("GIT_CEILING_DIRECTORIES");
+    let result = command.output();
+    result.map_err(|err| ScopeError::Git(err.to_string()))
 }
 
+fn succeeded(out: &Output) -> bool {
+    let status = out.status;
+    status.success()
+}
 #[cfg(test)]
 mod tests {
     use super::{partition, ScopeOptions};
@@ -1824,8 +2190,16 @@ def other():
         write(&root, rel, before);
         commit_all(&root, "base");
         write(&root, rel, after);
-        let file = crate::adapters::parse(language, rel, &fs::read(root.join(rel)).unwrap(), false)
-            .unwrap();
+        let source = fs::read(root.join(rel)).unwrap();
+        let file = crate::adapters::parse(
+            language,
+            crate::adapters::ParseInput {
+                path: rel,
+                source: &source,
+                include_tests: false,
+            },
+        )
+        .unwrap();
         (root, file)
     }
 

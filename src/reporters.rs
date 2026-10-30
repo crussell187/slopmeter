@@ -38,6 +38,17 @@ struct Widths {
     location: usize,
 }
 
+#[derive(Clone, Copy)]
+struct Summary {
+    score: Option<f64>,
+    fail: bool,
+}
+
+struct Listed<'a> {
+    findings: &'a [Finding],
+    inherited: &'a [Finding],
+}
+
 pub fn render(report: &Report, json: bool) -> Rendered {
     let mut findings = report.findings.clone();
     let mut inherited = report.inherited.clone();
@@ -45,10 +56,15 @@ pub fn render(report: &Report, json: bool) -> Rendered {
     sort_findings(&mut inherited);
     let fail = verdict_fails(&findings);
     let score = slop_score(&findings, &inherited, report.kloc);
+    let summary = Summary { score, fail };
+    let rows = Listed {
+        findings: &findings,
+        inherited: &inherited,
+    };
     let stdout = if json {
-        pretty(document(report, &findings, &inherited, score, fail))
+        pretty(document(report, &rows, summary))
     } else {
-        table(&findings, &inherited, &report.notes, score, fail)
+        table(&rows, &report.notes, summary)
     };
     Rendered {
         stdout,
@@ -70,14 +86,45 @@ pub fn no_check(reason: &str) -> Rendered {
 }
 
 fn sort_findings(findings: &mut [Finding]) {
-    findings.sort_by(|left, right| {
-        level_rank(left.level)
-            .cmp(&level_rank(right.level))
-            .then(right.weight.cmp(&left.weight))
-            .then_with(|| fraction(right).total_cmp(&fraction(left)))
-            .then(left.path.cmp(&right.path))
-            .then(left.line.cmp(&right.line))
-    });
+    findings.sort_by(compare_findings);
+}
+
+fn compare_findings(left: &Finding, right: &Finding) -> std::cmp::Ordering {
+    let by_level = compare_rank(left, right);
+    let by_weight = by_level.then(weight_order(left, right));
+    let by_fraction = by_weight.then_with(|| fraction_order(left, right));
+    let by_path = by_fraction.then(path_order(left, right));
+    by_path.then(line_order(left, right))
+}
+
+fn compare_rank(left: &Finding, right: &Finding) -> std::cmp::Ordering {
+    let left_rank = level_rank(left.level);
+    let right_rank = level_rank(right.level);
+    left_rank.cmp(&right_rank)
+}
+
+fn weight_order(left: &Finding, right: &Finding) -> std::cmp::Ordering {
+    let right_weight = right.weight;
+    let left_weight = left.weight;
+    right_weight.cmp(&left_weight)
+}
+
+fn fraction_order(left: &Finding, right: &Finding) -> std::cmp::Ordering {
+    let right_fraction = fraction(right);
+    let left_fraction = fraction(left);
+    right_fraction.total_cmp(&left_fraction)
+}
+
+fn path_order(left: &Finding, right: &Finding) -> std::cmp::Ordering {
+    let left_path = &left.path;
+    let right_path = &right.path;
+    left_path.cmp(right_path)
+}
+
+fn line_order(left: &Finding, right: &Finding) -> std::cmp::Ordering {
+    let left_line = left.line;
+    let right_line = right.line;
+    left_line.cmp(&right_line)
 }
 
 fn level_rank(level: Level) -> u8 {
@@ -101,9 +148,19 @@ fn fraction(finding: &Finding) -> f64 {
 }
 
 fn verdict_fails(findings: &[Finding]) -> bool {
-    findings.iter().any(|finding| {
-        finding.level == Level::Gate && !finding.waiver.as_ref().is_some_and(|waiver| waiver.holds)
-    })
+    findings.iter().any(open_gate)
+}
+
+fn open_gate(finding: &Finding) -> bool {
+    if finding.level != Level::Gate {
+        return false;
+    }
+    let waiver = finding.waiver.as_ref();
+    !waiver.is_some_and(waiver_holds)
+}
+
+fn waiver_holds(waiver: &Waiver) -> bool {
+    waiver.holds
 }
 
 fn slop_score(findings: &[Finding], inherited: &[Finding], kloc: Option<f64>) -> Option<f64> {
@@ -116,60 +173,96 @@ fn slop_score(findings: &[Finding], inherited: &[Finding], kloc: Option<f64>) ->
     Some(f64::from(weight) / kloc)
 }
 
-fn table(
-    findings: &[Finding],
-    inherited: &[Finding],
-    notes: &[Note],
-    score: Option<f64>,
-    fail: bool,
-) -> String {
-    let widths = widths(findings, inherited);
+fn table(rows: &Listed<'_>, notes: &[Note], summary: Summary) -> String {
+    let widths = widths(rows.findings, rows.inherited);
     let mut lines = Vec::new();
-    for finding in findings {
-        lines.push(write_row(finding, &widths));
-    }
-    if !inherited.is_empty() {
-        if !findings.is_empty() {
-            lines.push(String::new());
-        }
-        lines.push("inherited".to_string());
-        for finding in inherited {
-            lines.push(write_row(finding, &widths));
-        }
-    }
-    if !findings.is_empty() || !inherited.is_empty() {
+    push_listed(&mut lines, rows.findings, &widths);
+    push_inherited(&mut lines, rows, &widths);
+    if listed_any(rows) {
         lines.push(String::new());
     }
+    push_notes(&mut lines, notes);
+    lines.push(score_line(summary.score, summary.fail));
+    join_lines(lines)
+}
+
+fn push_listed(lines: &mut Vec<String>, findings: &[Finding], widths: &Widths) {
+    for finding in findings {
+        lines.push(write_row(finding, widths));
+    }
+}
+
+fn push_inherited(lines: &mut Vec<String>, rows: &Listed<'_>, widths: &Widths) {
+    let inherited = rows.inherited;
+    if inherited.is_empty() {
+        return;
+    }
+    let findings = rows.findings;
+    if !findings.is_empty() {
+        lines.push(String::new());
+    }
+    lines.push("inherited".to_string());
+    push_listed(lines, inherited, widths);
+}
+
+fn listed_any(rows: &Listed<'_>) -> bool {
+    let findings = rows.findings;
+    if !findings.is_empty() {
+        return true;
+    }
+    let inherited = rows.inherited;
+    !inherited.is_empty()
+}
+
+fn push_notes(lines: &mut Vec<String>, notes: &[Note]) {
     for note in notes {
         lines.push(note_line(note));
     }
-    lines.push(score_line(score, fail));
+}
+
+fn join_lines(lines: Vec<String>) -> String {
     let mut text = lines.join("\n");
     text.push('\n');
     text
 }
 
 fn widths(findings: &[Finding], inherited: &[Finding]) -> Widths {
-    let rows: Vec<_> = findings.iter().chain(inherited).collect();
+    let rows = finding_rows(findings, inherited);
     Widths {
-        rule: rows
-            .iter()
-            .map(|finding| finding.rule.len())
-            .max()
-            .unwrap_or(0)
-            .max(3),
+        rule: column_width(&rows, rule_width, 3),
         level: 4,
-        name: rows
-            .iter()
-            .map(|finding| finding.name.len())
-            .max()
-            .unwrap_or(0),
-        location: rows
-            .iter()
-            .map(|finding| location(finding).len())
-            .max()
-            .unwrap_or(0),
+        name: column_width(&rows, name_width, 0),
+        location: column_width(&rows, location_width, 0),
     }
+}
+
+fn finding_rows<'a>(findings: &'a [Finding], inherited: &'a [Finding]) -> Vec<&'a Finding> {
+    findings.iter().chain(inherited).collect()
+}
+
+fn column_width(rows: &[&Finding], measure: fn(&Finding) -> usize, floor: usize) -> usize {
+    let mut widest = floor;
+    for finding in rows {
+        let width = measure(*finding);
+        if width > widest {
+            widest = width;
+        }
+    }
+    widest
+}
+
+fn rule_width(finding: &Finding) -> usize {
+    let rule = &finding.rule;
+    rule.len()
+}
+
+fn name_width(finding: &Finding) -> usize {
+    let name = &finding.name;
+    name.len()
+}
+
+fn location_width(finding: &Finding) -> usize {
+    location(finding).len()
 }
 
 fn write_row(finding: &Finding, widths: &Widths) -> String {
@@ -194,31 +287,53 @@ fn location(finding: &Finding) -> String {
 }
 
 fn detail(finding: &Finding) -> String {
-    let mut text = if matches!(finding.rule.as_str(), "S06" | "S07") {
-        match (finding.measured_value, finding.threshold) {
-            (Some(measured), Some(threshold)) => {
-                format!("{} < {}", show(measured), show(threshold))
-            }
-            (None, Some(threshold)) => format!("absent < {}", show(threshold)),
-            _ => String::new(),
-        }
-    } else {
-        match (finding.measured_value, finding.threshold) {
-            (Some(measured), Some(threshold)) => {
-                format!("{} > {}", show(measured), show(threshold))
-            }
-            _ => String::new(),
-        }
-    };
-    if let Some(extra) = waiver_text(finding.waiver.as_ref()) {
-        if text.is_empty() {
-            text = extra;
-        } else {
-            text.push_str("  ");
-            text.push_str(&extra);
-        }
-    }
+    let mut text = metric_text(finding);
+    append_waiver(&mut text, finding);
     text
+}
+
+fn metric_text(finding: &Finding) -> String {
+    let rule = finding.rule.as_str();
+    if coverage_rule(rule) {
+        return below_text(finding);
+    }
+    above_text(finding)
+}
+
+fn coverage_rule(rule: &str) -> bool {
+    matches!(rule, "S06" | "S07")
+}
+
+fn below_text(finding: &Finding) -> String {
+    let measured = finding.measured_value;
+    let threshold = finding.threshold;
+    match (measured, threshold) {
+        (Some(measured), Some(threshold)) => format!("{} < {}", show(measured), show(threshold)),
+        (None, Some(threshold)) => format!("absent < {}", show(threshold)),
+        _ => String::new(),
+    }
+}
+
+fn above_text(finding: &Finding) -> String {
+    let measured = finding.measured_value;
+    let threshold = finding.threshold;
+    match (measured, threshold) {
+        (Some(measured), Some(threshold)) => format!("{} > {}", show(measured), show(threshold)),
+        _ => String::new(),
+    }
+}
+
+fn append_waiver(text: &mut String, finding: &Finding) {
+    let waiver = finding.waiver.as_ref();
+    let Some(extra) = waiver_text(waiver) else {
+        return;
+    };
+    if text.is_empty() {
+        *text = extra;
+        return;
+    }
+    text.push_str("  ");
+    text.push_str(&extra);
 }
 
 fn waiver_text(waiver: Option<&Waiver>) -> Option<String> {
@@ -271,88 +386,97 @@ fn level_name(level: Level) -> &'static str {
     }
 }
 
-fn document(
-    report: &Report,
-    findings: &[Finding],
-    inherited: &[Finding],
-    score: Option<f64>,
-    fail: bool,
-) -> Value {
+fn document(report: &Report, rows: &Listed<'_>, summary: Summary) -> Value {
     let mut doc = Map::new();
-    doc.insert(
-        "verdict".to_string(),
-        Value::String(if fail { "fail" } else { "pass" }.to_string()),
-    );
+    doc.insert("verdict".to_string(), verdict_value(summary.fail));
     doc.insert(
         "scope".to_string(),
         Value::String(scope_name(report.scope).to_string()),
     );
-    doc.insert(
-        "slop_score".to_string(),
-        score.map(json_float).unwrap_or(Value::Null),
-    );
-    doc.insert(
-        "kloc".to_string(),
-        report.kloc.map(json_float).unwrap_or(Value::Null),
-    );
+    doc.insert("slop_score".to_string(), optional_float(summary.score));
+    doc.insert("kloc".to_string(), optional_float(report.kloc));
     doc.insert(
         "tool_version".to_string(),
         Value::String(report.tool_version.clone()),
     );
-    doc.insert(
-        "findings".to_string(),
-        Value::Array(findings.iter().map(finding_json).collect()),
-    );
-    doc.insert(
-        "inherited".to_string(),
-        Value::Array(inherited.iter().map(finding_json).collect()),
-    );
-    doc.insert(
-        "notes".to_string(),
-        Value::Array(report.notes.iter().map(note_json).collect()),
-    );
+    doc.insert("findings".to_string(), finding_array(rows.findings));
+    doc.insert("inherited".to_string(), finding_array(rows.inherited));
+    doc.insert("notes".to_string(), note_array(&report.notes));
     Value::Object(doc)
 }
 
+fn verdict_value(fail: bool) -> Value {
+    let verdict = if fail { "fail" } else { "pass" };
+    Value::String(verdict.to_string())
+}
+
+fn optional_float(value: Option<f64>) -> Value {
+    value.map(json_float).unwrap_or(Value::Null)
+}
+
+fn finding_array(findings: &[Finding]) -> Value {
+    let values = findings.iter().map(finding_json).collect();
+    Value::Array(values)
+}
+
+fn note_array(notes: &[Note]) -> Value {
+    let values = notes.iter().map(note_json).collect();
+    Value::Array(values)
+}
+
 fn finding_json(finding: &Finding) -> Value {
+    let mut map = Map::new();
+    map.insert("rule".to_string(), Value::String(finding.rule.clone()));
+    map.insert("level".to_string(), level_json(finding.level));
+    map.insert("symbol".to_string(), symbol_json(finding));
+    map.insert("line".to_string(), Value::from(finding.line));
+    insert_numbers(&mut map, finding);
+    map.insert("weight".to_string(), Value::from(finding.weight));
+    insert_text(&mut map, finding);
+    insert_waiver_field(&mut map, finding);
+    Value::Object(map)
+}
+
+fn level_json(level: Level) -> Value {
+    let name = level_name(level);
+    Value::String(name.to_string())
+}
+
+fn symbol_json(finding: &Finding) -> Value {
     let mut symbol = Map::new();
     symbol.insert("path".to_string(), Value::String(finding.path.clone()));
     symbol.insert("name".to_string(), Value::String(finding.name.clone()));
-    symbol.insert(
-        "param_types".to_string(),
-        Value::Array(
-            finding
-                .param_types
-                .iter()
-                .cloned()
-                .map(Value::String)
-                .collect(),
-        ),
-    );
+    symbol.insert("param_types".to_string(), param_list(finding));
     symbol.insert(
         "qualifier".to_string(),
         Value::String(finding.qualifier.clone()),
     );
-    let mut map = Map::new();
-    map.insert("rule".to_string(), Value::String(finding.rule.clone()));
-    map.insert(
-        "level".to_string(),
-        Value::String(level_name(finding.level).to_string()),
-    );
-    map.insert("symbol".to_string(), Value::Object(symbol));
-    map.insert("line".to_string(), Value::from(finding.line));
+    Value::Object(symbol)
+}
+
+fn param_list(finding: &Finding) -> Value {
+    let values = finding
+        .param_types
+        .iter()
+        .cloned()
+        .map(Value::String)
+        .collect();
+    Value::Array(values)
+}
+
+fn insert_numbers(map: &mut Map<String, Value>, finding: &Finding) {
     map.insert(
         "measured_value".to_string(),
-        finding
-            .measured_value
-            .map(json_number)
-            .unwrap_or(Value::Null),
+        number_field(finding.measured_value),
     );
-    map.insert(
-        "threshold".to_string(),
-        finding.threshold.map(json_number).unwrap_or(Value::Null),
-    );
-    map.insert("weight".to_string(), Value::from(finding.weight));
+    map.insert("threshold".to_string(), number_field(finding.threshold));
+}
+
+fn number_field(value: Option<f64>) -> Value {
+    value.map(json_number).unwrap_or(Value::Null)
+}
+
+fn insert_text(map: &mut Map<String, Value>, finding: &Finding) {
     map.insert(
         "principle".to_string(),
         Value::String(finding.principle.clone()),
@@ -365,10 +489,14 @@ fn finding_json(finding: &Finding) -> Value {
         "anti_fix".to_string(),
         Value::String(finding.anti_fix.clone()),
     );
-    if let Some(waiver) = &finding.waiver {
-        map.insert("waiver".to_string(), waiver_json(waiver));
-    }
-    Value::Object(map)
+}
+
+fn insert_waiver_field(map: &mut Map<String, Value>, finding: &Finding) {
+    let waiver = finding.waiver.as_ref();
+    let Some(waiver) = waiver else {
+        return;
+    };
+    map.insert("waiver".to_string(), waiver_json(waiver));
 }
 
 fn waiver_json(waiver: &Waiver) -> Value {

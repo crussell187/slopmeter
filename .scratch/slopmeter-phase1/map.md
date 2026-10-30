@@ -100,6 +100,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Rewrite the sloppy corpora so they are sloppy, not gate plus one](issues/66-rewrite-sloppy-corpus.md) — each tree was written again from its seed; the worst measurement on every gating rule is at least one and a half times that threshold and more than one past it, the pass-through is 100, and `hold` is unhit in the coverage report.
 - [Whether a run scores every claimed extension](issues/76-secondary-language-files.md) — a run scores every claimed extension under that file's profile; a profile's percentile is the files of that language in its three pins, and `exclude` is how a project narrows the languages.
 - [Whether the self-check joins CI while the crate is over its gates](issues/77-self-check-over-gates.md) — the self-check stays off CI until `slopmeter --strict` on this repo exits 0; bringing the crate under the gates stays in this destination, and there is no baseline of the 364 findings.
+- [Bring this crate under the gates](issues/78-under-the-gates.md) — `slopmeter --strict` on this repo exits 0, with the thresholds and `slopmeter.toml` left as they were.
 
 ## Not yet specified
 

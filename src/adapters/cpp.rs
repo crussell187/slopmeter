@@ -43,6 +43,43 @@ enum Scope {
     Function(String),
 }
 
+struct Scan<'a> {
+    source: &'a [u8],
+    scopes: &'a mut Vec<Scope>,
+    functions: &'a mut Vec<Function>,
+}
+
+struct Defined<'a> {
+    name: String,
+    item: Node<'a>,
+    body: Node<'a>,
+    params: Option<Node<'a>>,
+}
+
+struct Score<'a> {
+    source: &'a [u8],
+    receiver: Option<&'a str>,
+    ordinary: &'a [String],
+}
+
+#[derive(Clone, Copy)]
+struct Preproc<'a> {
+    condition: Option<Node<'a>>,
+    alternative: Option<Node<'a>>,
+}
+
+#[derive(Clone, Copy)]
+struct NameQuery<'a> {
+    source: &'a [u8],
+    name: &'a str,
+}
+
+struct ParenCursor {
+    depth: i32,
+    index: usize,
+    len: usize,
+}
+
 pub fn parse(path: &str, source: &[u8]) -> File {
     let mut parser = tree_sitter::Parser::new();
     parser
@@ -60,7 +97,12 @@ pub fn parse(path: &str, source: &[u8]) -> File {
     let root = tree.root_node();
     let mut functions = Vec::new();
     let mut scopes = Vec::new();
-    visit(root, source, &mut scopes, &mut functions);
+    let mut scan = Scan {
+        source,
+        scopes: &mut scopes,
+        functions: &mut functions,
+    };
+    scan.visit(root);
     File {
         path: path.to_string(),
         language: Language::Cpp,
@@ -70,194 +112,330 @@ pub fn parse(path: &str, source: &[u8]) -> File {
     }
 }
 
-fn visit(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut Vec<Function>) {
-    match node.kind() {
-        "function_definition" => visit_function(node, source, scopes, out),
-        "namespace_definition" => visit_namespace(node, source, scopes, out),
-        "class_specifier" | "struct_specifier" | "union_specifier" => {
-            visit_class(node, source, scopes, out);
+impl<'a> Scan<'a> {
+    fn visit(&mut self, node: Node<'a>) {
+        match node.kind() {
+            "function_definition" => self.visit_function(node),
+            "namespace_definition" => self.visit_namespace(node),
+            "class_specifier" | "struct_specifier" | "union_specifier" => self.visit_class(node),
+            "declaration" => self.visit_declaration(node),
+            _ => self.visit_rest(node),
         }
-        "declaration" => visit_declaration(node, source, scopes, out),
-        "preproc_if" | "preproc_elif" => visit_preproc(node, source, scopes, out, true),
-        "preproc_ifdef" | "preproc_elifdef" | "preproc_else" => {
-            visit_preproc(node, source, scopes, out, false);
+    }
+
+    fn visit_rest(&mut self, node: Node<'a>) {
+        if self.visit_preproc_kind(node) {
+            return;
         }
-        "preproc_def" | "preproc_function_def" | "preproc_include" | "preproc_call" | "comment" => {
+        self.visit_children(node);
+    }
+
+    fn visit_preproc_kind(&mut self, node: Node<'a>) -> bool {
+        let kind = node.kind();
+        if preproc_checks_zero(kind) {
+            self.visit_preproc(node, true);
+            return true;
         }
-        _ => visit_children(node, source, scopes, out),
+        if preproc_skips_zero(kind) {
+            self.visit_preproc(node, false);
+            return true;
+        }
+        skipped_preproc(kind)
+    }
+
+    fn visit_children(&mut self, node: Node<'a>) {
+        for child in named_nodes(node) {
+            self.visit(child);
+        }
     }
 }
 
-fn visit_children(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut Vec<Function>) {
-    for child in named_nodes(node) {
-        visit(child, source, scopes, out);
-    }
+fn preproc_checks_zero(kind: &str) -> bool {
+    matches!(kind, "preproc_if" | "preproc_elif")
+}
+
+fn preproc_skips_zero(kind: &str) -> bool {
+    matches!(kind, "preproc_ifdef" | "preproc_elifdef" | "preproc_else")
+}
+
+fn skipped_preproc(kind: &str) -> bool {
+    matches!(
+        kind,
+        "preproc_def" | "preproc_function_def" | "preproc_include" | "preproc_call" | "comment"
+    )
 }
 
 fn unscored_macros(node: Node, source: &[u8]) -> u32 {
+    if let Some(count) = direct_macro(node) {
+        return count;
+    }
+    if let Some(count) = preproc_macros(node, source) {
+        return count;
+    }
+    named_nodes(node)
+        .into_iter()
+        .map(|child| unscored_macros(child, source))
+        .sum()
+}
+
+fn direct_macro(node: Node) -> Option<u32> {
     match node.kind() {
-        "preproc_function_def" => 1,
-        "preproc_def" | "preproc_include" | "preproc_call" | "comment" => 0,
-        "preproc_if" | "preproc_elif" => unscored_in_preproc(node, source, true),
+        "preproc_function_def" => Some(1),
+        "preproc_def" | "preproc_include" | "preproc_call" | "comment" => Some(0),
+        _ => None,
+    }
+}
+
+fn preproc_macros(node: Node, source: &[u8]) -> Option<u32> {
+    match node.kind() {
+        "preproc_if" | "preproc_elif" => Some(unscored_in_preproc(node, source, true)),
         "preproc_ifdef" | "preproc_elifdef" | "preproc_else" => {
-            unscored_in_preproc(node, source, false)
+            Some(unscored_in_preproc(node, source, false))
         }
-        _ => named_nodes(node)
-            .into_iter()
-            .map(|child| unscored_macros(child, source))
-            .sum(),
+        _ => None,
     }
 }
 
 fn unscored_in_preproc(node: Node, source: &[u8], check_zero: bool) -> u32 {
-    let condition = node.child_by_field_name("condition");
-    let alternative = node.child_by_field_name("alternative");
-    let dead = check_zero && condition.is_some_and(|condition| is_literal_zero(condition, source));
+    let parts = preproc_parts(node);
     let mut count = 0;
-    if !dead {
-        for child in named_nodes(node) {
-            if Some(child) == condition || Some(child) == alternative {
-                continue;
-            }
-            count += unscored_macros(child, source);
-        }
+    if !preproc_dead(check_zero, parts.condition, source) {
+        count += live_macro_count(node, source, parts);
     }
-    if let Some(alternative) = alternative {
-        count += unscored_macros(alternative, source);
+    count + alternative_macros(parts.alternative, source)
+}
+
+fn live_macro_count(node: Node, source: &[u8], parts: Preproc) -> u32 {
+    let mut count = 0;
+    for child in named_nodes(node) {
+        if skip_preproc_child(child, parts) {
+            continue;
+        }
+        count += unscored_macros(child, source);
     }
     count
 }
 
-fn visit_preproc(
-    node: Node,
-    source: &[u8],
-    scopes: &mut Vec<Scope>,
-    out: &mut Vec<Function>,
-    check_zero: bool,
-) {
-    let condition = node.child_by_field_name("condition");
-    let alternative = node.child_by_field_name("alternative");
-    let dead = check_zero && condition.is_some_and(|condition| is_literal_zero(condition, source));
-    if !dead {
+fn alternative_macros(alternative: Option<Node>, source: &[u8]) -> u32 {
+    let Some(alternative) = alternative else {
+        return 0;
+    };
+    unscored_macros(alternative, source)
+}
+
+fn preproc_parts(node: Node<'_>) -> Preproc<'_> {
+    Preproc {
+        condition: node.child_by_field_name("condition"),
+        alternative: node.child_by_field_name("alternative"),
+    }
+}
+
+fn preproc_dead(check_zero: bool, condition: Option<Node>, source: &[u8]) -> bool {
+    if !check_zero {
+        return false;
+    }
+    condition.is_some_and(|condition| is_literal_zero(condition, source))
+}
+
+fn skip_preproc_child(child: Node, parts: Preproc) -> bool {
+    Some(child) == parts.condition || Some(child) == parts.alternative
+}
+
+impl<'a> Scan<'a> {
+    fn visit_preproc(&mut self, node: Node<'a>, check_zero: bool) {
+        let parts = preproc_parts(node);
+        if !preproc_dead(check_zero, parts.condition, self.source) {
+            self.visit_live(node, parts);
+        }
+        self.visit_optional(parts.alternative);
+    }
+
+    fn visit_live(&mut self, node: Node<'a>, parts: Preproc<'a>) {
         for child in named_nodes(node) {
-            if Some(child) == condition || Some(child) == alternative {
+            if skip_preproc_child(child, parts) {
                 continue;
             }
-            visit(child, source, scopes, out);
+            self.visit(child);
         }
     }
-    if let Some(alternative) = alternative {
-        visit(alternative, source, scopes, out);
-    }
-}
 
-fn visit_namespace(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut Vec<Function>) {
-    let parts = node
-        .child_by_field_name("name")
-        .map(|name| name_parts(name, source))
-        .unwrap_or_default();
-    for part in &parts {
-        scopes.push(Scope::Namespace(part.clone()));
+    fn visit_optional(&mut self, node: Option<Node<'a>>) {
+        let Some(node) = node else {
+            return;
+        };
+        self.visit(node);
     }
-    if let Some(body) = node.child_by_field_name("body") {
-        visit(body, source, scopes, out);
-    }
-    for _ in &parts {
-        scopes.pop();
-    }
-}
 
-fn visit_class(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut Vec<Function>) {
-    let parts = node
-        .child_by_field_name("name")
-        .map(|name| name_parts(name, source))
-        .unwrap_or_default();
-    for part in &parts {
-        scopes.push(Scope::Class(part.clone()));
+    fn visit_namespace(&mut self, node: Node<'a>) {
+        let parts = scope_parts(node, self.source);
+        for part in &parts {
+            self.scopes.push(Scope::Namespace(part.clone()));
+        }
+        self.visit_optional_body(node);
+        for _ in &parts {
+            self.scopes.pop();
+        }
     }
-    if let Some(body) = node.child_by_field_name("body") {
-        visit(body, source, scopes, out);
-    }
-    for _ in &parts {
-        scopes.pop();
-    }
-}
 
-fn visit_function(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut Vec<Function>) {
-    let Some(body) = written_body(node) else {
-        return;
-    };
-    let declarator = node.child_by_field_name("declarator");
-    let real = declarator.is_some_and(|declarator| {
-        find_kind(declarator, "function_declarator").is_some()
-            || find_kind(declarator, "operator_cast").is_some()
-    });
-    if !real {
-        visit_children(node, source, scopes, out);
-        return;
+    fn visit_class(&mut self, node: Node<'a>) {
+        let parts = scope_parts(node, self.source);
+        for part in &parts {
+            self.scopes.push(Scope::Class(part.clone()));
+        }
+        self.visit_optional_body(node);
+        for _ in &parts {
+            self.scopes.pop();
+        }
     }
-    let (global, parts) = declarator
-        .map(|declarator| qualified_parts(declarator, source))
-        .unwrap_or((false, Vec::new()));
-    if parts.is_empty() {
-        visit_children(node, source, scopes, out);
-        return;
-    }
-    if macro_wrapped_block(node, scopes) {
-        visit(body, source, scopes, out);
-        return;
-    }
-    let name = parts.last().cloned().unwrap_or_default();
-    let params = parameter_list(node);
-    let qualified = qualify(scopes, global, &parts);
-    push_function(out, source, &qualified, node, node, params);
-    scopes.push(Scope::Function(name));
-    visit(body, source, scopes, out);
-    scopes.pop();
-}
 
-fn visit_declaration(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut Vec<Function>) {
-    let bindings = if in_function(scopes) {
-        Vec::new()
-    } else {
-        bound_lambdas(node, source)
-    };
-    if !bindings.is_empty() {
+    fn visit_optional_body(&mut self, node: Node<'a>) {
+        let Some(body) = node.child_by_field_name("body") else {
+            return;
+        };
+        self.visit(body);
+    }
+
+    fn visit_function(&mut self, node: Node<'a>) {
+        if written_body(node).is_none() {
+            return;
+        }
+        if !is_real_function(node) {
+            self.visit_children(node);
+            return;
+        }
+        let (global, parts) = function_parts(node, self.source);
+        if parts.is_empty() {
+            self.visit_children(node);
+            return;
+        }
+        if macro_wrapped_block(node, self.scopes) {
+            self.visit_written(node);
+            return;
+        }
+        self.record_function(node, global, &parts);
+    }
+
+    fn visit_written(&mut self, node: Node<'a>) {
+        let Some(body) = written_body(node) else {
+            return;
+        };
+        self.visit(body);
+    }
+
+    fn record_function(&mut self, node: Node<'a>, global: bool, parts: &[String]) {
+        let Some(body) = written_body(node) else {
+            return;
+        };
+        let name = last_part(parts);
+        let params = parameter_list(node);
+        let qualified = qualify(self.scopes, global, parts);
+        self.push_defined(Defined {
+            name: qualified,
+            item: node,
+            body: node,
+            params,
+        });
+        self.scopes.push(Scope::Function(name));
+        self.visit(body);
+        self.scopes.pop();
+    }
+
+    fn visit_declaration(&mut self, node: Node<'a>) {
+        if in_function(self.scopes) {
+            self.visit_children(node);
+            return;
+        }
+        let bindings = bound_lambdas(node, self.source);
+        if bindings.is_empty() {
+            self.visit_children(node);
+            return;
+        }
+        self.visit_bindings(node, bindings);
+    }
+
+    fn visit_bindings(&mut self, item: Node<'a>, bindings: Vec<(String, Node<'a>)>) {
         for (name, lambda) in bindings {
-            let params = lambda
-                .child_by_field_name("declarator")
-                .and_then(|declarator| declarator.child_by_field_name("parameters"));
-            let qualified = qualify(scopes, false, std::slice::from_ref(&name));
-            push_function(out, source, &qualified, node, lambda, params);
-            scopes.push(Scope::Function(name));
-            if let Some(body) = lambda.child_by_field_name("body") {
-                visit(body, source, scopes, out);
-            }
-            scopes.pop();
+            self.visit_binding(item, name, lambda);
         }
-        return;
     }
-    visit_children(node, source, scopes, out);
+
+    fn visit_binding(&mut self, item: Node<'a>, name: String, lambda: Node<'a>) {
+        let params = lambda_parameters(lambda);
+        let qualified = qualify(self.scopes, false, std::slice::from_ref(&name));
+        self.push_defined(Defined {
+            name: qualified,
+            item,
+            body: lambda,
+            params,
+        });
+        self.scopes.push(Scope::Function(name));
+        self.visit_optional_body(lambda);
+        self.scopes.pop();
+    }
+}
+
+fn scope_parts(node: Node, source: &[u8]) -> Vec<String> {
+    let name = node.child_by_field_name("name");
+    name.map(|name| name_parts(name, source))
+        .unwrap_or_default()
+}
+
+fn is_real_function(node: Node) -> bool {
+    let Some(declarator) = node.child_by_field_name("declarator") else {
+        return false;
+    };
+    has_function_declarator(declarator)
+}
+
+fn has_function_declarator(declarator: Node) -> bool {
+    if find_kind(declarator, "function_declarator").is_some() {
+        return true;
+    }
+    find_kind(declarator, "operator_cast").is_some()
+}
+
+fn function_parts(node: Node, source: &[u8]) -> (bool, Vec<String>) {
+    let declarator = node.child_by_field_name("declarator");
+    declarator
+        .map(|declarator| qualified_parts(declarator, source))
+        .unwrap_or((false, Vec::new()))
+}
+
+fn last_part(parts: &[String]) -> String {
+    parts.last().cloned().unwrap_or_default()
+}
+
+fn lambda_parameters(lambda: Node<'_>) -> Option<Node<'_>> {
+    let declarator = lambda.child_by_field_name("declarator")?;
+    declarator.child_by_field_name("parameters")
 }
 
 fn bound_lambdas<'a>(node: Node<'a>, source: &[u8]) -> Vec<(String, Node<'a>)> {
     named_nodes(node)
         .into_iter()
-        .filter(|child| child.kind() == "init_declarator")
-        .filter_map(|child| {
-            let lambda = peel_lambda(child.child_by_field_name("value")?)?;
-            let name = child
-                .child_by_field_name("declarator")
-                .and_then(|declarator| declarator_identifier(declarator))
-                .map(|ident| node_text(ident, source))
-                .unwrap_or_default();
-            if name.is_empty() {
-                None
-            } else {
-                Some((name, lambda))
-            }
-        })
+        .filter_map(|child| bound_lambda(child, source))
         .collect()
+}
+
+fn bound_lambda<'a>(child: Node<'a>, source: &[u8]) -> Option<(String, Node<'a>)> {
+    if child.kind() != "init_declarator" {
+        return None;
+    }
+    let value = child.child_by_field_name("value")?;
+    let lambda = peel_lambda(value)?;
+    let name = declarator_name(child, source);
+    if name.is_empty() {
+        return None;
+    }
+    Some((name, lambda))
+}
+
+fn declarator_name(node: Node, source: &[u8]) -> String {
+    let declarator = node.child_by_field_name("declarator");
+    let ident = declarator.and_then(declarator_identifier);
+    ident
+        .map(|ident| node_text(ident, source))
+        .unwrap_or_default()
 }
 
 fn peel_lambda(node: Node<'_>) -> Option<Node<'_>> {
@@ -279,7 +457,8 @@ fn macro_wrapped_block(node: Node<'_>, scopes: &[Scope]) -> bool {
 }
 
 fn folds_into_parent(node: Node<'_>) -> bool {
-    node.child_by_field_name("type").is_none() && !has_typed_parameters(node)
+    let ty = node.child_by_field_name("type");
+    ty.is_none() && !has_typed_parameters(node)
 }
 
 fn has_typed_parameters(node: Node<'_>) -> bool {
@@ -298,16 +477,18 @@ fn typed_parameter(param: Node<'_>) -> bool {
             .any(|inner| typed_parameter(*inner)),
         "parameter_declaration"
         | "optional_parameter_declaration"
-        | "variadic_parameter_declaration" => {
-            if param.child_by_field_name("declarator").is_some() {
-                return true;
-            }
-            param
-                .child_by_field_name("type")
-                .is_some_and(|ty| ty.kind() != "type_identifier")
-        }
+        | "variadic_parameter_declaration" => declared_parameter(param),
         _ => false,
     }
+}
+
+fn declared_parameter(param: Node<'_>) -> bool {
+    let declarator = param.child_by_field_name("declarator");
+    if declarator.is_some() {
+        return true;
+    }
+    let ty = param.child_by_field_name("type");
+    ty.is_some_and(|ty| ty.kind() != "type_identifier")
 }
 
 fn written_body(node: Node<'_>) -> Option<Node<'_>> {
@@ -323,83 +504,164 @@ fn written_body(node: Node<'_>) -> Option<Node<'_>> {
         .find(|child| child.kind() == "try_statement")
 }
 
-fn push_function(
-    out: &mut Vec<Function>,
-    source: &[u8],
-    name: &str,
-    item: Node<'_>,
-    body: Node<'_>,
-    params: Option<Node<'_>>,
-) {
+impl<'a> Scan<'a> {
+    fn push_defined(&mut self, defined: Defined<'a>) {
+        let span = function_span(defined.item);
+        let attributes = leading_attributes(defined.item);
+        let anchor = attribute_anchor(&attributes, defined.item);
+        let waivers = waivers_above(anchor, self.source);
+        let touch = touch_span(span, &attributes, &waivers);
+        let params = parameters_of(defined.params, self.source);
+        let ordinary = ordinary_names(&params);
+        let receiver = function_receiver(&params, defined.body);
+        let (param_types, qualifier) = function_signature(defined.body, self.source);
+        let classified = classify(
+            defined.body,
+            Score {
+                source: self.source,
+                receiver: receiver.as_deref(),
+                ordinary: &ordinary,
+            },
+        );
+        self.functions.push(Function {
+            name: defined.name,
+            param_types,
+            qualifier,
+            span,
+            touch,
+            params,
+            body: classified,
+            waivers,
+        });
+    }
+}
+
+fn function_span(item: Node) -> Span {
     let mut span = span_of(item);
-    if let Some(start) = content_line(item) {
-        if start > span.start {
-            span.start = start;
-        }
+    span.start = raised_start(item, span.start);
+    span.start = absorbed_start(item, span.start);
+    span
+}
+
+fn raised_start(item: Node, start: u32) -> u32 {
+    let Some(content) = content_line(item) else {
+        return start;
+    };
+    if content > start {
+        return content;
     }
-    if item.kind() == "function_definition" {
-        if let Some(declarator) = item.child_by_field_name("declarator") {
-            let absorbed = named_nodes(item).iter().any(|child| {
-                matches!(
-                    child.kind(),
-                    "class_specifier" | "struct_specifier" | "union_specifier" | "enum_specifier"
-                ) && child.end_byte() <= declarator.start_byte()
-                    && child.child_by_field_name("body").is_some()
-            });
-            if absorbed {
-                span.start = line_of(declarator);
-            }
-        }
+    start
+}
+
+fn absorbed_start(item: Node, start: u32) -> u32 {
+    if item.kind() != "function_definition" {
+        return start;
     }
-    let attributes = leading_attributes(item);
-    let anchor = attributes.first().copied().unwrap_or(item);
-    let waivers = waivers_above(anchor, source);
+    let Some(declarator) = item.child_by_field_name("declarator") else {
+        return start;
+    };
+    if class_before(item, declarator) {
+        return line_of(declarator);
+    }
+    start
+}
+
+fn class_before(item: Node, declarator: Node) -> bool {
+    named_nodes(item)
+        .iter()
+        .any(|child| type_absorbed(*child, declarator))
+}
+
+fn type_absorbed(child: Node, declarator: Node) -> bool {
+    if !absorbed_kind(child.kind()) {
+        return false;
+    }
+    if child.end_byte() > declarator.start_byte() {
+        return false;
+    }
+    has_body(child)
+}
+
+fn absorbed_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "class_specifier" | "struct_specifier" | "union_specifier" | "enum_specifier"
+    )
+}
+
+fn has_body(child: Node) -> bool {
+    let body = child.child_by_field_name("body");
+    body.is_some()
+}
+
+fn attribute_anchor<'a>(attributes: &[Node<'a>], item: Node<'a>) -> Node<'a> {
+    let first = attributes.first();
+    first.copied().unwrap_or(item)
+}
+
+fn touch_span(span: Span, attributes: &[Node], waivers: &[WaiverLine]) -> Span {
     let mut touch = span;
     if let Some(attribute) = attributes.first() {
-        touch.start = span_of(*attribute).start.min(touch.start);
+        let attribute_span = span_of(*attribute);
+        let start = attribute_span.start;
+        touch.start = start.min(touch.start);
     }
     if let Some(first) = waivers.first() {
         touch.start = first.line;
     }
-    let params = parameters_of(params, source);
-    let ordinary: Vec<String> = params
-        .iter()
-        .filter(|param| !param.receiver && !param.name.is_empty())
-        .map(|param| param.name.clone())
-        .collect();
-    let receiver = params.iter().find_map(|param| {
-        if param.receiver && !param.name.is_empty() {
-            Some(param.name.clone())
-        } else {
-            None
+    touch
+}
+
+fn ordinary_names(params: &[Param]) -> Vec<String> {
+    let mut names = Vec::new();
+    for param in params {
+        if let Some(name) = ordinary_name(param) {
+            names.push(name);
         }
-    });
-    let receiver = receiver.or_else(|| {
-        if body.kind() == "lambda_expression" {
-            None
-        } else {
-            Some("this".to_string())
-        }
-    });
-    let (param_types, qualifier) = if body.kind() == "lambda_expression" {
-        (
-            parameter_types(params_node_of_lambda(body), source),
-            String::new(),
-        )
-    } else {
-        signature(body, source)
-    };
-    let classified = classify(body, source, receiver.as_deref(), &ordinary);
-    out.push(Function {
-        name: name.to_string(),
-        param_types,
-        qualifier,
-        span,
-        touch,
-        params,
-        body: classified,
-        waivers,
-    });
+    }
+    names
+}
+
+fn ordinary_name(param: &Param) -> Option<String> {
+    if param.receiver {
+        return None;
+    }
+    let name = &param.name;
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.clone())
+}
+
+fn function_receiver(params: &[Param], body: Node) -> Option<String> {
+    let named = params.iter().find_map(receiver_name);
+    named.or_else(|| default_receiver(body))
+}
+
+fn receiver_name(param: &Param) -> Option<String> {
+    if !param.receiver {
+        return None;
+    }
+    let name = &param.name;
+    if name.is_empty() {
+        return None;
+    }
+    Some(name.clone())
+}
+
+fn default_receiver(body: Node) -> Option<String> {
+    if body.kind() == "lambda_expression" {
+        return None;
+    }
+    Some("this".to_string())
+}
+
+fn function_signature(body: Node, source: &[u8]) -> (Vec<String>, String) {
+    if body.kind() == "lambda_expression" {
+        let params = params_node_of_lambda(body);
+        return (parameter_types(params, source), String::new());
+    }
+    signature(body, source)
 }
 
 fn content_line(node: Node<'_>) -> Option<u32> {
@@ -428,8 +690,8 @@ fn signature(node: Node, source: &[u8]) -> (Vec<String>, String) {
 }
 
 fn params_node_of_lambda(node: Node<'_>) -> Option<Node<'_>> {
-    node.child_by_field_name("declarator")?
-        .child_by_field_name("parameters")
+    let declarator = node.child_by_field_name("declarator")?;
+    declarator.child_by_field_name("parameters")
 }
 
 fn parameter_list(node: Node<'_>) -> Option<Node<'_>> {
@@ -468,40 +730,58 @@ fn parsed_parameters(node: Node, source: &[u8]) -> Vec<ParsedParam> {
     let mut params = Vec::new();
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if !child.is_named() {
-            if node_text(child, source) == "..." {
-                params.push(ParsedParam {
-                    name: "...".to_string(),
-                    receiver: false,
-                    ty: "...".to_string(),
-                });
-            }
-            continue;
-        }
-        match child.kind() {
-            "explicit_object_parameter_declaration" => {
-                if let Some(inner) = named_nodes(child)
-                    .into_iter()
-                    .find(|inner| inner.kind() == "parameter_declaration")
-                {
-                    let mut param = one_parameter(inner, source);
-                    param.receiver = true;
-                    params.push(param);
-                }
-            }
-            "parameter_declaration"
-            | "optional_parameter_declaration"
-            | "variadic_parameter_declaration" => params.push(one_parameter(child, source)),
-            _ => {}
-        }
+        push_parameter(&mut params, child, source);
     }
     params
 }
 
+fn push_parameter(params: &mut Vec<ParsedParam>, child: Node, source: &[u8]) {
+    if !child.is_named() {
+        push_ellipsis(params, child, source);
+        return;
+    }
+    push_named_parameter(params, child, source);
+}
+
+fn push_ellipsis(params: &mut Vec<ParsedParam>, child: Node, source: &[u8]) {
+    if node_text(child, source) != "..." {
+        return;
+    }
+    params.push(ParsedParam {
+        name: "...".to_string(),
+        receiver: false,
+        ty: "...".to_string(),
+    });
+}
+
+fn push_named_parameter(params: &mut Vec<ParsedParam>, child: Node, source: &[u8]) {
+    match child.kind() {
+        "explicit_object_parameter_declaration" => push_receiver_parameter(params, child, source),
+        "parameter_declaration"
+        | "optional_parameter_declaration"
+        | "variadic_parameter_declaration" => params.push(one_parameter(child, source)),
+        _ => {}
+    }
+}
+
+fn push_receiver_parameter(params: &mut Vec<ParsedParam>, child: Node, source: &[u8]) {
+    let Some(inner) = receiver_declaration(child) else {
+        return;
+    };
+    let mut param = one_parameter(inner, source);
+    param.receiver = true;
+    params.push(param);
+}
+
+fn receiver_declaration(child: Node<'_>) -> Option<Node<'_>> {
+    named_nodes(child)
+        .into_iter()
+        .find(|inner| inner.kind() == "parameter_declaration")
+}
+
 fn one_parameter(node: Node, source: &[u8]) -> ParsedParam {
-    let name_node = node
-        .child_by_field_name("declarator")
-        .and_then(declarator_identifier);
+    let declarator = node.child_by_field_name("declarator");
+    let name_node = declarator.and_then(declarator_identifier);
     let name = name_node
         .map(|ident| node_text(ident, source))
         .unwrap_or_default();
@@ -514,25 +794,64 @@ fn one_parameter(node: Node, source: &[u8]) -> ParsedParam {
 
 fn parameter_type(node: Node, source: &[u8], name: Option<Node>) -> String {
     let range = node.byte_range();
-    let mut end = range.end;
-    if let Some(value) = node.child_by_field_name("default_value") {
-        end = end.min(value.start_byte());
-    }
-    if end < range.start || end > source.len() || range.start > source.len() {
+    let end = type_end(node, range.end);
+    if !type_range_ok(range.start, end, source.len()) {
         return String::new();
     }
-    let mut text = String::from_utf8_lossy(&source[range.start..end]).into_owned();
-    if let Some(name) = name {
-        let start = name.start_byte().saturating_sub(range.start);
-        let stop = name.end_byte().saturating_sub(range.start);
-        if start < stop && stop <= text.len() {
-            text.replace_range(start..stop, " ");
-        }
+    let borrowed = String::from_utf8_lossy(&source[range.start..end]);
+    let mut text = borrowed.into_owned();
+    blank_name(&mut text, name, range.start);
+    normalized_type(&text)
+}
+
+fn type_end(node: Node, end: usize) -> usize {
+    let Some(value) = node.child_by_field_name("default_value") else {
+        return end;
+    };
+    end.min(value.start_byte())
+}
+
+fn type_range_ok(start: usize, end: usize, len: usize) -> bool {
+    if end < start {
+        return false;
     }
-    text.trim_end_matches(|ch: char| ch == '=' || ch.is_whitespace())
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    if end > len {
+        return false;
+    }
+    start <= len
+}
+
+fn blank_name(text: &mut String, name: Option<Node>, origin: usize) {
+    let Some(name) = name else {
+        return;
+    };
+    erase_name(text, name, origin);
+}
+
+fn erase_name(text: &mut String, name: Node, origin: usize) {
+    let start = byte_offset(name.start_byte(), origin);
+    let stop = byte_offset(name.end_byte(), origin);
+    if start < stop && stop <= text.len() {
+        text.replace_range(start..stop, " ");
+    }
+}
+
+fn byte_offset(byte: usize, origin: usize) -> usize {
+    byte.saturating_sub(origin)
+}
+
+fn normalized_type(text: &str) -> String {
+    let trimmed = text.trim_end_matches(type_trailer);
+    join_words(trimmed)
+}
+
+fn join_words(text: &str) -> String {
+    let parts: Vec<_> = text.split_whitespace().collect();
+    parts.join(" ")
+}
+
+fn type_trailer(ch: char) -> bool {
+    ch == '=' || ch.is_whitespace()
 }
 
 fn declarator_identifier(node: Node<'_>) -> Option<Node<'_>> {
@@ -542,81 +861,167 @@ fn declarator_identifier(node: Node<'_>) -> Option<Node<'_>> {
         | "reference_declarator"
         | "function_declarator"
         | "abstract_function_declarator"
-        | "parenthesized_declarator" => node
-            .child_by_field_name("declarator")
-            .and_then(declarator_identifier)
-            .or_else(|| {
-                named_nodes(node)
-                    .into_iter()
-                    .find_map(declarator_identifier)
-            }),
-        _ => named_nodes(node)
-            .into_iter()
-            .find_map(declarator_identifier),
+        | "parenthesized_declarator" => nested_declarator(node),
+        _ => first_declarator(node),
     }
+}
+
+fn nested_declarator(node: Node<'_>) -> Option<Node<'_>> {
+    let declarator = node.child_by_field_name("declarator");
+    let found = declarator.and_then(declarator_identifier);
+    found.or_else(|| first_declarator(node))
+}
+
+fn first_declarator(node: Node<'_>) -> Option<Node<'_>> {
+    named_nodes(node)
+        .into_iter()
+        .find_map(declarator_identifier)
 }
 
 fn qualified_parts(node: Node, source: &[u8]) -> (bool, Vec<String>) {
-    if let Some(function) = find_kind(node, "function_declarator") {
-        if let Some(declarator) = function.child_by_field_name("declarator") {
-            return qualified_parts(declarator, source);
-        }
+    if let Some(parts) = declarator_qualified(node, source) {
+        return parts;
     }
-    if node.kind() == "qualified_identifier" || node.kind() == "operator_cast" {
-        let global = flat_text(node, source).starts_with("::");
-        return (global, name_parts(node, source));
+    if let Some(parts) = named_qualified(node, source) {
+        return parts;
     }
-    if let Some(ident) = declarator_identifier(node) {
-        if matches!(node.kind(), "identifier" | "field_identifier") || ident.kind() == "identifier"
-        {
-            let parts = name_parts(node, source);
-            if !parts.is_empty() {
-                return (false, parts);
-            }
-        }
+    if let Some(parts) = ident_qualified(node, source) {
+        return parts;
+    }
+    text_qualified(node, source)
+}
+
+fn declarator_qualified(node: Node, source: &[u8]) -> Option<(bool, Vec<String>)> {
+    let function = find_kind(node, "function_declarator")?;
+    let declarator = function.child_by_field_name("declarator")?;
+    Some(qualified_parts(declarator, source))
+}
+
+fn named_qualified(node: Node, source: &[u8]) -> Option<(bool, Vec<String>)> {
+    if !is_qualified_kind(node.kind()) {
+        return None;
+    }
+    let text = flat_text(node, source);
+    Some((text.starts_with("::"), name_parts(node, source)))
+}
+
+fn is_qualified_kind(kind: &str) -> bool {
+    matches!(kind, "qualified_identifier" | "operator_cast")
+}
+
+fn ident_qualified(node: Node, source: &[u8]) -> Option<(bool, Vec<String>)> {
+    let ident = declarator_identifier(node)?;
+    if !ident_is_name(node, ident) {
+        return None;
     }
     let parts = name_parts(node, source);
-    (flat_text(node, source).starts_with("::"), parts)
+    if parts.is_empty() {
+        return None;
+    }
+    Some((false, parts))
+}
+
+fn ident_is_name(node: Node, ident: Node) -> bool {
+    if matches!(node.kind(), "identifier" | "field_identifier") {
+        return true;
+    }
+    ident.kind() == "identifier"
+}
+
+fn text_qualified(node: Node, source: &[u8]) -> (bool, Vec<String>) {
+    let parts = name_parts(node, source);
+    let text = flat_text(node, source);
+    (text.starts_with("::"), parts)
 }
 
 fn name_parts(node: Node, source: &[u8]) -> Vec<String> {
-    match node.kind() {
-        "qualified_identifier" => {
-            let mut parts = Vec::new();
-            if let Some(scope) = node.child_by_field_name("scope") {
-                parts.extend(name_parts(scope, source));
-            }
-            if let Some(name) = node.child_by_field_name("name") {
-                parts.extend(name_parts(name, source));
-            }
-            if parts.is_empty() {
-                let text = flat_text(node, source);
-                if !text.is_empty() && text != "::" {
-                    parts.push(text.trim_start_matches("::").to_string());
-                }
-            }
-            parts
-        }
-        "identifier"
-        | "field_identifier"
-        | "namespace_identifier"
-        | "type_identifier"
-        | "primitive_type" => {
-            vec![node_text(node, source)]
-        }
-        "operator_name" | "destructor_name" | "operator_cast" | "template_type"
-        | "template_function" | "template_method" => {
-            vec![flat_text(node, source)]
-        }
-        "nested_namespace_specifier" => named_nodes(node)
-            .into_iter()
-            .flat_map(|child| name_parts(child, source))
-            .collect(),
-        _ => named_nodes(node)
-            .into_iter()
-            .flat_map(|child| name_parts(child, source))
-            .collect(),
+    if node.kind() == "qualified_identifier" {
+        return qualified_name_parts(node, source);
     }
+    simple_name_parts(node, source)
+}
+
+fn qualified_name_parts(node: Node, source: &[u8]) -> Vec<String> {
+    let mut parts = Vec::new();
+    let scope = node.child_by_field_name("scope");
+    append_child_parts(&mut parts, scope, source);
+    let name = node.child_by_field_name("name");
+    append_child_parts(&mut parts, name, source);
+    if parts.is_empty() {
+        push_qualified_text(&mut parts, node, source);
+    }
+    parts
+}
+
+fn append_child_parts(parts: &mut Vec<String>, child: Option<Node>, source: &[u8]) {
+    let Some(child) = child else {
+        return;
+    };
+    parts.extend(name_parts(child, source));
+}
+
+fn push_qualified_text(parts: &mut Vec<String>, node: Node, source: &[u8]) {
+    let text = flat_text(node, source);
+    if keep_qualified_text(&text) {
+        parts.push(trimmed_qualified(&text));
+    }
+}
+
+fn keep_qualified_text(text: &str) -> bool {
+    !text.is_empty() && text != "::"
+}
+
+fn trimmed_qualified(text: &str) -> String {
+    let trimmed = text.trim_start_matches("::");
+    trimmed.to_string()
+}
+
+fn simple_name_parts(node: Node, source: &[u8]) -> Vec<String> {
+    if let Some(part) = leaf_name(node, source) {
+        return vec![part];
+    }
+    nested_name_parts(node, source)
+}
+
+fn leaf_name(node: Node, source: &[u8]) -> Option<String> {
+    let kind = node.kind();
+    if is_plain_name(kind) {
+        return Some(node_text(node, source));
+    }
+    if is_operator_name(kind) {
+        return Some(flat_text(node, source));
+    }
+    None
+}
+
+fn is_plain_name(kind: &str) -> bool {
+    matches!(
+        kind,
+        "identifier"
+            | "field_identifier"
+            | "namespace_identifier"
+            | "type_identifier"
+            | "primitive_type"
+    )
+}
+
+fn is_operator_name(kind: &str) -> bool {
+    matches!(
+        kind,
+        "operator_name"
+            | "destructor_name"
+            | "operator_cast"
+            | "template_type"
+            | "template_function"
+            | "template_method"
+    )
+}
+
+fn nested_name_parts(node: Node, source: &[u8]) -> Vec<String> {
+    named_nodes(node)
+        .into_iter()
+        .flat_map(|child| name_parts(child, source))
+        .collect()
 }
 
 fn find_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
@@ -632,93 +1037,178 @@ fn find_kind<'a>(node: Node<'a>, kind: &str) -> Option<Node<'a>> {
 }
 
 fn leading_attributes(node: Node<'_>) -> Vec<Node<'_>> {
+    let mut found = previous_attributes(node);
+    append_inner_attributes(&mut found, node);
+    found.sort_by_key(node_start);
+    found
+}
+
+fn node_start(item: &Node) -> usize {
+    item.start_byte()
+}
+
+fn previous_attributes(node: Node<'_>) -> Vec<Node<'_>> {
     let mut found = Vec::new();
     let mut cursor = node.prev_sibling();
     while let Some(sibling) = cursor {
-        if is_attribute(sibling.kind()) {
-            found.push(sibling);
-        } else if sibling.kind() != "comment" {
+        if !keep_previous(sibling, &mut found) {
             break;
         }
         cursor = sibling.prev_sibling();
     }
     found.reverse();
-    let content = named_nodes(node)
-        .into_iter()
-        .find(|child| !is_attribute(child.kind()))
-        .map(|child| child.start_byte());
-    for child in named_nodes(node) {
-        if is_attribute(child.kind()) && content.is_none_or(|start| child.start_byte() < start) {
-            found.push(child);
-        }
-    }
-    found.sort_by_key(|item| item.start_byte());
     found
+}
+
+fn keep_previous<'a>(sibling: Node<'a>, found: &mut Vec<Node<'a>>) -> bool {
+    if is_attribute(sibling.kind()) {
+        found.push(sibling);
+        return true;
+    }
+    sibling.kind() == "comment"
+}
+
+fn append_inner_attributes<'a>(found: &mut Vec<Node<'a>>, node: Node<'a>) {
+    let content = content_start(node);
+    for child in named_nodes(node) {
+        push_inner_attribute(found, child, content);
+    }
+}
+
+fn content_start(node: Node<'_>) -> Option<usize> {
+    named_nodes(node)
+        .into_iter()
+        .find(not_attribute)
+        .map(node_start_owned)
+}
+
+fn not_attribute(child: &Node) -> bool {
+    !is_attribute(child.kind())
+}
+
+fn node_start_owned(child: Node) -> usize {
+    child.start_byte()
+}
+
+fn push_inner_attribute<'a>(found: &mut Vec<Node<'a>>, child: Node<'a>, content: Option<usize>) {
+    if !is_attribute(child.kind()) {
+        return;
+    }
+    if attribute_before(child, content) {
+        found.push(child);
+    }
+}
+
+fn attribute_before(child: Node, content: Option<usize>) -> bool {
+    content.is_none_or(|start| child.start_byte() < start)
 }
 
 fn is_attribute(kind: &str) -> bool {
     matches!(kind, "attribute_declaration" | "attribute_specifier")
 }
 
+struct WaiverStep {
+    line_item: WaiverLine,
+    next: u32,
+}
+
+struct CommentPlace<'a> {
+    span: Span,
+    sibling: Node<'a>,
+}
+
 fn waivers_above(node: Node, source: &[u8]) -> Vec<WaiverLine> {
-    let mut next_line = span_of(node).start;
+    let span = span_of(node);
+    let mut next_line = span.start;
     let mut found = Vec::new();
     let mut cursor = node.prev_sibling();
     while let Some(sibling) = cursor {
-        if !is_line_comment(sibling, source) {
-            break;
-        }
-        let span = span_of(sibling);
-        if span.start != span.end
-            || span.start + 1 != next_line
-            || shares_code_line(sibling, source)
-        {
-            break;
-        }
-        let Some(waiver) = waiver_from_comment(&node_text(sibling, source), span.start) else {
+        let Some(step) = waiver_before(sibling, source, next_line) else {
             break;
         };
-        found.push(waiver);
-        next_line = span.start;
+        found.push(step.line_item);
+        next_line = step.next;
         cursor = sibling.prev_sibling();
     }
     found.reverse();
     found
 }
 
+fn waiver_before(sibling: Node, source: &[u8], next_line: u32) -> Option<WaiverStep> {
+    if !is_line_comment(sibling, source) {
+        return None;
+    }
+    let span = span_of(sibling);
+    let place = CommentPlace { span, sibling };
+    if !adjacent_comment(place, next_line, source) {
+        return None;
+    }
+    let text = node_text(sibling, source);
+    let waiver = waiver_from_comment(&text, span.start)?;
+    Some(WaiverStep {
+        line_item: waiver,
+        next: span.start,
+    })
+}
+
+fn adjacent_comment(place: CommentPlace, next_line: u32, source: &[u8]) -> bool {
+    let span = place.span;
+    if span.start != span.end {
+        return false;
+    }
+    if span.start + 1 != next_line {
+        return false;
+    }
+    !shares_code_line(place.sibling, source)
+}
+
 fn is_line_comment(node: Node, source: &[u8]) -> bool {
-    node.kind() == "comment" && node_text(node, source).trim_start().starts_with("//")
+    if node.kind() != "comment" {
+        return false;
+    }
+    comment_text_is_line(&node_text(node, source))
+}
+
+fn comment_text_is_line(text: &str) -> bool {
+    let trimmed = text.trim_start();
+    trimmed.starts_with("//")
 }
 
 fn shares_code_line(comment: Node, source: &[u8]) -> bool {
-    let line = comment.start_position().row;
+    let line = row_of(comment);
     let mut cursor = comment.prev_sibling();
     while let Some(sibling) = cursor {
-        if is_line_comment(sibling, source) {
-            if occupied_end(sibling) < line {
-                return false;
-            }
-            cursor = sibling.prev_sibling();
-            continue;
+        if !is_line_comment(sibling, source) {
+            return sibling_shares(sibling, line);
         }
-        return sibling.start_position().row <= line && occupied_end(sibling) >= line;
+        if occupied_end(sibling) < line {
+            return false;
+        }
+        cursor = sibling.prev_sibling();
     }
     false
 }
 
+fn sibling_shares(sibling: Node, line: usize) -> bool {
+    let start = row_of(sibling);
+    start <= line && occupied_end(sibling) >= line
+}
+
 fn occupied_end(node: Node) -> usize {
     let end = node.end_position();
-    if end.column == 0 && end.row > node.start_position().row {
-        end.row - 1
-    } else {
-        end.row
+    if blank_terminal(end.column, end.row, row_of(node)) {
+        return end.row - 1;
     }
+    end.row
+}
+
+fn blank_terminal(column: usize, row: usize, start: usize) -> bool {
+    column == 0 && row > start
 }
 
 fn waiver_from_comment(text: &str, line: u32) -> Option<WaiverLine> {
-    let text = text.trim();
-    let text = text.strip_prefix("//").unwrap_or(text).trim();
-    let (marker, rest) = take_token(text)?;
+    let body = comment_body(text);
+    let (marker, rest) = take_token(body)?;
     if marker != "slopmeter:" {
         return None;
     }
@@ -726,23 +1216,42 @@ fn waiver_from_comment(text: &str, line: u32) -> Option<WaiverLine> {
     if verb != "waive" {
         return None;
     }
-    let (rule, rest) = match take_token(rest) {
-        Some((rule, rest)) => (Some(rule.to_string()), rest),
-        None => (None, ""),
-    };
-    let (number, reason) = match take_token(rest) {
-        Some((token, after)) if is_number_token(token) => {
-            (Some(token.to_string()), non_empty(after))
-        }
-        Some(_) => (None, non_empty(rest)),
-        None => (None, None),
-    };
+    let (rule, rest) = waiver_rule(rest);
+    let (number, reason) = waiver_number(rest);
     Some(WaiverLine {
         line,
         rule,
         number,
         reason,
     })
+}
+
+fn comment_body(text: &str) -> &str {
+    let trimmed = text.trim();
+    without_slashes(trimmed)
+}
+
+fn without_slashes(text: &str) -> &str {
+    let stripped = text.strip_prefix("//");
+    let body = stripped.unwrap_or(text);
+    body.trim()
+}
+
+fn waiver_rule(rest: &str) -> (Option<String>, &str) {
+    match take_token(rest) {
+        Some((rule, rest)) => (Some(rule.to_string()), rest),
+        None => (None, ""),
+    }
+}
+
+fn waiver_number(rest: &str) -> (Option<String>, Option<String>) {
+    match take_token(rest) {
+        Some((token, after)) if is_number_token(token) => {
+            (Some(token.to_string()), non_empty(after))
+        }
+        Some(_) => (None, non_empty(rest)),
+        None => (None, None),
+    }
 }
 
 fn non_empty(text: &str) -> Option<String> {
@@ -779,17 +1288,24 @@ fn is_number_token(token: &str) -> bool {
 fn qualify(scopes: &[Scope], global: bool, parts: &[String]) -> String {
     let mut names = Vec::new();
     if !global {
-        for scope in scopes {
-            let name = match scope {
-                Scope::Namespace(name) | Scope::Class(name) | Scope::Function(name) => name,
-            };
-            names.push(name.as_str());
-        }
+        push_scopes(&mut names, scopes);
     }
     for part in parts {
         names.push(part);
     }
     names.join("::")
+}
+
+fn push_scopes<'a>(names: &mut Vec<&'a str>, scopes: &'a [Scope]) {
+    for scope in scopes {
+        names.push(scope_name(scope));
+    }
+}
+
+fn scope_name(scope: &Scope) -> &str {
+    match scope {
+        Scope::Namespace(name) | Scope::Class(name) | Scope::Function(name) => name,
+    }
 }
 
 fn in_function(scopes: &[Scope]) -> bool {
@@ -814,26 +1330,47 @@ fn is_literal_zero(node: Node, source: &[u8]) -> bool {
 }
 
 fn parentheses_wrap(text: &str) -> bool {
-    let mut depth = 0i32;
+    let mut cursor = ParenCursor {
+        depth: 0,
+        index: 0,
+        len: text.len(),
+    };
     for (index, character) in text.chars().enumerate() {
-        match character {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth < 0 || (depth == 0 && index + 1 != text.len()) {
-                    return false;
-                }
-            }
-            _ => {}
+        cursor.index = index;
+        if !paren_step(&mut cursor, character) {
+            return false;
         }
     }
-    depth == 0
+    cursor.depth == 0
 }
 
-fn classify(node: Node<'_>, source: &[u8], receiver: Option<&str>, ordinary: &[String]) -> Body {
+fn paren_step(cursor: &mut ParenCursor, character: char) -> bool {
+    match character {
+        '(' => {
+            cursor.depth += 1;
+            true
+        }
+        ')' => close_paren(cursor),
+        _ => true,
+    }
+}
+
+fn close_paren(cursor: &mut ParenCursor) -> bool {
+    cursor.depth -= 1;
+    if cursor.depth < 0 {
+        return false;
+    }
+    !closes_early(cursor.depth, cursor.index, cursor.len)
+}
+
+fn closes_early(depth: i32, index: usize, len: usize) -> bool {
+    depth == 0 && index + 1 != len
+}
+
+fn classify(node: Node<'_>, score: Score<'_>) -> Body {
     let mut classifier = Classifier {
-        source,
-        receiver,
+        source: score.source,
+        receiver: score.receiver,
         skip: None,
         lloc: 0,
         structure: 0,
@@ -842,25 +1379,8 @@ fn classify(node: Node<'_>, source: &[u8], receiver: Option<&str>, ordinary: &[S
         cognitive: Vec::new(),
         chains: Vec::new(),
     };
-    let forward = classifier.forwarding(node, ordinary);
-    match node.kind() {
-        "function_definition" => {
-            for child in code_nodes(node) {
-                if child.kind() == "field_initializer_list" {
-                    classifier.walk(child, 0);
-                }
-            }
-            if let Some(body) = written_body(node) {
-                classifier.walk(body, 0);
-            }
-        }
-        "lambda_expression" => {
-            if let Some(body) = node.child_by_field_name("body") {
-                classifier.walk(body, 0);
-            }
-        }
-        _ => {}
-    }
+    let forward = classifier.forwarding(node, score.ordinary);
+    classifier.walk_root(node);
     Body {
         lloc: classifier.lloc,
         decisions: classifier.decisions,
@@ -919,83 +1439,165 @@ impl<'a> Classifier<'a> {
         })
     }
 
+    fn walk_root(&mut self, node: Node<'a>) {
+        match node.kind() {
+            "function_definition" => self.walk_function_root(node),
+            "lambda_expression" => self.walk_lambda_root(node),
+            _ => {}
+        }
+    }
+
+    fn walk_function_root(&mut self, node: Node<'a>) {
+        for child in code_nodes(node) {
+            self.walk_initializer(child);
+        }
+        self.walk_written_root(node);
+    }
+
+    fn walk_initializer(&mut self, child: Node<'a>) {
+        if child.kind() == "field_initializer_list" {
+            self.walk(child, 0);
+        }
+    }
+
+    fn walk_written_root(&mut self, node: Node<'a>) {
+        let Some(body) = written_body(node) else {
+            return;
+        };
+        self.walk(body, 0);
+    }
+
+    fn walk_lambda_root(&mut self, node: Node<'a>) {
+        let Some(body) = node.child_by_field_name("body") else {
+            return;
+        };
+        self.walk(body, 0);
+    }
+
     fn walk(&mut self, node: Node<'a>, nesting: u32) {
         match node.kind() {
             "if_statement" => self.walk_if(node, nesting, false),
             "while_statement" => self.walk_while(node, nesting),
             "do_statement" => self.walk_do(node, nesting),
             "for_statement" | "for_range_loop" | "expansion_statement" => {
-                self.walk_for(node, nesting);
+                self.walk_for(node, nesting)
             }
             "switch_statement" => self.walk_switch(node, nesting),
             "try_statement" => self.walk_try(node, nesting),
             "catch_clause" => self.walk_catch(node, nesting),
+            _ => self.walk_branch(node, nesting),
+        }
+    }
+
+    fn walk_branch(&mut self, node: Node<'a>, nesting: u32) {
+        match node.kind() {
             "conditional_expression" => self.walk_ternary(node, nesting),
             "lambda_expression" => self.walk_lambda(node, nesting),
-            "binary_expression" => {
-                if bool_op(node, self.source).is_some() {
-                    self.walk_boolean(node, nesting);
-                } else {
-                    self.walk_named(node, nesting);
-                }
-            }
+            "binary_expression" => self.walk_binary(node, nesting),
             "preproc_if" | "preproc_elif" => self.walk_preproc(node, nesting, true),
             "preproc_ifdef" | "preproc_elifdef" | "preproc_else" => {
-                self.walk_preproc(node, nesting, false);
+                self.walk_preproc(node, nesting, false)
             }
-            "preproc_def" | "preproc_function_def" | "preproc_include" | "preproc_call" => {}
+            "preproc_def" => {}
+            _ => self.walk_stmt(node, nesting),
+        }
+    }
+
+    fn walk_stmt(&mut self, node: Node<'a>, nesting: u32) {
+        match node.kind() {
+            "preproc_function_def" | "preproc_include" | "preproc_call" => {}
             "compound_statement" => self.walk_compound(node, nesting),
-            "expression_statement" => {
-                self.lloc += 1;
-                self.walk_named(node, nesting);
-            }
+            "expression_statement" => self.walk_counted(node, nesting),
             "declaration" => self.walk_declaration(node, nesting),
-            "return_statement"
-            | "co_return_statement"
-            | "co_yield_statement"
-            | "throw_statement" => {
-                self.lloc += 1;
-                self.walk_named(node, nesting);
+            "return_statement" | "co_return_statement" | "co_yield_statement" => {
+                self.walk_counted(node, nesting)
             }
-            "break_statement" | "continue_statement" | "seh_leave_statement" => self.lloc += 1,
-            "goto_statement" => {
-                self.lloc += 1;
-                self.fundamental(line_of(node));
-            }
+            _ => self.walk_jump(node, nesting),
+        }
+    }
+
+    fn walk_jump(&mut self, node: Node<'a>, nesting: u32) {
+        match node.kind() {
+            "throw_statement" => self.walk_counted(node, nesting),
+            "break_statement" | "continue_statement" | "seh_leave_statement" => self.walk_flow(),
+            "goto_statement" => self.walk_goto(node),
             "case_statement" => self.walk_case(node, nesting),
             "labeled_statement" | "attributed_statement" | "linkage_specification" => {
-                self.walk_named(node, nesting);
+                self.walk_named(node, nesting)
             }
+            _ => self.walk_decl(node, nesting),
+        }
+    }
+
+    fn walk_decl(&mut self, node: Node<'a>, nesting: u32) {
+        match node.kind() {
             "empty_statement" | "comment" => {}
-            "function_definition" => {
-                if folds_into_parent(node) {
-                    if let Some(body) = written_body(node) {
-                        self.walk(body, nesting);
-                    }
-                }
-            }
-            "class_specifier"
-            | "struct_specifier"
-            | "union_specifier"
-            | "enum_specifier"
-            | "alias_declaration"
-            | "using_declaration"
-            | "static_assert_declaration"
-            | "type_definition" => self.lloc += 1,
+            "function_definition" => self.walk_folded(node, nesting),
+            "class_specifier" | "struct_specifier" | "union_specifier" | "enum_specifier"
+            | "alias_declaration" | "using_declaration" => self.walk_type(),
+            _ => self.walk_tail(node, nesting),
+        }
+    }
+
+    fn walk_tail(&mut self, node: Node<'a>, nesting: u32) {
+        match node.kind() {
+            "static_assert_declaration" | "type_definition" => self.walk_type(),
             "field_expression"
             | "call_expression"
             | "subscript_expression"
             | "parenthesized_expression"
             | "template_function"
-            | "template_method" => {
-                if node.kind() == "call_expression" && callee_leaf(node, self.source) == "assert" {
-                    self.decision(line_of(node), nesting);
-                }
-                self.record_chain(node);
-                self.walk_named(node, nesting);
-            }
+            | "template_method" => self.walk_access(node, nesting),
             _ => self.walk_named(node, nesting),
         }
+    }
+
+    fn walk_binary(&mut self, node: Node<'a>, nesting: u32) {
+        if bool_op(node, self.source).is_some() {
+            self.walk_boolean(node, nesting);
+            return;
+        }
+        self.walk_named(node, nesting);
+    }
+
+    fn walk_counted(&mut self, node: Node<'a>, nesting: u32) {
+        self.lloc += 1;
+        self.walk_named(node, nesting);
+    }
+
+    fn walk_flow(&mut self) {
+        self.lloc += 1;
+    }
+
+    fn walk_goto(&mut self, node: Node<'a>) {
+        self.lloc += 1;
+        self.fundamental(line_of(node));
+    }
+
+    fn walk_type(&mut self) {
+        self.lloc += 1;
+    }
+
+    fn walk_folded(&mut self, node: Node<'a>, nesting: u32) {
+        if !folds_into_parent(node) {
+            return;
+        }
+        self.walk_written_body(node, nesting);
+    }
+
+    fn walk_written_body(&mut self, node: Node<'a>, nesting: u32) {
+        let Some(body) = written_body(node) else {
+            return;
+        };
+        self.walk(body, nesting);
+    }
+
+    fn walk_access(&mut self, node: Node<'a>, nesting: u32) {
+        if node.kind() == "call_expression" && callee_is_assert(node, self.source) {
+            self.decision(line_of(node), nesting);
+        }
+        self.record_chain(node);
+        self.walk_named(node, nesting);
     }
 
     fn walk_named(&mut self, node: Node<'a>, nesting: u32) {
@@ -1011,49 +1613,79 @@ impl<'a> Classifier<'a> {
     }
 
     fn walk_preproc(&mut self, node: Node<'a>, nesting: u32, check_zero: bool) {
-        let condition = node.child_by_field_name("condition");
-        let alternative = node.child_by_field_name("alternative");
-        let dead = check_zero
-            && condition.is_some_and(|condition| is_literal_zero(condition, self.source));
-        if !dead {
-            for child in code_nodes(node) {
-                if Some(child) == condition || Some(child) == alternative {
-                    continue;
-                }
-                self.walk(child, nesting);
+        let parts = preproc_parts(node);
+        if !preproc_dead(check_zero, parts.condition, self.source) {
+            self.walk_preproc_live(node, nesting, parts);
+        }
+        self.walk_optional(parts.alternative, nesting);
+    }
+
+    fn walk_preproc_live(&mut self, node: Node<'a>, nesting: u32, parts: Preproc<'a>) {
+        for child in code_nodes(node) {
+            if skip_preproc_child(child, parts) {
+                continue;
             }
+            self.walk(child, nesting);
         }
-        if let Some(alternative) = alternative {
-            self.walk(alternative, nesting);
-        }
+    }
+
+    fn walk_optional(&mut self, node: Option<Node<'a>>, nesting: u32) {
+        let Some(node) = node else {
+            return;
+        };
+        self.walk(node, nesting);
     }
 
     fn walk_if(&mut self, node: Node<'a>, nesting: u32, else_if: bool) {
         let line = line_of(node);
+        self.note_if(line, nesting, else_if);
+        self.decision(line, nesting);
+        self.walk_if_condition(node, nesting);
+        self.walk_if_body(node, nesting);
+        self.walk_if_alternative(node, nesting);
+    }
+
+    fn note_if(&mut self, line: u32, nesting: u32, else_if: bool) {
         if else_if {
             self.hybrid(line);
-        } else {
-            self.lloc += 1;
-            self.structural(line, nesting);
+            return;
         }
-        self.decision(line, nesting);
-        if let Some(condition) = node.child_by_field_name("condition") {
-            self.walk_condition(condition, nesting);
+        self.lloc += 1;
+        self.structural(line, nesting);
+    }
+
+    fn walk_if_condition(&mut self, node: Node<'a>, nesting: u32) {
+        let Some(condition) = node.child_by_field_name("condition") else {
+            return;
+        };
+        self.walk_condition(condition, nesting);
+    }
+
+    fn walk_if_body(&mut self, node: Node<'a>, nesting: u32) {
+        let Some(body) = node.child_by_field_name("consequence") else {
+            return;
+        };
+        self.inside(|this| this.walk(body, nesting + 1));
+    }
+
+    fn walk_if_alternative(&mut self, node: Node<'a>, nesting: u32) {
+        let Some(alternative) = node.child_by_field_name("alternative") else {
+            return;
+        };
+        self.walk_else(alternative, nesting);
+    }
+
+    fn walk_else(&mut self, alternative: Node<'a>, nesting: u32) {
+        let inner = code_nodes(alternative);
+        let Some(child) = inner.first().copied() else {
+            return;
+        };
+        if child.kind() == "if_statement" {
+            self.walk_if(child, nesting, true);
+            return;
         }
-        if let Some(body) = node.child_by_field_name("consequence") {
-            self.inside(|this| this.walk(body, nesting + 1));
-        }
-        if let Some(alternative) = node.child_by_field_name("alternative") {
-            let inner = code_nodes(alternative);
-            if let Some(child) = inner.first() {
-                if child.kind() == "if_statement" {
-                    self.walk_if(*child, nesting, true);
-                } else {
-                    self.hybrid(line_of(alternative));
-                    self.inside(|this| this.walk(*child, nesting + 1));
-                }
-            }
-        }
+        self.hybrid(line_of(alternative));
+        self.inside(|this| this.walk(child, nesting + 1));
     }
 
     fn walk_while(&mut self, node: Node<'a>, nesting: u32) {
@@ -1120,18 +1752,39 @@ impl<'a> Classifier<'a> {
 
     fn walk_try(&mut self, node: Node<'a>, nesting: u32) {
         self.lloc += 1;
+        self.walk_try_initializers(node, nesting);
+        self.walk_try_body(node, nesting);
+        self.walk_try_catches(node, nesting);
+    }
+
+    fn walk_try_initializers(&mut self, node: Node<'a>, nesting: u32) {
         for child in code_nodes(node) {
-            if child.kind() == "field_initializer_list" {
-                self.walk(child, nesting);
-            }
+            self.walk_try_initializer(child, nesting);
         }
-        if let Some(body) = node.child_by_field_name("body") {
-            self.walk(body, nesting);
+    }
+
+    fn walk_try_initializer(&mut self, child: Node<'a>, nesting: u32) {
+        if child.kind() == "field_initializer_list" {
+            self.walk(child, nesting);
         }
+    }
+
+    fn walk_try_body(&mut self, node: Node<'a>, nesting: u32) {
+        let Some(body) = node.child_by_field_name("body") else {
+            return;
+        };
+        self.walk(body, nesting);
+    }
+
+    fn walk_try_catches(&mut self, node: Node<'a>, nesting: u32) {
         for child in code_nodes(node) {
-            if child.kind() == "catch_clause" {
-                self.walk_catch(child, nesting);
-            }
+            self.walk_try_catch(child, nesting);
+        }
+    }
+
+    fn walk_try_catch(&mut self, child: Node<'a>, nesting: u32) {
+        if child.kind() == "catch_clause" {
+            self.walk_catch(child, nesting);
         }
     }
 
@@ -1181,17 +1834,27 @@ impl<'a> Classifier<'a> {
     }
 
     fn walk_value(&mut self, node: Node<'a>, nesting: u32) {
-        if node.kind() == "declaration" || node.kind() == "init_statement" {
-            for child in code_nodes(node) {
-                if let Some(value) = child.child_by_field_name("value") {
-                    self.walk(value, nesting);
-                } else if child.kind() != "init_declarator" {
-                    self.walk_value(child, nesting);
-                }
-            }
+        if is_declared_value(node) {
+            self.walk_declared_values(node, nesting);
             return;
         }
         self.walk(node, nesting);
+    }
+
+    fn walk_declared_values(&mut self, node: Node<'a>, nesting: u32) {
+        for child in code_nodes(node) {
+            self.walk_declared_child(child, nesting);
+        }
+    }
+
+    fn walk_declared_child(&mut self, child: Node<'a>, nesting: u32) {
+        if let Some(value) = child.child_by_field_name("value") {
+            self.walk(value, nesting);
+            return;
+        }
+        if child.kind() != "init_declarator" {
+            self.walk_value(child, nesting);
+        }
     }
 
     fn walk_boolean(&mut self, node: Node<'a>, nesting: u32) {
@@ -1200,39 +1863,78 @@ impl<'a> Classifier<'a> {
     }
 
     fn bool_spine(&mut self, node: Node<'a>, nesting: u32, last: &mut Option<BoolOp>) {
-        if is_negation(node, self.source) {
-            if let Some(inner) = negation_inner(node) {
-                self.bool_spine(inner, nesting, last);
-            }
+        if self.walk_negation(node, nesting, last) {
             return;
         }
-        if node.kind() == "parenthesized_expression" {
-            self.record_chain(node);
-            let mut inner = None;
-            for child in code_nodes(node) {
-                self.bool_spine(child, nesting, &mut inner);
-            }
+        if self.walk_parenthesized_bool(node, nesting) {
             return;
         }
+        self.walk_bool_operator(node, nesting, last);
+    }
+
+    fn walk_negation(&mut self, node: Node<'a>, nesting: u32, last: &mut Option<BoolOp>) -> bool {
+        if !is_negation(node, self.source) {
+            return false;
+        }
+        self.walk_negated(node, nesting, last);
+        true
+    }
+
+    fn walk_negated(&mut self, node: Node<'a>, nesting: u32, last: &mut Option<BoolOp>) {
+        let Some(inner) = negation_inner(node) else {
+            return;
+        };
+        self.bool_spine(inner, nesting, last);
+    }
+
+    fn walk_parenthesized_bool(&mut self, node: Node<'a>, nesting: u32) -> bool {
+        if node.kind() != "parenthesized_expression" {
+            return false;
+        }
+        self.record_chain(node);
+        self.walk_bool_children(node, nesting);
+        true
+    }
+
+    fn walk_bool_children(&mut self, node: Node<'a>, nesting: u32) {
+        let mut inner = None;
+        for child in code_nodes(node) {
+            self.bool_spine(child, nesting, &mut inner);
+        }
+    }
+
+    fn walk_bool_operator(&mut self, node: Node<'a>, nesting: u32, last: &mut Option<BoolOp>) {
         let Some(operator) = bool_op(node, self.source) else {
             self.walk(node, nesting);
             return;
         };
-        if let Some(left) = node.child_by_field_name("left") {
-            self.bool_spine(left, nesting, last);
-        }
-        let line = node
-            .child_by_field_name("operator")
-            .map(line_of)
-            .unwrap_or_else(|| line_of(node));
+        self.walk_bool_left(node, nesting, last);
+        let line = bool_operator_line(node);
         self.decision(line, nesting);
-        if *last != Some(operator) {
-            self.fundamental(line);
-            *last = Some(operator);
+        self.note_bool_change(line, operator, last);
+        self.walk_bool_right(node, nesting, last);
+    }
+
+    fn walk_bool_left(&mut self, node: Node<'a>, nesting: u32, last: &mut Option<BoolOp>) {
+        let Some(left) = node.child_by_field_name("left") else {
+            return;
+        };
+        self.bool_spine(left, nesting, last);
+    }
+
+    fn walk_bool_right(&mut self, node: Node<'a>, nesting: u32, last: &mut Option<BoolOp>) {
+        let Some(right) = node.child_by_field_name("right") else {
+            return;
+        };
+        self.bool_spine(right, nesting, last);
+    }
+
+    fn note_bool_change(&mut self, line: u32, operator: BoolOp, last: &mut Option<BoolOp>) {
+        if *last == Some(operator) {
+            return;
         }
-        if let Some(right) = node.child_by_field_name("right") {
-            self.bool_spine(right, nesting, last);
-        }
+        self.fundamental(line);
+        *last = Some(operator);
     }
 
     fn record_chain(&mut self, node: Node<'a>) {
@@ -1242,30 +1944,20 @@ impl<'a> Classifier<'a> {
         let Some(peeled) = peel(node, self.source) else {
             return;
         };
-        if peeled.hops.is_empty() {
+        if skip_peeled(&self.skip, &peeled, node) {
             return;
         }
-        let bare_forward = self.skip.as_ref() == Some(&node.byte_range())
-            && peeled.root.is_none()
-            && peeled.hops.len() == 1;
-        if bare_forward {
-            return;
-        }
-        let line = peeled.hops[0].line;
-        let rooted = self.receiver.is_some_and(|receiver| {
-            peeled.root.as_deref() == Some(receiver) || peeled.root.as_deref() == Some("this")
-        });
+        self.store_chain(peeled);
+    }
+
+    fn store_chain(&mut self, peeled: Peeled) {
+        let line = hop_line(&peeled);
+        let rooted = receiver_rooted(self.receiver, &peeled);
+        let members = member_list(peeled);
         self.chains.push(Chain {
             line,
             rooted,
-            members: peeled
-                .hops
-                .into_iter()
-                .map(|hop| Member {
-                    name: hop.name,
-                    call: hop.call,
-                })
-                .collect(),
+            members,
         });
     }
 
@@ -1420,17 +2112,41 @@ fn mentioned(nodes: &[Node], source: &[u8], name: &str) -> bool {
 }
 
 fn contains_name(node: Node, source: &[u8], name: &str) -> bool {
-    if matches!(node.kind(), "identifier" | "field_identifier") && node_text(node, source) == name {
+    name_at(node, NameQuery { source, name })
+}
+
+fn name_at(node: Node, query: NameQuery) -> bool {
+    if same_name(node, query) {
         return true;
     }
+    name_in_children(node, query)
+}
+
+fn same_name(node: Node, query: NameQuery) -> bool {
+    if !is_ident_kind(node.kind()) {
+        return false;
+    }
+    node_text(node, query.source) == query.name
+}
+
+fn is_ident_kind(kind: &str) -> bool {
+    matches!(kind, "identifier" | "field_identifier")
+}
+
+fn name_in_children(node: Node, query: NameQuery) -> bool {
     for index in 0..node.child_count() {
-        if let Some(child) = node.child(index) {
-            if contains_name(child, source, name) {
-                return true;
-            }
+        if named_child(node, index, query) {
+            return true;
         }
     }
     false
+}
+
+fn named_child(node: Node, index: u32, query: NameQuery) -> bool {
+    let Some(child) = node.child(index) else {
+        return false;
+    };
+    name_at(child, query)
 }
 
 fn unwrap_call<'a>(node: Node<'a>, source: &[u8]) -> Option<Node<'a>> {
@@ -1489,38 +2205,60 @@ fn argument_allowed(node: Node, source: &[u8], ordinary: &[String]) -> bool {
 }
 
 fn is_literal(node: Node) -> bool {
-    match node.kind() {
-        "number_literal"
-        | "string_literal"
-        | "char_literal"
-        | "raw_string_literal"
-        | "concatenated_string"
-        | "true"
-        | "false"
-        | "null"
-        | "nullptr" => true,
-        "parenthesized_expression" => {
-            let children = code_nodes(node);
-            let [child] = children.as_slice() else {
-                return false;
-            };
-            is_literal(*child)
-        }
-        _ => false,
+    if node.kind() == "parenthesized_expression" {
+        return parenthesized_literal(node);
     }
+    literal_kind(node.kind())
+}
+
+fn literal_kind(kind: &str) -> bool {
+    matches!(
+        kind,
+        "number_literal"
+            | "string_literal"
+            | "char_literal"
+            | "raw_string_literal"
+            | "concatenated_string"
+            | "true"
+            | "false"
+            | "null"
+            | "nullptr"
+    )
+}
+
+fn parenthesized_literal(node: Node) -> bool {
+    let children = code_nodes(node);
+    let [child] = children.as_slice() else {
+        return false;
+    };
+    is_literal(*child)
 }
 
 fn call_is_clean(call: Node, source: &[u8]) -> bool {
-    if let Some(function) = call.child_by_field_name("function") {
-        if nested_call(function, source) {
-            return false;
-        }
+    if function_is_nested(call, source) {
+        return false;
     }
-    if let Some(arguments) = call.child_by_field_name("arguments") {
-        for argument in code_nodes(arguments) {
-            if nested_call(argument, source) {
-                return false;
-            }
+    arguments_are_clean(call, source)
+}
+
+fn function_is_nested(call: Node, source: &[u8]) -> bool {
+    let Some(function) = call.child_by_field_name("function") else {
+        return false;
+    };
+    nested_call(function, source)
+}
+
+fn arguments_are_clean(call: Node, source: &[u8]) -> bool {
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return true;
+    };
+    clean_arguments(arguments, source)
+}
+
+fn clean_arguments(arguments: Node, source: &[u8]) -> bool {
+    for argument in code_nodes(arguments) {
+        if nested_call(argument, source) {
+            return false;
         }
     }
     true
@@ -1528,59 +2266,68 @@ fn call_is_clean(call: Node, source: &[u8]) -> bool {
 
 fn nested_call(node: Node, source: &[u8]) -> bool {
     if identity_named(node, source) {
-        return node
-            .child_by_field_name("arguments")
-            .is_some_and(|arguments| {
-                code_nodes(arguments)
-                    .iter()
-                    .any(|child| contains_call(*child))
-            });
+        return identity_contains_call(node);
     }
     if node.kind() == "call_expression" {
         return true;
     }
+    child_is_nested(node, source)
+}
+
+fn identity_contains_call(node: Node) -> bool {
+    let arguments = node.child_by_field_name("arguments");
+    arguments.is_some_and(call_in_arguments)
+}
+
+fn call_in_arguments(arguments: Node) -> bool {
+    code_nodes(arguments)
+        .iter()
+        .any(|child| contains_call(*child))
+}
+
+fn child_is_nested(node: Node, source: &[u8]) -> bool {
     for index in 0..node.child_count() {
-        if let Some(child) = node.child(index) {
-            if nested_call(child, source) {
-                return true;
-            }
+        if nested_at(node, index, source) {
+            return true;
         }
     }
     false
+}
+
+fn nested_at(node: Node, index: u32, source: &[u8]) -> bool {
+    let Some(child) = node.child(index) else {
+        return false;
+    };
+    nested_call(child, source)
 }
 
 fn contains_call(node: Node) -> bool {
     if node.kind() == "call_expression" {
         return true;
     }
+    call_in_children(node)
+}
+
+fn call_in_children(node: Node) -> bool {
     for index in 0..node.child_count() {
-        if let Some(child) = node.child(index) {
-            if contains_call(child) {
-                return true;
-            }
+        if call_at(node, index) {
+            return true;
         }
     }
     false
 }
 
+fn call_at(node: Node, index: u32) -> bool {
+    let Some(child) = node.child(index) else {
+        return false;
+    };
+    contains_call(child)
+}
+
 fn forwarded_names(call: Node, source: &[u8], ordinary: &[String]) -> Vec<String> {
     let mut found = BTreeSet::new();
-    if let Some(function) = call.child_by_field_name("function") {
-        if function.kind() == "field_expression" {
-            if let Some(object) = function.child_by_field_name("argument") {
-                if let Some(name) = bare_name(object, source) {
-                    found.insert(name);
-                }
-            }
-        }
-    }
-    if let Some(arguments) = call.child_by_field_name("arguments") {
-        for argument in code_nodes(arguments) {
-            if let Some(name) = bare_name(argument, source) {
-                found.insert(name);
-            }
-        }
-    }
+    collect_receiver(&mut found, call, source);
+    collect_arguments(&mut found, call, source);
     ordinary
         .iter()
         .filter(|name| found.contains(*name))
@@ -1588,33 +2335,76 @@ fn forwarded_names(call: Node, source: &[u8], ordinary: &[String]) -> Vec<String
         .collect()
 }
 
+fn collect_receiver(found: &mut BTreeSet<String>, call: Node, source: &[u8]) {
+    let Some(function) = call.child_by_field_name("function") else {
+        return;
+    };
+    insert_field_name(found, function, source);
+}
+
+fn insert_field_name(found: &mut BTreeSet<String>, function: Node, source: &[u8]) {
+    if function.kind() != "field_expression" {
+        return;
+    }
+    let Some(object) = function.child_by_field_name("argument") else {
+        return;
+    };
+    insert_bare(found, object, source);
+}
+
+fn insert_bare(found: &mut BTreeSet<String>, node: Node, source: &[u8]) {
+    let Some(name) = bare_name(node, source) else {
+        return;
+    };
+    found.insert(name);
+}
+
+fn collect_arguments(found: &mut BTreeSet<String>, call: Node, source: &[u8]) {
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return;
+    };
+    for argument in code_nodes(arguments) {
+        insert_bare(found, argument, source);
+    }
+}
+
 fn bare_name(node: Node, source: &[u8]) -> Option<String> {
     match node.kind() {
         "identifier" => Some(node_text(node, source)),
-        "parenthesized_expression" => {
-            let children = code_nodes(node);
-            let [child] = children.as_slice() else {
-                return None;
-            };
-            bare_name(*child, source)
-        }
-        "pointer_expression" if matches!(operator_text(node, source).as_str(), "&" | "*") => node
-            .child_by_field_name("argument")
-            .and_then(|argument| bare_name(argument, source)),
-        "parameter_pack_expansion" => node
-            .child_by_field_name("pattern")
-            .and_then(|pattern| bare_name(pattern, source)),
-        "call_expression" if identity_named(node, source) => {
-            node.child_by_field_name("arguments").and_then(|arguments| {
-                let children = code_nodes(arguments);
-                let [child] = children.as_slice() else {
-                    return None;
-                };
-                bare_name(*child, source)
-            })
-        }
+        "parenthesized_expression" => sole_child_name(node, source),
+        "pointer_expression" if pointer_name_operator(node, source) => pointed_name(node, source),
+        "parameter_pack_expansion" => pack_name(node, source),
+        "call_expression" if identity_named(node, source) => identity_name(node, source),
         _ => None,
     }
+}
+
+fn pointer_name_operator(node: Node, source: &[u8]) -> bool {
+    let text = operator_text(node, source);
+    matches!(text.as_str(), "&" | "*")
+}
+
+fn sole_child_name(node: Node, source: &[u8]) -> Option<String> {
+    let children = code_nodes(node);
+    let [child] = children.as_slice() else {
+        return None;
+    };
+    bare_name(*child, source)
+}
+
+fn pointed_name(node: Node, source: &[u8]) -> Option<String> {
+    let argument = node.child_by_field_name("argument")?;
+    bare_name(argument, source)
+}
+
+fn pack_name(node: Node, source: &[u8]) -> Option<String> {
+    let pattern = node.child_by_field_name("pattern")?;
+    bare_name(pattern, source)
+}
+
+fn identity_name(node: Node, source: &[u8]) -> Option<String> {
+    let arguments = node.child_by_field_name("arguments")?;
+    sole_child_name(arguments, source)
 }
 
 fn identity_named(node: Node, source: &[u8]) -> bool {
@@ -1650,77 +2440,117 @@ fn callee_leaf(node: Node, source: &[u8]) -> String {
 
 fn peel(node: Node, source: &[u8]) -> Option<Peeled> {
     match node.kind() {
-        "identifier" => Some(Peeled {
-            root: Some(node_text(node, source)),
-            hops: Vec::new(),
-        }),
-        "this" => Some(Peeled {
-            root: Some("this".to_string()),
-            hops: Vec::new(),
-        }),
+        "identifier" => Some(peeled_name(node_text(node, source))),
+        "this" => Some(peeled_name("this".to_string())),
         "qualified_identifier" => Some(Peeled {
             root: None,
             hops: Vec::new(),
         }),
-        "field_expression" => {
-            let object = node.child_by_field_name("argument")?;
-            let mut peeled = peel(object, source).unwrap_or(Peeled {
-                root: None,
-                hops: Vec::new(),
-            });
-            let operator = node
-                .child_by_field_name("operator")
-                .map(|operator| node_text(operator, source))
-                .unwrap_or_default();
-            if operator == "." || operator == "->" {
-                let name = node.child_by_field_name("field")?;
-                peeled.hops.push(Hop {
-                    name: field_label(name, source),
-                    call: false,
-                    line: line_of(name),
-                });
-            }
-            Some(peeled)
-        }
-        "template_function" | "template_method" => node
-            .child_by_field_name("name")
-            .and_then(|name| peel(name, source)),
-        "call_expression" => {
-            let function = node.child_by_field_name("function")?;
-            if let Some(name) = bare_call_name(function, source) {
-                if bare_call_roots_a_chain(node) {
-                    return Some(Peeled {
-                        root: None,
-                        hops: Vec::new(),
-                    });
-                }
-                return Some(Peeled {
-                    root: None,
-                    hops: vec![Hop {
-                        name,
-                        call: true,
-                        line: line_of(function),
-                    }],
-                });
-            }
-            let mut peeled = peel(function, source)?;
-            if let Some(last) = peeled.hops.last_mut() {
-                last.call = true;
-            }
-            Some(peeled)
-        }
-        "subscript_expression" => node
-            .child_by_field_name("argument")
-            .and_then(|argument| peel(argument, source)),
-        "parenthesized_expression" => {
-            let children = code_nodes(node);
-            let [child] = children.as_slice() else {
-                return None;
-            };
-            peel(*child, source)
-        }
+        "field_expression" => peel_field(node, source),
+        "template_function" | "template_method" => peel_named(node, source),
+        "call_expression" => peel_call(node, source),
+        "subscript_expression" => peel_argument(node, source),
+        "parenthesized_expression" => peel_parentheses(node, source),
         _ => None,
     }
+}
+
+fn peeled_name(name: String) -> Peeled {
+    Peeled {
+        root: Some(name),
+        hops: Vec::new(),
+    }
+}
+
+fn peel_field(node: Node, source: &[u8]) -> Option<Peeled> {
+    let object = node.child_by_field_name("argument")?;
+    let mut peeled = peel(object, source).unwrap_or(Peeled {
+        root: None,
+        hops: Vec::new(),
+    });
+    if member_operator(node, source) {
+        push_field(&mut peeled, node, source)?;
+    }
+    Some(peeled)
+}
+
+fn member_operator(node: Node, source: &[u8]) -> bool {
+    let operator = node.child_by_field_name("operator");
+    let text = operator_label(operator, source);
+    dot_or_arrow(&text)
+}
+
+fn operator_label(operator: Option<Node>, source: &[u8]) -> String {
+    let Some(operator) = operator else {
+        return String::new();
+    };
+    node_text(operator, source)
+}
+
+fn dot_or_arrow(text: &str) -> bool {
+    text == "." || text == "->"
+}
+
+fn push_field(peeled: &mut Peeled, node: Node, source: &[u8]) -> Option<()> {
+    let name = node.child_by_field_name("field")?;
+    let hops = &mut peeled.hops;
+    hops.push(Hop {
+        name: field_label(name, source),
+        call: false,
+        line: line_of(name),
+    });
+    Some(())
+}
+
+fn peel_named(node: Node, source: &[u8]) -> Option<Peeled> {
+    let name = node.child_by_field_name("name")?;
+    peel(name, source)
+}
+
+fn peel_call(node: Node, source: &[u8]) -> Option<Peeled> {
+    let function = node.child_by_field_name("function")?;
+    if let Some(name) = bare_call_name(function, source) {
+        return Some(named_call(node, function, name));
+    }
+    called(peel(function, source)?)
+}
+
+fn named_call(node: Node, function: Node, name: String) -> Peeled {
+    if bare_call_roots_a_chain(node) {
+        return Peeled {
+            root: None,
+            hops: Vec::new(),
+        };
+    }
+    Peeled {
+        root: None,
+        hops: vec![Hop {
+            name,
+            call: true,
+            line: line_of(function),
+        }],
+    }
+}
+
+fn called(mut peeled: Peeled) -> Option<Peeled> {
+    let hops = &mut peeled.hops;
+    if let Some(last) = hops.last_mut() {
+        last.call = true;
+    }
+    Some(peeled)
+}
+
+fn peel_argument(node: Node, source: &[u8]) -> Option<Peeled> {
+    let argument = node.child_by_field_name("argument")?;
+    peel(argument, source)
+}
+
+fn peel_parentheses(node: Node, source: &[u8]) -> Option<Peeled> {
+    let children = code_nodes(node);
+    let [child] = children.as_slice() else {
+        return None;
+    };
+    peel(*child, source)
 }
 
 fn field_label(node: Node, source: &[u8]) -> String {
@@ -1751,44 +2581,74 @@ fn bare_call_name(node: Node, source: &[u8]) -> Option<String> {
     }
 }
 
+enum ParentStep<'a> {
+    Rooted(bool),
+    Climb(Node<'a>),
+}
+
 fn bare_call_roots_a_chain(node: Node) -> bool {
     let mut current = node;
     loop {
         let Some(parent) = current.parent() else {
             return false;
         };
-        match parent.kind() {
-            "field_expression" => {
-                return parent.child_by_field_name("argument") == Some(current);
-            }
-            "subscript_expression" => {
-                if parent.child_by_field_name("argument") != Some(current) {
-                    return false;
-                }
-                current = parent;
-            }
-            "parenthesized_expression" => {
-                let children = code_nodes(parent);
-                if children.len() != 1 || children.first() != Some(&current) {
-                    return false;
-                }
-                current = parent;
-            }
-            "call_expression" => {
-                if parent.child_by_field_name("function") != Some(current) {
-                    return false;
-                }
-                current = parent;
-            }
-            "template_function" | "template_method" => {
-                if parent.child_by_field_name("name") != Some(current) {
-                    return false;
-                }
-                current = parent;
-            }
-            _ => return false,
+        match parent_step(parent, current) {
+            ParentStep::Rooted(value) => return value,
+            ParentStep::Climb(next) => current = next,
         }
     }
+}
+
+fn parent_step<'a>(parent: Node<'a>, current: Node<'a>) -> ParentStep<'a> {
+    match parent.kind() {
+        "field_expression" => ParentStep::Rooted(field_argument_is(parent, current)),
+        "subscript_expression" => subscript_step(parent, current),
+        "parenthesized_expression" => grouped_step(parent, current),
+        "call_expression" => call_step(parent, current),
+        "template_function" | "template_method" => template_step(parent, current),
+        _ => ParentStep::Rooted(false),
+    }
+}
+
+fn field_argument_is(parent: Node, current: Node) -> bool {
+    parent.child_by_field_name("argument") == Some(current)
+}
+
+fn subscript_step<'a>(parent: Node<'a>, current: Node<'a>) -> ParentStep<'a> {
+    if parent.child_by_field_name("argument") != Some(current) {
+        return ParentStep::Rooted(false);
+    }
+    ParentStep::Climb(parent)
+}
+
+fn grouped_step<'a>(parent: Node<'a>, current: Node<'a>) -> ParentStep<'a> {
+    if !single_child(parent, current) {
+        return ParentStep::Rooted(false);
+    }
+    ParentStep::Climb(parent)
+}
+
+fn single_child(parent: Node, current: Node) -> bool {
+    let children = code_nodes(parent);
+    if children.len() != 1 {
+        return false;
+    }
+    let first = children.first();
+    first == Some(&current)
+}
+
+fn call_step<'a>(parent: Node<'a>, current: Node<'a>) -> ParentStep<'a> {
+    if parent.child_by_field_name("function") != Some(current) {
+        return ParentStep::Rooted(false);
+    }
+    ParentStep::Climb(parent)
+}
+
+fn template_step<'a>(parent: Node<'a>, current: Node<'a>) -> ParentStep<'a> {
+    if parent.child_by_field_name("name") != Some(current) {
+        return ParentStep::Rooted(false);
+    }
+    ParentStep::Climb(parent)
 }
 
 fn chain_root(node: Node) -> Node {
@@ -1836,8 +2696,13 @@ fn is_negation(node: Node, source: &[u8]) -> bool {
 }
 
 fn negation_inner(node: Node<'_>) -> Option<Node<'_>> {
-    node.child_by_field_name("argument")
-        .or_else(|| code_nodes(node).into_iter().next())
+    let argument = node.child_by_field_name("argument");
+    argument.or_else(|| first_code_node(node))
+}
+
+fn first_code_node(node: Node<'_>) -> Option<Node<'_>> {
+    let nodes = code_nodes(node);
+    nodes.into_iter().next()
 }
 
 fn operator_text(node: Node, source: &[u8]) -> String {
@@ -1861,17 +2726,25 @@ fn code_nodes(node: Node<'_>) -> Vec<Node<'_>> {
 }
 
 fn span_of(node: Node) -> Span {
-    let start = node.start_position().row as u32 + 1;
+    let start = row_of(node) as u32 + 1;
     let end_point = node.end_position();
-    let end = if end_point.column == 0 && end_point.row > node.start_position().row {
-        end_point.row as u32
-    } else {
-        end_point.row as u32 + 1
-    };
+    let end = span_end(node, end_point.column, end_point.row);
     Span {
         start,
         end: end.max(start),
     }
+}
+
+fn span_end(node: Node, column: usize, row: usize) -> u32 {
+    if column == 0 && row > row_of(node) {
+        return row as u32;
+    }
+    row as u32 + 1
+}
+
+fn row_of(node: Node) -> usize {
+    let position = node.start_position();
+    position.row
 }
 
 fn named_nodes(node: Node<'_>) -> Vec<Node<'_>> {
@@ -1893,14 +2766,84 @@ fn node_text(node: Node, source: &[u8]) -> String {
 }
 
 fn flat_text(node: Node, source: &[u8]) -> String {
-    node_text(node, source)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    let text = node_text(node, source);
+    join_words(&text)
 }
 
 fn line_of(node: Node) -> u32 {
-    node.start_position().row as u32 + 1
+    row_of(node) as u32 + 1
+}
+
+fn is_declared_value(node: Node) -> bool {
+    node.kind() == "declaration" || node.kind() == "init_statement"
+}
+
+fn bool_operator_line(node: Node) -> u32 {
+    let operator = node.child_by_field_name("operator");
+    let line = operator.map(line_of);
+    line.unwrap_or_else(|| line_of(node))
+}
+
+fn callee_is_assert(node: Node, source: &[u8]) -> bool {
+    callee_leaf(node, source) == "assert"
+}
+
+fn skip_peeled(skip: &Option<Range<usize>>, peeled: &Peeled, node: Node) -> bool {
+    if hop_list(peeled).is_empty() {
+        return true;
+    }
+    bare_forward(skip, peeled, node)
+}
+
+fn hop_list(peeled: &Peeled) -> &[Hop] {
+    &peeled.hops
+}
+
+fn bare_forward(skip: &Option<Range<usize>>, peeled: &Peeled, node: Node) -> bool {
+    if skip.as_ref() != Some(&node.byte_range()) {
+        return false;
+    }
+    if root_present(peeled) {
+        return false;
+    }
+    hop_list(peeled).len() == 1
+}
+
+fn root_present(peeled: &Peeled) -> bool {
+    let root = &peeled.root;
+    root.is_some()
+}
+
+fn hop_line(peeled: &Peeled) -> u32 {
+    let hops = hop_list(peeled);
+    let hop = &hops[0];
+    hop.line
+}
+
+fn receiver_rooted(receiver: Option<&str>, peeled: &Peeled) -> bool {
+    receiver.is_some_and(|name| root_is(peeled, name))
+}
+
+fn root_is(peeled: &Peeled, name: &str) -> bool {
+    let root = peeled_root(peeled);
+    root == Some(name) || root == Some("this")
+}
+
+fn peeled_root(peeled: &Peeled) -> Option<&str> {
+    let root = &peeled.root;
+    root.as_deref()
+}
+
+fn member_list(peeled: Peeled) -> Vec<Member> {
+    let hops = peeled.hops;
+    hops.into_iter().map(member_from_hop).collect()
+}
+
+fn member_from_hop(hop: Hop) -> Member {
+    Member {
+        name: hop.name,
+        call: hop.call,
+    }
 }
 
 #[cfg(test)]

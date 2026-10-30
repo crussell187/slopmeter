@@ -1,16 +1,16 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use crate::adapters;
+use crate::adapters::{self, ParseInput};
 use crate::analyzers::{measure, Measurement};
 use crate::inputs::{
     cover, coverage_path, load_config, mutation_path, score_cpp, score_python, score_rust, select,
-    Config, ConfigError, LcovError, MutationError, SelectError, SelectOptions,
+    Config, ConfigError, LcovError, MutationError, SelectError, SelectOptions, Selected,
 };
 use crate::ir::{File, Language};
 use crate::reporters::{Note, Report};
 use crate::rules::{evaluate, Finding};
-use crate::scope::{partition, ScopeError, ScopeOptions};
+use crate::scope::{partition, ScopeError, ScopeOptions, Scoped};
 
 pub struct CheckOptions {
     pub strict: bool,
@@ -49,144 +49,354 @@ impl std::fmt::Display for CheckError {
 
 impl std::error::Error for CheckError {}
 
+struct Prepared {
+    repo: PathBuf,
+    in_repo: bool,
+    config: Config,
+    python_report: Option<PathBuf>,
+    store_prefix: Option<PathBuf>,
+    prefix: String,
+}
+
+struct Scan<'a> {
+    root: &'a Path,
+    options: &'a CheckOptions,
+    prepared: &'a Prepared,
+}
+
+struct Loaded {
+    files: Vec<File>,
+    measurements: Vec<Measurement>,
+    spans: Vec<(Language, usize, usize)>,
+    lines: usize,
+}
+
 pub fn score(root: &Path, options: &CheckOptions) -> Result<Report, CheckError> {
+    let prepared = prepare(root, options)?;
+    let scan = Scan {
+        root,
+        options,
+        prepared: &prepared,
+    };
+    let loaded = load_files(&scan)?;
+    finish(&scan, loaded)
+}
+
+fn prepare(root: &Path, options: &CheckOptions) -> Result<Prepared, CheckError> {
     let found = crate::scope::repo_root(root).map_err(CheckError::Scope)?;
     let in_repo = found.is_some();
     let repo = found.unwrap_or_else(|| root.to_path_buf());
-    let mut config = load_config(&repo).map_err(CheckError::Config)?;
-    if let Some(coverage) = &options.coverage {
-        config.set_coverage_override(coverage.clone());
-    }
-    if let Some(mutation) = &options.mutation_rust {
-        config.set_mutation_rust_override(mutation.clone());
-    }
-    if let Some(mutation) = &options.mutation_python {
-        config.set_mutation_python_override(mutation.clone());
-    }
-    if let Some(mutation) = &options.mutation_cpp {
-        config.set_mutation_cpp_override(mutation.clone());
-    }
-    let python_root = if options.mutation_python.is_some() {
-        root
-    } else {
-        repo.as_path()
-    };
-    let python_report = mutation_path(python_root, config.mutation_python.as_deref());
-    let store_prefix = python_report
-        .as_ref()
-        .and_then(|store| relative_store(root, store));
+    let config = configured(&repo, options)?;
+    let python_report = python_report(options, &config, (root, repo.as_path()));
+    let store_prefix = store_prefix(root, python_report.as_deref());
     let prefix = subtree_prefix(&repo, root);
-    let selected = select(
-        root,
-        SelectOptions {
-            tests: options.tests,
-            parent_gitignore: in_repo,
+    Ok(Prepared {
+        repo,
+        in_repo,
+        config,
+        python_report,
+        store_prefix,
+        prefix,
+    })
+}
+
+fn configured(repo: &Path, options: &CheckOptions) -> Result<Config, CheckError> {
+    let mut config = load_config(repo).map_err(CheckError::Config)?;
+    apply_overrides(&mut config, options);
+    Ok(config)
+}
+
+fn apply_overrides(config: &mut Config, options: &CheckOptions) {
+    if let Some(coverage) = coverage_override(options) {
+        config.set_coverage_override(coverage);
+    }
+    apply_mutation_overrides(config, options);
+}
+
+fn apply_mutation_overrides(config: &mut Config, options: &CheckOptions) {
+    if let Some(mutation) = rust_override(options) {
+        config.set_mutation_rust_override(mutation);
+    }
+    if let Some(mutation) = python_override(options) {
+        config.set_mutation_python_override(mutation);
+    }
+    if let Some(mutation) = cpp_override(options) {
+        config.set_mutation_cpp_override(mutation);
+    }
+}
+
+fn coverage_override(options: &CheckOptions) -> Option<String> {
+    let coverage = &options.coverage;
+    coverage.clone()
+}
+
+fn rust_override(options: &CheckOptions) -> Option<String> {
+    let mutation = &options.mutation_rust;
+    mutation.clone()
+}
+
+fn python_override(options: &CheckOptions) -> Option<String> {
+    let mutation = &options.mutation_python;
+    mutation.clone()
+}
+
+fn cpp_override(options: &CheckOptions) -> Option<String> {
+    let mutation = &options.mutation_cpp;
+    mutation.clone()
+}
+
+fn python_report(
+    options: &CheckOptions,
+    config: &Config,
+    roots: (&Path, &Path),
+) -> Option<PathBuf> {
+    let mutation = &options.mutation_python;
+    let base = mutation_root(roots.0, roots.1, mutation.is_some());
+    let configured = &config.mutation_python;
+    mutation_path(base, configured.as_deref())
+}
+
+fn mutation_root<'a>(scan: &'a Path, repo: &'a Path, overridden: bool) -> &'a Path {
+    if overridden {
+        scan
+    } else {
+        repo
+    }
+}
+
+fn store_prefix(scan: &Path, store: Option<&Path>) -> Option<PathBuf> {
+    let Some(store) = store else {
+        return None;
+    };
+    relative_store(scan, store)
+}
+
+fn load_files(scan: &Scan<'_>) -> Result<Loaded, CheckError> {
+    let prepared = scan.prepared;
+    let options = scan.options;
+    let selected =
+        select(scan.root, select_options(options, prepared.in_repo)).map_err(CheckError::Select)?;
+    let mut loaded = Loaded {
+        files: Vec::new(),
+        measurements: Vec::new(),
+        spans: Vec::new(),
+        lines: 0,
+    };
+    for item in selected {
+        if kept(prepared, &item.path) {
+            read_item(scan, &mut loaded, &item)?;
+        }
+    }
+    Ok(loaded)
+}
+
+fn select_options(options: &CheckOptions, in_repo: bool) -> SelectOptions {
+    let tests = options.tests;
+    SelectOptions {
+        tests,
+        parent_gitignore: in_repo,
+    }
+}
+
+fn kept(prepared: &Prepared, path: &str) -> bool {
+    let config = &prepared.config;
+    let prefix = &prepared.prefix;
+    if !config.retains(&repo_relative(prefix, path)) {
+        return false;
+    }
+    let store = &prepared.store_prefix;
+    outside_store(store.as_deref(), path)
+}
+
+fn outside_store(store: Option<&Path>, path: &str) -> bool {
+    match store {
+        Some(store) => !starts_with_store(path, store),
+        None => true,
+    }
+}
+
+fn starts_with_store(path: &str, store: &Path) -> bool {
+    let file = Path::new(path);
+    file.starts_with(store)
+}
+
+fn read_item(scan: &Scan<'_>, loaded: &mut Loaded, item: &Selected) -> Result<(), CheckError> {
+    let root = scan.root;
+    let full = root.join(&item.path);
+    let source = fs::read(&full).map_err(|err| CheckError::Read(full, err))?;
+    let count = newline_count(&source);
+    loaded.lines += count;
+    let options = scan.options;
+    let prepared = scan.prepared;
+    let config = &prepared.config;
+    let file = adapters::parse(
+        item.language,
+        ParseInput {
+            path: &item.path,
+            source: &source,
+            include_tests: options.tests,
         },
     )
-    .map_err(CheckError::Select)?;
+    .map_err(CheckError::Adapter)?;
+    push_file(loaded, file, config);
+    Ok(())
+}
 
-    let mut files = Vec::new();
-    let mut measurements = Vec::new();
-    let mut spans = Vec::new();
-    let mut lines = 0usize;
-    for item in selected
-        .into_iter()
-        .filter(|item| config.retains(&repo_relative(&prefix, &item.path)))
-    {
-        if store_prefix
-            .as_ref()
-            .is_some_and(|store| Path::new(&item.path).starts_with(store))
-        {
-            continue;
-        }
-        let full = root.join(&item.path);
-        let source = fs::read(&full).map_err(|err| CheckError::Read(full, err))?;
-        lines += source.iter().filter(|byte| **byte == b'\n').count();
-        let file = adapters::parse(item.language, &item.path, &source, options.tests)
-            .map_err(CheckError::Adapter)?;
-        let start = measurements.len();
-        measurements.extend(measure_file(&file, &config));
-        spans.push((file.language, start, measurements.len()));
-        files.push(file);
+fn newline_count(source: &[u8]) -> usize {
+    source.iter().filter(|byte| **byte == b'\n').count()
+}
+
+fn push_file(loaded: &mut Loaded, file: File, config: &Config) {
+    let measurements = &mut loaded.measurements;
+    let start = measurements.len();
+    measurements.extend(measure_file(&file, config));
+    let end = measurements.len();
+    let language = file.language;
+    let spans = &mut loaded.spans;
+    spans.push((language, start, end));
+    let files = &mut loaded.files;
+    files.push(file);
+}
+
+fn finish(scan: &Scan<'_>, mut loaded: Loaded) -> Result<Report, CheckError> {
+    let prepared = scan.prepared;
+    let config = &prepared.config;
+    let mut notes = file_notes(&loaded.files, config);
+    let coverage = coverage_notes(scan, &mut loaded)?;
+    notes.extend(coverage);
+    let mutation = mutation_notes(&mut loaded, scan)?;
+    notes.extend(mutation);
+    let findings = evaluate_spans(&loaded.measurements, &loaded.spans, config);
+    let scoped = scope_findings(scan, &loaded.files, &findings)?;
+    publish(loaded.lines, notes, scoped)
+}
+
+fn publish(lines: usize, mut notes: Vec<Note>, scoped: Scoped) -> Result<Report, CheckError> {
+    let Scoped {
+        scope,
+        findings,
+        inherited,
+        notes: extra,
+    } = scoped;
+    notes.extend(extra);
+    Ok(Report {
+        scope,
+        tool_version: env!("CARGO_PKG_VERSION").to_string(),
+        kloc: kloc(lines),
+        findings,
+        inherited,
+        notes,
+    })
+}
+
+fn kloc(lines: usize) -> Option<f64> {
+    if lines == 0 {
+        return None;
     }
+    Some(lines as f64 / 1000.0)
+}
 
-    let scored: Vec<&str> = files.iter().map(|file| file.path.as_str()).collect();
-    let coverage_root = if options.coverage.is_some() {
-        root
-    } else {
-        repo.as_path()
-    };
-    let report = coverage_path(coverage_root, config.coverage.as_deref());
-    let mut notes = departure_notes(&config);
-    notes.extend(unparsed_notes(&files));
-    notes.extend(macro_notes(&files));
-    notes.extend(
-        cover(&mut measurements, &scored, report.as_deref()).map_err(CheckError::Coverage)?,
-    );
-    let rust_root = if options.mutation_rust.is_some() {
-        root
-    } else {
-        repo.as_path()
-    };
-    let rust_report = mutation_path(rust_root, config.mutation_rust.as_deref());
-    let rust_ranges: Vec<(usize, usize)> = spans
-        .iter()
-        .filter(|(language, _, _)| *language == Language::Rust)
-        .map(|(_, start, end)| (*start, *end))
-        .collect();
-    let python_ranges: Vec<(usize, usize)> = spans
-        .iter()
-        .filter(|(language, _, _)| *language == Language::Python)
-        .map(|(_, start, end)| (*start, *end))
-        .collect();
-    notes.extend(
-        score_rust(&mut measurements, &rust_ranges, rust_report.as_deref())
-            .map_err(CheckError::Mutation)?,
-    );
-    notes.extend(
-        score_python(
-            &mut measurements,
-            &python_ranges,
-            python_report.as_deref(),
-            root,
-        )
-        .map_err(CheckError::Mutation)?,
-    );
-    let cpp_root = if options.mutation_cpp.is_some() {
-        root
-    } else {
-        repo.as_path()
-    };
-    let cpp_report = mutation_path(cpp_root, config.mutation_cpp.as_deref());
-    let cpp_ranges: Vec<(usize, usize)> = spans
-        .iter()
-        .filter(|(language, _, _)| *language == Language::Cpp)
-        .map(|(_, start, end)| (*start, *end))
-        .collect();
-    notes.extend(
-        score_cpp(&mut measurements, &cpp_ranges, cpp_report.as_deref())
-            .map_err(CheckError::Mutation)?,
-    );
-    let findings = evaluate_spans(&measurements, &spans, &config);
-    let scoped = partition(
-        root,
-        &files,
-        &findings,
+fn scope_findings(
+    scan: &Scan<'_>,
+    files: &[File],
+    findings: &[Finding],
+) -> Result<Scoped, CheckError> {
+    let options = scan.options;
+    let changed = &options.changed;
+    partition(
+        scan.root,
+        files,
+        findings,
         ScopeOptions {
-            changed: options.changed.clone(),
+            changed: changed.clone(),
             strict: options.strict,
         },
     )
-    .map_err(CheckError::Scope)?;
-    notes.extend(scoped.notes);
-    Ok(Report {
-        scope: scoped.scope,
-        tool_version: env!("CARGO_PKG_VERSION").to_string(),
-        kloc: (lines > 0).then_some(lines as f64 / 1000.0),
-        findings: scoped.findings,
-        inherited: scoped.inherited,
-        notes,
-    })
+    .map_err(CheckError::Scope)
+}
+
+fn file_notes(files: &[File], config: &Config) -> Vec<Note> {
+    let mut notes = departure_notes(config);
+    notes.extend(unparsed_notes(files));
+    notes.extend(macro_notes(files));
+    notes
+}
+
+fn coverage_notes(scan: &Scan<'_>, loaded: &mut Loaded) -> Result<Vec<Note>, CheckError> {
+    let prepared = scan.prepared;
+    let options = scan.options;
+    let coverage = &options.coverage;
+    let root = mutation_root(scan.root, &prepared.repo, coverage.is_some());
+    let config = &prepared.config;
+    let configured = &config.coverage;
+    let report = coverage_path(root, configured.as_deref());
+    let scored = scored_paths(&loaded.files);
+    let measurements = &mut loaded.measurements;
+    cover(measurements, &scored, report.as_deref()).map_err(CheckError::Coverage)
+}
+
+fn scored_paths(files: &[File]) -> Vec<&str> {
+    let mut paths = Vec::new();
+    for file in files {
+        let path = &file.path;
+        paths.push(path.as_str());
+    }
+    paths
+}
+
+fn mutation_notes(loaded: &mut Loaded, scan: &Scan<'_>) -> Result<Vec<Note>, CheckError> {
+    let mut notes = Vec::new();
+    notes.extend(rust_mutation(loaded, scan)?);
+    notes.extend(python_mutation(loaded, scan)?);
+    notes.extend(cpp_mutation(loaded, scan)?);
+    Ok(notes)
+}
+
+fn rust_mutation(loaded: &mut Loaded, scan: &Scan<'_>) -> Result<Vec<Note>, CheckError> {
+    let options = scan.options;
+    let flag = &options.mutation_rust;
+    let prepared = scan.prepared;
+    let config = &prepared.config;
+    let configured = &config.mutation_rust;
+    let repo = &prepared.repo;
+    let root = mutation_root(scan.root, repo, flag.is_some());
+    let report = mutation_path(root, configured.as_deref());
+    let ranges = language_ranges(&loaded.spans, Language::Rust);
+    let measurements = &mut loaded.measurements;
+    score_rust(measurements, &ranges, report.as_deref()).map_err(CheckError::Mutation)
+}
+
+fn language_ranges(spans: &[(Language, usize, usize)], wanted: Language) -> Vec<(usize, usize)> {
+    let mut ranges = Vec::new();
+    for (language, start, end) in spans {
+        if *language == wanted {
+            ranges.push((*start, *end));
+        }
+    }
+    ranges
+}
+
+fn python_mutation(loaded: &mut Loaded, scan: &Scan<'_>) -> Result<Vec<Note>, CheckError> {
+    let prepared = scan.prepared;
+    let report = &prepared.python_report;
+    let ranges = language_ranges(&loaded.spans, Language::Python);
+    let measurements = &mut loaded.measurements;
+    score_python(measurements, &ranges, (report.as_deref(), scan.root))
+        .map_err(CheckError::Mutation)
+}
+
+fn cpp_mutation(loaded: &mut Loaded, scan: &Scan<'_>) -> Result<Vec<Note>, CheckError> {
+    let options = scan.options;
+    let flag = &options.mutation_cpp;
+    let prepared = scan.prepared;
+    let config = &prepared.config;
+    let configured = &config.mutation_cpp;
+    let repo = &prepared.repo;
+    let root = mutation_root(scan.root, repo, flag.is_some());
+    let report = mutation_path(root, configured.as_deref());
+    let ranges = language_ranges(&loaded.spans, Language::Cpp);
+    let measurements = &mut loaded.measurements;
+    score_cpp(measurements, &ranges, report.as_deref()).map_err(CheckError::Mutation)
 }
 
 fn departure_notes(config: &Config) -> Vec<Note> {
@@ -214,7 +424,7 @@ fn relative_store(scan: &Path, store: &Path) -> Option<PathBuf> {
     let scan = scan.canonicalize().ok()?;
     let store = store.canonicalize().ok()?;
     let relative = store.strip_prefix(&scan).ok()?;
-    if relative.as_os_str().is_empty() {
+    if empty_path(&relative) {
         return None;
     }
     Some(relative.to_path_buf())
@@ -250,28 +460,53 @@ fn repo_relative(prefix: &str, path: &str) -> String {
     }
 }
 
+fn empty_path(path: &Path) -> bool {
+    let text = path.as_os_str();
+    text.is_empty()
+}
+
 fn subtree_prefix(repo: &Path, start: &Path) -> String {
-    let repo = repo.canonicalize().unwrap_or_else(|_| repo.to_path_buf());
-    let start = start.canonicalize().unwrap_or_else(|_| start.to_path_buf());
-    start
-        .strip_prefix(&repo)
-        .map(|rel| {
-            rel.components()
-                .filter_map(|component| match component {
-                    std::path::Component::Normal(part) => part.to_str(),
-                    _ => None,
-                })
-                .collect::<Vec<_>>()
-                .join("/")
-        })
-        .unwrap_or_default()
+    let repo = canonical(repo);
+    let start = canonical(start);
+    match start.strip_prefix(&repo) {
+        Ok(rel) => join_components(rel),
+        Err(_) => String::new(),
+    }
+}
+
+fn canonical(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
+fn join_components(path: &Path) -> String {
+    let mut parts = Vec::new();
+    for component in path.components() {
+        if let Some(part) = normal_name(component) {
+            parts.push(part);
+        }
+    }
+    parts.join("/")
+}
+
+fn normal_name(component: std::path::Component<'_>) -> Option<&str> {
+    match component {
+        std::path::Component::Normal(part) => part.to_str(),
+        _ => None,
+    }
 }
 
 fn measure_file(file: &File, config: &Config) -> Vec<Measurement> {
-    let extra = &config.profile(file.language).f08_allow;
-    let mut names = adapters::allow(file.language).to_vec();
-    names.extend(extra.iter().map(String::as_str));
+    let names = allow_names(file, config);
     measure(file, &names)
+}
+
+fn allow_names<'a>(file: &File, config: &'a Config) -> Vec<&'a str> {
+    let profile = config.profile(file.language);
+    let extra = &profile.f08_allow;
+    let mut names = Vec::new();
+    names.extend(adapters::allow(file.language));
+    names.extend(extra.iter().map(String::as_str));
+    names
 }
 
 fn evaluate_spans(

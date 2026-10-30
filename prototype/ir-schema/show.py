@@ -35,50 +35,85 @@ def frame(doc, file_index, fn_index):
     file_ = doc["files"][file_index]
     fn = file_["functions"][fn_index]
     derived = derive(fn, file_["language"])
-    lines = [
+    lines = header_lines(doc, file_, fn, file_index, fn_index)
+    append_body(lines, derived)
+    append_coverage(lines, derived)
+    append_footer(lines, fn, file_)
+    return "\n".join(lines)
+
+
+def header_lines(doc, file_, fn, file_index, fn_index):
+    files = doc["files"]
+    functions = file_["functions"]
+    return [
         f"{BOLD}IR{RESET} {DIM}version {doc['version']}{RESET}",
         (
-            f"{BOLD}file{RESET} {file_index + 1}/{len(doc['files'])}  "
+            f"{BOLD}file{RESET} {file_index + 1}/{len(files)}  "
             f"{file_['path']}  {DIM}{file_['language']}  "
             f"unparsed_ratio {file_['unparsed_ratio']}{RESET}"
         ),
         (
-            f"{BOLD}function{RESET} {fn_index + 1}/{len(file_['functions'])}  "
+            f"{BOLD}function{RESET} {fn_index + 1}/{len(functions)}  "
             f"{fn['name']}"
         ),
         "",
         f"{BOLD}derived{RESET}",
     ]
-    if not derived["encoded"]:
-        lines.append(f"  {DIM}identity and span only; body not encoded{RESET}")
-    else:
-        lines.append(
-            f"  cc {derived['cc']}   nesting {derived['nesting']}   "
-            f"lloc {derived['lloc']}"
-        )
-        forward = derived["forward"]
-        if forward is None:
-            lines.append(f"  forward {DIM}none{RESET}")
-        else:
-            ratio = forward["ratio"]
-            shown = "n/a" if ratio is None else f"{ratio:.2f}"
-            lines.append(
-                f"  forward line {forward['line']}  "
-                f"{', '.join(forward['forwarded'])}  ratio {shown}"
-            )
-        interesting = [ch for ch in derived["chains"] if ch["depth"] > 0]
-        if not interesting:
-            lines.append(f"  chains {DIM}none over depth 0{RESET}")
-        for ch in interesting:
-            root = "receiver" if ch["rooted"] else "other"
-            lines.append(
-                f"  chain line {ch['line']}  depth {ch['depth']}  "
-                f"{root}  {ch['text']}"
-            )
+
+
+def append_body(lines, derived):
+    if derived["encoded"]:
+        append_encoded(lines, derived)
+        return
+    lines.append(f"  {DIM}identity and span only; body not encoded{RESET}")
+
+
+def append_encoded(lines, derived):
+    lines.append(
+        f"  cc {derived['cc']}   nesting {derived['nesting']}   "
+        f"lloc {derived['lloc']}"
+    )
+    append_forward(lines, derived["forward"])
+    interesting = [ch for ch in derived["chains"] if ch["depth"] > 0]
+    append_chains(lines, interesting)
+
+
+def append_forward(lines, forward):
+    if forward is None:
+        lines.append(f"  forward {DIM}none{RESET}")
+        return
+    ratio = forward["ratio"]
+    shown = "n/a" if ratio is None else f"{ratio:.2f}"
+    lines.append(
+        f"  forward line {forward['line']}  "
+        f"{', '.join(forward['forwarded'])}  ratio {shown}"
+    )
+
+
+def append_chains(lines, interesting):
+    if not interesting:
+        lines.append(f"  chains {DIM}none over depth 0{RESET}")
+        return
+    for ch in interesting:
+        append_chain(lines, ch)
+
+
+def append_chain(lines, ch):
+    root = "receiver" if ch["rooted"] else "other"
+    lines.append(
+        f"  chain line {ch['line']}  depth {ch['depth']}  "
+        f"{root}  {ch['text']}"
+    )
+
+
+def append_coverage(lines, derived):
     lines.append(
         f"  coverage {DIM}{derived['coverage']}{RESET}  "
         f"join {derived['join_span']['start']}-{derived['join_span']['end']}"
     )
+
+
+def append_footer(lines, fn, file_):
     lines += [
         "",
         f"{BOLD}record{RESET}",
@@ -94,7 +129,6 @@ def frame(doc, file_index, fn_index):
         f"{BOLD}k{RESET} {DIM}prev function{RESET}  "
         f"{BOLD}q{RESET} {DIM}quit{RESET}",
     ]
-    return "\n".join(lines)
 
 
 def dump(doc):
@@ -120,52 +154,88 @@ def read_key():
     import termios
     import tty
 
-    fd = sys.stdin.fileno()
+    stream = sys.stdin
+    fd = stream.fileno()
     old = termios.tcgetattr(fd)
     try:
         tty.setraw(fd)
-        char = sys.stdin.read(1)
+        char = stream.read(1)
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old)
     return char
 
 
+def write_out(text):
+    stream = sys.stdout
+    stream.write(text)
+
+
+def flush_out():
+    stream = sys.stdout
+    stream.flush()
+
+
+def stdin_is_tty():
+    stream = sys.stdin
+    return stream.isatty()
+
+
+def dump_requested():
+    args = sys.argv
+    if "--dump" in args:
+        return True
+    return not stdin_is_tty()
+
+
 def main():
     doc = document()
-    if "--dump" in sys.argv or not sys.stdin.isatty():
+    if dump_requested():
         dump(doc)
         return
+    browse(doc)
+
+
+def browse(doc):
     file_index = 0
-    fn_index = start_index(
-        doc["files"][0]["path"], doc["files"][0]["functions"]
-    )
+    first = doc["files"][0]
+    fn_index = start_index(first["path"], first["functions"])
     while True:
-        sys.stdout.write("\033[2J\033[H")
-        sys.stdout.write(frame(doc, file_index, fn_index))
-        sys.stdout.write("\n")
-        sys.stdout.flush()
-        char = read_key()
-        file_ = doc["files"][file_index]
-        count = len(file_["functions"])
-        if char in ("q", "\x03"):
-            sys.stdout.write("\033[2J\033[H")
+        paint(doc, file_index, fn_index)
+        step = apply_key(doc, file_index, fn_index, read_key())
+        if step is None:
             return
-        if char == "n":
-            file_index = (file_index + 1) % len(doc["files"])
-            fn_index = start_index(
-                doc["files"][file_index]["path"],
-                doc["files"][file_index]["functions"],
-            )
-        elif char == "p":
-            file_index = (file_index - 1) % len(doc["files"])
-            fn_index = start_index(
-                doc["files"][file_index]["path"],
-                doc["files"][file_index]["functions"],
-            )
-        elif char == "j":
-            fn_index = (fn_index + 1) % count
-        elif char == "k":
-            fn_index = (fn_index - 1) % count
+        file_index, fn_index = step
+
+
+def paint(doc, file_index, fn_index):
+    write_out("\033[2J\033[H")
+    write_out(frame(doc, file_index, fn_index))
+    write_out("\n")
+    flush_out()
+
+
+def apply_key(doc, file_index, fn_index, char):
+    file_ = doc["files"][file_index]
+    count = len(file_["functions"])
+    if char in ("q", "\x03"):
+        write_out("\033[2J\033[H")
+        return None
+    if char == "n":
+        return next_file(doc, file_index, 1)
+    if char == "p":
+        return next_file(doc, file_index, -1)
+    if char == "j":
+        return file_index, (fn_index + 1) % count
+    if char == "k":
+        return file_index, (fn_index - 1) % count
+    return file_index, fn_index
+
+
+def next_file(doc, file_index, delta):
+    files = doc["files"]
+    file_index = (file_index + delta) % len(files)
+    chosen = files[file_index]
+    return file_index, start_index(chosen["path"], chosen["functions"])
 
 
 if __name__ == "__main__":

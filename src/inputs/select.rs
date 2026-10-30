@@ -37,13 +37,29 @@ impl std::fmt::Display for SelectError {
 impl std::error::Error for SelectError {}
 
 pub fn select(root: &Path, options: SelectOptions) -> Result<Vec<Selected>, SelectError> {
-    let meta = fs::metadata(root).map_err(|_| SelectError::NotADirectory(root.to_path_buf()))?;
-    if !meta.is_dir() {
-        return Err(SelectError::NotADirectory(root.to_path_buf()));
+    require_directory(root)?;
+    let walker = walker(root, options);
+    let mut selected = Vec::new();
+    for entry in walker {
+        if let Some(item) = consider(entry, root, options)? {
+            selected.push(item);
+        }
     }
+    selected.sort_by(cmp_selected);
+    Ok(selected)
+}
 
-    let in_git = root.join(".git").exists() || options.parent_gitignore;
-    let walker = WalkBuilder::new(root)
+fn require_directory(root: &Path) -> Result<(), SelectError> {
+    let meta = fs::metadata(root).map_err(|_| SelectError::NotADirectory(root.to_path_buf()))?;
+    if meta.is_dir() {
+        return Ok(());
+    }
+    Err(SelectError::NotADirectory(root.to_path_buf()))
+}
+
+fn walker(root: &Path, options: SelectOptions) -> ignore::Walk {
+    let in_git = git_repo(root, options);
+    WalkBuilder::new(root)
         .standard_filters(false)
         .hidden(false)
         .parents(options.parent_gitignore)
@@ -52,37 +68,65 @@ pub fn select(root: &Path, options: SelectOptions) -> Result<Vec<Selected>, Sele
         .git_global(in_git)
         .git_exclude(in_git)
         .filter_entry(|entry| !is_denied_directory(entry))
-        .build();
+        .build()
+}
 
-    let mut selected = Vec::new();
-    for entry in walker {
-        let entry = entry.map_err(SelectError::Walk)?;
-        if !entry.file_type().is_some_and(|kind| kind.is_file()) {
-            continue;
-        }
-        let Some(rel) = relative_path(root, entry.path()) else {
-            continue;
-        };
-        let Some(language) = language_of(&rel) else {
-            continue;
-        };
-        if is_protobuf(&rel) || (!options.tests && is_test_file(&rel)) {
-            continue;
-        }
-        selected.push(Selected {
-            path: rel,
-            language,
-        });
+fn git_repo(root: &Path, options: SelectOptions) -> bool {
+    let marker = root.join(".git");
+    marker.exists() || options.parent_gitignore
+}
+
+fn consider(
+    entry: Result<ignore::DirEntry, ignore::Error>,
+    root: &Path,
+    options: SelectOptions,
+) -> Result<Option<Selected>, SelectError> {
+    let entry = entry.map_err(SelectError::Walk)?;
+    if !is_source_file(&entry) {
+        return Ok(None);
     }
-    selected.sort_by(|a, b| a.path.cmp(&b.path));
-    Ok(selected)
+    let Some(rel) = relative_path(root, entry.path()) else {
+        return Ok(None);
+    };
+    let Some(language) = language_of(&rel) else {
+        return Ok(None);
+    };
+    if skip_file(&rel, options) {
+        return Ok(None);
+    }
+    Ok(Some(Selected {
+        path: rel,
+        language,
+    }))
+}
+
+fn is_source_file(entry: &ignore::DirEntry) -> bool {
+    let kind = entry.file_type();
+    kind.is_some_and(|kind| kind.is_file())
+}
+
+fn skip_file(rel: &str, options: SelectOptions) -> bool {
+    if is_protobuf(rel) {
+        return true;
+    }
+    if options.tests {
+        return false;
+    }
+    is_test_file(rel)
+}
+
+fn cmp_selected(left: &Selected, right: &Selected) -> std::cmp::Ordering {
+    let left_path = &left.path;
+    let right_path = &right.path;
+    left_path.cmp(right_path)
 }
 
 fn is_denied_directory(entry: &ignore::DirEntry) -> bool {
     if entry.depth() == 0 {
         return false;
     }
-    entry.file_type().is_some_and(|kind| kind.is_dir()) && is_denied_name(entry.file_name())
+    let kind = entry.file_type();
+    kind.is_some_and(|kind| kind.is_dir()) && is_denied_name(entry.file_name())
 }
 
 fn is_denied_name(name: &std::ffi::OsStr) -> bool {
@@ -117,18 +161,33 @@ fn relative_path(root: &Path, path: &Path) -> Option<String> {
 }
 
 fn file_name(rel: &str) -> &str {
-    rel.rsplit('/').next().unwrap_or(rel)
+    let mut parts = rel.rsplit('/');
+    parts.next().unwrap_or(rel)
 }
 
 fn language_of(rel: &str) -> Option<Language> {
-    let ext = file_name(rel).rsplit_once('.')?.1;
-    match ext {
-        "py" => Some(Language::Python),
-        "rs" => Some(Language::Rust),
-        "cpp" | "cc" | "cxx" | "c++" | "h" | "hh" | "hpp" | "hxx" | "inl" | "ipp" | "cppm"
-        | "ixx" => Some(Language::Cpp),
-        _ => None,
+    let name = file_name(rel);
+    let Some(pair) = name.rsplit_once('.') else {
+        return None;
+    };
+    let ext = pair.1;
+    if ext == "py" {
+        return Some(Language::Python);
     }
+    if ext == "rs" {
+        return Some(Language::Rust);
+    }
+    if cpp_extension(ext) {
+        return Some(Language::Cpp);
+    }
+    None
+}
+
+fn cpp_extension(ext: &str) -> bool {
+    matches!(
+        ext,
+        "cpp" | "cc" | "cxx" | "c++" | "h" | "hh" | "hpp" | "hxx" | "inl" | "ipp" | "cppm" | "ixx"
+    )
 }
 
 fn is_protobuf(rel: &str) -> bool {
@@ -144,22 +203,41 @@ fn is_protobuf(rel: &str) -> bool {
 fn is_test_file(rel: &str) -> bool {
     let mut segments = rel.split('/');
     let name = segments.next_back().unwrap_or(rel);
-    if segments.any(|segment| matches!(segment, "test" | "tests" | "fuzz" | "testing")) {
+    if segments.any(test_dir_name) {
         return true;
     }
-    if name == "conftest.py"
-        || (name.starts_with("test_") && name.ends_with(".py"))
-        || name.ends_with("_test.py")
-    {
+    if python_test_name(name) {
         return true;
     }
+    cpp_test_name(name)
+}
+
+fn test_dir_name(segment: &str) -> bool {
+    matches!(segment, "test" | "tests" | "fuzz" | "testing")
+}
+
+fn python_test_name(name: &str) -> bool {
+    if name == "conftest.py" {
+        return true;
+    }
+    if name.starts_with("test_") && name.ends_with(".py") {
+        return true;
+    }
+    name.ends_with("_test.py")
+}
+
+fn cpp_test_name(name: &str) -> bool {
     let Some((stem, ext)) = name.rsplit_once('.') else {
         return false;
     };
-    matches!(
-        ext,
-        "cpp" | "cc" | "cxx" | "c++" | "h" | "hh" | "hpp" | "hxx" | "inl" | "ipp" | "cppm" | "ixx"
-    ) && (stem.ends_with("_test") || stem.ends_with("_tests") || stem.ends_with("_unittest"))
+    if !cpp_extension(ext) {
+        return false;
+    }
+    cpp_test_stem(stem)
+}
+
+fn cpp_test_stem(stem: &str) -> bool {
+    stem.ends_with("_test") || stem.ends_with("_tests") || stem.ends_with("_unittest")
 }
 
 #[cfg(test)]

@@ -75,139 +75,296 @@ impl Classified {
     }
 }
 
+struct BreachPass<'a> {
+    measurement: &'a Measurement,
+    profile: &'a LanguageProfile,
+    classes: &'a [Classified],
+}
+
+struct RejectionPass<'a> {
+    measurement: &'a Measurement,
+    profile: &'a LanguageProfile,
+    classes: &'a [Classified],
+    gated: &'a BTreeSet<&'static str>,
+}
+
+struct Measured {
+    value: f64,
+    level: Level,
+}
+
+struct RejectedWaiver<'a> {
+    class: &'a Classified,
+    message: &'a str,
+}
+
+struct CountSpec {
+    rule: &'static str,
+    level: Level,
+    line: u32,
+    measured: u32,
+    threshold: u32,
+}
+
+struct ChainBound {
+    limit: u32,
+    over_only: bool,
+}
+
 fn evaluate_one(measurement: &Measurement, profile: &LanguageProfile) -> Vec<Finding> {
     let classes = classify(&measurement.waivers);
     let mut findings = Vec::new();
+    let gated = push_breaches(
+        &mut findings,
+        BreachPass {
+            measurement,
+            profile,
+            classes: &classes,
+        },
+    );
+    push_optional(&mut findings, coverage_finding(measurement));
+    push_optional(&mut findings, mutation_finding(measurement));
+    push_rejections(
+        &mut findings,
+        RejectionPass {
+            measurement,
+            profile,
+            classes: &classes,
+            gated: &gated,
+        },
+    );
+    findings
+}
+
+fn push_breaches(findings: &mut Vec<Finding>, pass: BreachPass<'_>) -> BTreeSet<&'static str> {
     let mut gated = BTreeSet::new();
-    for breach in breaches(measurement, profile) {
-        let rejected = classes
-            .iter()
-            .any(|class| class.names(breach.rule) && matches!(class.outcome, Outcome::Rejected(_)));
-        if rejected && breach.level == Level::Warn {
+    for breach in breaches(pass.measurement, pass.profile) {
+        if skip_rejected_warn(pass.classes, &breach) {
             continue;
         }
         if breach.level == Level::Gate {
             gated.insert(breach.rule);
         }
-        findings.push(metric_finding(
-            measurement,
-            &breach,
-            attach(&classes, breach.rule, breach.measured, breach.level),
-        ));
+        let waiver = attach(
+            pass.classes,
+            breach.rule,
+            Measured {
+                value: breach.measured,
+                level: breach.level,
+            },
+        );
+        findings.push(metric_finding(pass.measurement, &breach, waiver));
     }
-    if let Some(finding) = coverage_finding(measurement) {
+    gated
+}
+
+fn skip_rejected_warn(classes: &[Classified], breach: &Breach) -> bool {
+    if breach.level != Level::Warn {
+        return false;
+    }
+    classes
+        .iter()
+        .any(|class| rejected_rule(class, breach.rule))
+}
+
+fn rejected_rule(class: &Classified, rule: &str) -> bool {
+    class.names(rule) && matches!(class.outcome, Outcome::Rejected(_))
+}
+
+fn push_optional(findings: &mut Vec<Finding>, finding: Option<Finding>) {
+    if let Some(finding) = finding {
         findings.push(finding);
     }
-    if let Some(finding) = mutation_finding(measurement) {
-        findings.push(finding);
-    }
-    for class in &classes {
+}
+
+fn push_rejections(findings: &mut Vec<Finding>, pass: RejectionPass<'_>) {
+    for class in pass.classes {
         let Outcome::Rejected(message) = &class.outcome else {
             continue;
         };
-        if class
-            .rule
-            .as_deref()
-            .is_some_and(|rule| gated.contains(rule))
-        {
+        if waived_gate(class, pass.gated) {
             continue;
         }
-        findings.push(rejection_finding(measurement, profile, class, message));
+        let rejected = RejectedWaiver {
+            class,
+            message: message.as_str(),
+        };
+        findings.push(rejection_finding(pass.measurement, pass.profile, rejected));
     }
-    findings
+}
+
+fn waived_gate(class: &Classified, gated: &BTreeSet<&'static str>) -> bool {
+    let Some(rule) = class.rule.as_deref() else {
+        return false;
+    };
+    gated.contains(rule)
 }
 
 fn breaches(measurement: &Measurement, profile: &LanguageProfile) -> Vec<Breach> {
-    let mut breaches = Vec::new();
-    let site = measurement.span.start;
-    if measurement.cyclomatic > profile.f01_gate {
-        breaches.push(breach(
-            "F01",
-            Level::Gate,
-            site,
-            measurement.cyclomatic,
-            profile.f01_gate,
-        ));
+    let mut found = Vec::new();
+    push_cyclomatic(&mut found, measurement, profile);
+    push_crap(&mut found, measurement, profile);
+    push_cognitive(&mut found, measurement, profile);
+    push_params(&mut found, measurement, profile);
+    push_nesting(&mut found, measurement, profile);
+    push_length(&mut found, measurement, profile);
+    push_forward(&mut found, measurement, profile);
+    push_chain_breach(&mut found, measurement, profile);
+    push_lloc(&mut found, measurement, profile);
+    found
+}
+
+fn line_of_span(measurement: &Measurement) -> u32 {
+    let span = measurement.span;
+    span.start
+}
+
+fn push_cyclomatic(found: &mut Vec<Breach>, measurement: &Measurement, profile: &LanguageProfile) {
+    if measurement.cyclomatic <= profile.f01_gate {
+        return;
     }
-    if let Some(crap) = measurement.crap {
-        if crap > f64::from(profile.f02_gate) {
-            breaches.push(Breach {
-                rule: "F02",
-                level: Level::Gate,
-                line: site,
-                measured: crap,
-                threshold: f64::from(profile.f02_gate),
-            });
-        }
+    let site = line_of_span(measurement);
+    found.push(breach(CountSpec {
+        rule: "F01",
+        level: Level::Gate,
+        line: site,
+        measured: measurement.cyclomatic,
+        threshold: profile.f01_gate,
+    }));
+}
+
+fn push_crap(found: &mut Vec<Breach>, measurement: &Measurement, profile: &LanguageProfile) {
+    let Some(crap) = measurement.crap else {
+        return;
+    };
+    if crap <= f64::from(profile.f02_gate) {
+        return;
     }
+    let site = line_of_span(measurement);
+    found.push(Breach {
+        rule: "F02",
+        level: Level::Gate,
+        line: site,
+        measured: crap,
+        threshold: f64::from(profile.f02_gate),
+    });
+}
+
+fn push_cognitive(found: &mut Vec<Breach>, measurement: &Measurement, profile: &LanguageProfile) {
+    let site = line_of_span(measurement);
     if measurement.cognitive > profile.f03_gate {
-        breaches.push(breach(
-            "F03",
-            Level::Gate,
-            site,
-            measurement.cognitive,
-            profile.f03_gate,
-        ));
-    } else if measurement.cognitive > profile.f03_warn {
-        breaches.push(breach(
-            "F03",
-            Level::Warn,
-            site,
-            measurement.cognitive,
-            profile.f03_warn,
-        ));
-    }
-    if measurement.params > profile.f04_gate {
-        breaches.push(breach(
-            "F04",
-            Level::Gate,
-            site,
-            measurement.params,
-            profile.f04_gate,
-        ));
-    }
-    if measurement.nesting > profile.f05_gate {
-        breaches.push(breach(
-            "F05",
-            Level::Gate,
-            measurement.nesting_line.unwrap_or(site),
-            measurement.nesting,
-            profile.f05_gate,
-        ));
-    }
-    let lines = body_lines(measurement.span);
-    if lines > profile.f06_gate {
-        breaches.push(breach("F06", Level::Gate, site, lines, profile.f06_gate));
-    }
-    if let Some(ratio) = percent(measurement) {
-        if ratio >= profile.f07_percent {
-            let line = measurement
-                .forward
-                .as_ref()
-                .map(|forward| forward.line)
-                .unwrap_or(site);
-            breaches.push(breach("F07", Level::Warn, line, ratio, profile.f07_percent));
-        }
-    }
-    if let Some(hit) = chain_hit(measurement, profile, true) {
-        breaches.push(Breach {
-            rule: "F08",
+        found.push(breach(CountSpec {
+            rule: "F03",
             level: Level::Gate,
-            line: hit.line,
-            measured: f64::from(hit.depth),
-            threshold: f64::from(hit.limit),
-        });
+            line: site,
+            measured: measurement.cognitive,
+            threshold: profile.f03_gate,
+        }));
+        return;
     }
-    if measurement.lloc > profile.f11_gate {
-        breaches.push(breach(
-            "F11",
-            Level::Gate,
-            site,
-            measurement.lloc,
-            profile.f11_gate,
-        ));
+    if measurement.cognitive > profile.f03_warn {
+        found.push(breach(CountSpec {
+            rule: "F03",
+            level: Level::Warn,
+            line: site,
+            measured: measurement.cognitive,
+            threshold: profile.f03_warn,
+        }));
     }
-    breaches
+}
+
+fn push_params(found: &mut Vec<Breach>, measurement: &Measurement, profile: &LanguageProfile) {
+    if measurement.params <= profile.f04_gate {
+        return;
+    }
+    let site = line_of_span(measurement);
+    found.push(breach(CountSpec {
+        rule: "F04",
+        level: Level::Gate,
+        line: site,
+        measured: measurement.params,
+        threshold: profile.f04_gate,
+    }));
+}
+
+fn push_nesting(found: &mut Vec<Breach>, measurement: &Measurement, profile: &LanguageProfile) {
+    if measurement.nesting <= profile.f05_gate {
+        return;
+    }
+    let site = line_of_span(measurement);
+    let line = measurement.nesting_line.unwrap_or(site);
+    found.push(breach(CountSpec {
+        rule: "F05",
+        level: Level::Gate,
+        line,
+        measured: measurement.nesting,
+        threshold: profile.f05_gate,
+    }));
+}
+
+fn push_length(found: &mut Vec<Breach>, measurement: &Measurement, profile: &LanguageProfile) {
+    let lines = body_lines(measurement.span);
+    if lines <= profile.f06_gate {
+        return;
+    }
+    let site = line_of_span(measurement);
+    found.push(breach(CountSpec {
+        rule: "F06",
+        level: Level::Gate,
+        line: site,
+        measured: lines,
+        threshold: profile.f06_gate,
+    }));
+}
+
+fn push_forward(found: &mut Vec<Breach>, measurement: &Measurement, profile: &LanguageProfile) {
+    let Some(ratio) = percent(measurement) else {
+        return;
+    };
+    if ratio < profile.f07_percent {
+        return;
+    }
+    let site = line_of_span(measurement);
+    let forward = measurement.forward.as_ref();
+    let line = forward.map(|item| item.line).unwrap_or(site);
+    found.push(breach(CountSpec {
+        rule: "F07",
+        level: Level::Warn,
+        line,
+        measured: ratio,
+        threshold: profile.f07_percent,
+    }));
+}
+
+fn push_chain_breach(
+    found: &mut Vec<Breach>,
+    measurement: &Measurement,
+    profile: &LanguageProfile,
+) {
+    let Some(hit) = chain_hit(measurement, profile, true) else {
+        return;
+    };
+    found.push(breach(CountSpec {
+        rule: "F08",
+        level: Level::Gate,
+        line: hit.line,
+        measured: hit.depth,
+        threshold: hit.limit,
+    }));
+}
+
+fn push_lloc(found: &mut Vec<Breach>, measurement: &Measurement, profile: &LanguageProfile) {
+    if measurement.lloc <= profile.f11_gate {
+        return;
+    }
+    let site = line_of_span(measurement);
+    found.push(breach(CountSpec {
+        rule: "F11",
+        level: Level::Gate,
+        line: site,
+        measured: measurement.lloc,
+        threshold: profile.f11_gate,
+    }));
 }
 
 fn coverage_finding(measurement: &Measurement) -> Option<Finding> {
@@ -224,7 +381,7 @@ fn coverage_finding(measurement: &Measurement) -> Option<Finding> {
         ),
         Coverage::Unshown => (
             None,
-            measurement.span.start,
+            line_of_span(measurement),
             format!(
                 "Cover {}. Its coverage was not shown, and the gate is 1.",
                 measurement.name
@@ -263,7 +420,7 @@ fn mutation_finding(measurement: &Measurement) -> Option<Finding> {
         ),
         Mutation::Unshown => (
             None,
-            measurement.span.start,
+            line_of_span(measurement),
             format!(
                 "Detect the mutants of {}. Its mutation score is absent, and the gate is 1.",
                 measurement.name
@@ -296,18 +453,20 @@ fn show(value: f64) -> String {
     }
 }
 
-fn breach(rule: &'static str, level: Level, line: u32, measured: u32, threshold: u32) -> Breach {
+fn breach(spec: CountSpec) -> Breach {
     Breach {
-        rule,
-        level,
-        line,
-        measured: f64::from(measured),
-        threshold: f64::from(threshold),
+        rule: spec.rule,
+        level: spec.level,
+        line: spec.line,
+        measured: f64::from(spec.measured),
+        threshold: f64::from(spec.threshold),
     }
 }
 
 fn body_lines(span: Span) -> u32 {
-    span.end.saturating_sub(span.start).saturating_add(1)
+    let end = span.end;
+    let dropped = end.saturating_sub(span.start);
+    dropped.saturating_add(1)
 }
 
 fn percent(measurement: &Measurement) -> Option<u32> {
@@ -315,37 +474,44 @@ fn percent(measurement: &Measurement) -> Option<u32> {
     if measurement.params == 0 {
         return None;
     }
-    Some(forward.forwarded.saturating_mul(100) / measurement.params)
+    let forwarded = forward.forwarded;
+    Some(forwarded.saturating_mul(100) / measurement.params)
 }
 
 fn chain_hit(measurement: &Measurement, profile: &LanguageProfile, over_only: bool) -> Option<Hit> {
     let mut hits = Vec::new();
+    let receiver = measurement.receiver_chain.as_ref();
     push_hit(
         &mut hits,
-        measurement.receiver_chain.as_ref(),
-        profile.f08_receiver_hops,
-        over_only,
+        receiver,
+        ChainBound {
+            limit: profile.f08_receiver_hops,
+            over_only,
+        },
     );
+    let other = measurement.other_chain.as_ref();
     push_hit(
         &mut hits,
-        measurement.other_chain.as_ref(),
-        profile.f08_other_hops,
-        over_only,
+        other,
+        ChainBound {
+            limit: profile.f08_other_hops,
+            over_only,
+        },
     );
     hits.into_iter().reduce(worse_chain)
 }
 
-fn push_hit(hits: &mut Vec<Hit>, chain: Option<&ChainDepth>, limit: u32, over_only: bool) {
+fn push_hit(hits: &mut Vec<Hit>, chain: Option<&ChainDepth>, bound: ChainBound) {
     let Some(chain) = chain else {
         return;
     };
-    if over_only && chain.depth <= limit {
+    if bound.over_only && chain.depth <= bound.limit {
         return;
     }
     hits.push(Hit {
         line: chain.line,
         depth: chain.depth,
-        limit,
+        limit: bound.limit,
     });
 }
 
@@ -394,9 +560,10 @@ fn metric_finding(measurement: &Measurement, breach: &Breach, waiver: Option<Wai
 fn rejection_finding(
     measurement: &Measurement,
     profile: &LanguageProfile,
-    class: &Classified,
-    message: &str,
+    rejected: RejectedWaiver<'_>,
 ) -> Finding {
+    let class = rejected.class;
+    let message = rejected.message;
     let rule = class.rule.clone().unwrap_or_else(|| "waiver".to_string());
     let (measured_value, threshold) = rejection_numbers(measurement, profile, &rule);
     Finding {
@@ -464,7 +631,7 @@ fn rejection_numbers(
     }
 }
 
-fn attach(classes: &[Classified], rule: &str, measured: f64, level: Level) -> Option<Waiver> {
+fn attach(classes: &[Classified], rule: &str, measured: Measured) -> Option<Waiver> {
     let class = classes.iter().find(|class| class.names(rule))?;
     match &class.outcome {
         Outcome::Rejected(message) => Some(Waiver {
@@ -476,7 +643,7 @@ fn attach(classes: &[Classified], rule: &str, measured: f64, level: Level) -> Op
         Outcome::Accepted(number) => Some(Waiver {
             excused: Some(*number),
             reason: class.reason.clone(),
-            holds: level == Level::Gate && measured <= *number,
+            holds: measured.level == Level::Gate && measured.value <= *number,
             rejection: None,
         }),
     }
@@ -540,6 +707,13 @@ fn gate_id(rule: &str) -> bool {
 }
 
 fn principle(rule: &str) -> String {
+    if matches!(rule, "F01" | "F02" | "F03" | "F04" | "F05" | "F06") {
+        return count_principle(rule);
+    }
+    rest_principle(rule)
+}
+
+fn count_principle(rule: &str) -> String {
     match rule {
         "F01" => "A function should have few independent paths. McCabe.",
         "F02" => "Untested complexity is where defects hide. Change Risk Anti-Patterns.",
@@ -547,6 +721,13 @@ fn principle(rule: &str) -> String {
         "F04" => "A function with many ordinary parameters is doing more than one job.",
         "F05" => "A reader should not hold three decisions at once.",
         "F06" => "A function's body should stay short enough to read at once.",
+        _ => "",
+    }
+    .to_string()
+}
+
+fn rest_principle(rule: &str) -> String {
+    match rule {
         "F07" => "A function that only hands its parameters to one call adds a hop and no behavior.",
         "F08" => "A member chain that does not start at the receiver may be one deep, and a chain that starts at the receiver may be two deep. Law of Demeter.",
         "F11" => "A function should say little. The count is statements, not wrapped lines.",
@@ -558,6 +739,13 @@ fn principle(rule: &str) -> String {
 }
 
 fn anti_fix(rule: &str) -> String {
+    if matches!(rule, "F01" | "F02" | "F03" | "F04" | "F05" | "F06") {
+        return count_anti_fix(rule);
+    }
+    rest_anti_fix(rule)
+}
+
+fn count_anti_fix(rule: &str) -> String {
     match rule {
         "F01" => "Splitting one condition onto two lines leaves the path count in place.",
         "F02" => "Extracting an uncovered branch leaves that branch's score in place.",
@@ -565,6 +753,13 @@ fn anti_fix(rule: &str) -> String {
         "F04" => "Giving a parameter a default leaves the count in place.",
         "F05" => "Indenting the inner condition less leaves the depth in place.",
         "F06" => "Breaking one statement across more lines makes the count larger.",
+        _ => "",
+    }
+    .to_string()
+}
+
+fn rest_anti_fix(rule: &str) -> String {
+    match rule {
         "F07" => "Renaming the forwarded parameters leaves the ratio in place.",
         "F08" => "Saving the chain in locals leaves the finding in place.",
         "F11" => "Breaking one statement across more lines leaves the count in place.",
@@ -586,10 +781,7 @@ fn fix_shape(breach: &Breach, name: &str) -> String {
             format!("Cover or split {name}. Its CRAP is {measured}, and the gate is {threshold}.")
         }
         "F03" => {
-            let band = match breach.level {
-                Level::Gate => "gate",
-                Level::Warn => "warn",
-            };
+            let band = complexity_band(breach.level);
             format!(
                 "Simplify {name}. Its cognitive complexity is {measured}, and the {band} is {threshold}."
             )
@@ -615,6 +807,13 @@ fn fix_shape(breach: &Breach, name: &str) -> String {
             format!("Split {name}. It has {measured} logical lines, and the gate is {threshold}.")
         }
         _ => String::new(),
+    }
+}
+
+fn complexity_band(level: Level) -> &'static str {
+    match level {
+        Level::Gate => "gate",
+        Level::Warn => "warn",
     }
 }
 

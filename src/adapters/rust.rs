@@ -101,148 +101,247 @@ pub fn parse_with(path: &str, source: &[u8], include_tests: bool) -> File {
         };
     };
     let root = tree.root_node();
-    let mut functions = Vec::new();
-    let mut scopes = Vec::new();
-    visit(root, source, &mut scopes, &mut functions, include_tests);
+    let mut visit = Visit {
+        source,
+        scopes: Vec::new(),
+        out: Vec::new(),
+        include_tests,
+    };
+    visit.visit(root);
     File {
         path: path.to_string(),
         language: Language::Rust,
         unparsed_ratio: super::unparsed_ratio(root, source),
         unscored_macros: 0,
-        functions,
+        functions: visit.out,
     }
 }
 
-fn visit(
-    node: Node,
-    source: &[u8],
-    scopes: &mut Vec<Scope>,
-    out: &mut Vec<Function>,
+struct Visit<'a> {
+    source: &'a [u8],
+    scopes: Vec<Scope>,
+    out: Vec<Function>,
     include_tests: bool,
-) {
-    if !include_tests && is_test_item(node, source) {
-        return;
-    }
-    match node.kind() {
-        "function_item" => visit_function(node, source, scopes, out, include_tests),
-        "impl_item" => visit_scoped(
-            node,
-            source,
-            scopes,
-            out,
-            impl_name(node, source),
-            true,
-            include_tests,
-        ),
-        "trait_item" => visit_scoped(
-            node,
-            source,
-            scopes,
-            out,
-            trait_name(node, source),
-            false,
-            include_tests,
-        ),
-        "mod_item" => {
-            let Some(name) = node.child_by_field_name("name") else {
-                return;
-            };
-            let Some(body) = node.child_by_field_name("body") else {
-                return;
-            };
-            scopes.push(Scope::Module(node_text(name, source)));
-            visit(body, source, scopes, out, include_tests);
-            scopes.pop();
+}
+
+struct FnSite<'a> {
+    item: Node<'a>,
+    body: Node<'a>,
+    params: Option<Node<'a>>,
+}
+
+struct Names<'a> {
+    receiver: Option<&'a str>,
+    ordinary: &'a [String],
+}
+
+impl<'a> Visit<'a> {
+    fn visit(&mut self, node: Node<'a>) {
+        if self.skips_tests(node) {
+            return;
         }
-        "const_item" | "static_item" => visit_binding(node, source, scopes, out, include_tests),
-        "macro_invocation" => {
-            if in_function(scopes) {
-                push_token_fns(node, source, scopes, out);
-            }
+        if self.visit_defined(node) {
+            return;
         }
-        "macro_definition" => visit_macro_definition(node, source, scopes, out),
-        "attribute_item" | "inner_attribute_item" | "line_comment" | "block_comment" => {}
-        _ => visit_children(node, source, scopes, out, include_tests),
+        self.visit_rest(node);
     }
-}
 
-fn visit_children(
-    node: Node,
-    source: &[u8],
-    scopes: &mut Vec<Scope>,
-    out: &mut Vec<Function>,
-    include_tests: bool,
-) {
-    for child in named_nodes(node) {
-        visit(child, source, scopes, out, include_tests);
+    fn skips_tests(&self, node: Node<'a>) -> bool {
+        !self.include_tests && is_test_item(node, self.source)
     }
-}
 
-fn visit_scoped(
-    node: Node,
-    source: &[u8],
-    scopes: &mut Vec<Scope>,
-    out: &mut Vec<Function>,
-    name: String,
-    inherent: bool,
-    include_tests: bool,
-) {
-    if name.is_empty() {
-        return;
+    fn visit_defined(&mut self, node: Node<'a>) -> bool {
+        match node.kind() {
+            "function_item" => self.visit_function(node),
+            "impl_item" => self.visit_impl(node),
+            "trait_item" => self.visit_trait(node),
+            "mod_item" => self.visit_module(node),
+            "const_item" | "static_item" => self.visit_binding(node),
+            _ => return false,
+        }
+        true
     }
-    scopes.push(if inherent {
-        Scope::Impl(name)
-    } else {
-        Scope::Trait(name)
-    });
-    if let Some(body) = node.child_by_field_name("body") {
-        visit(body, source, scopes, out, include_tests);
-    }
-    scopes.pop();
-}
 
-fn visit_function(
-    node: Node,
-    source: &[u8],
-    scopes: &mut Vec<Scope>,
-    out: &mut Vec<Function>,
-    include_tests: bool,
-) {
-    let Some(name_node) = node.child_by_field_name("name") else {
-        return;
-    };
-    if node.child_by_field_name("body").is_none() {
-        return;
-    }
-    let name = node_text(name_node, source);
-    let params = node.child_by_field_name("parameters");
-    push_function(out, scopes, source, &name, node, node, params);
-    scopes.push(Scope::Function(name));
-    if let Some(body) = node.child_by_field_name("body") {
-        visit(body, source, scopes, out, include_tests);
-    }
-    scopes.pop();
-}
-
-fn visit_binding(
-    node: Node,
-    source: &[u8],
-    scopes: &mut Vec<Scope>,
-    out: &mut Vec<Function>,
-    include_tests: bool,
-) {
-    if !in_function(scopes) {
-        if let Some(closure) = bound_closure(node) {
-            let Some(name_node) = node.child_by_field_name("name") else {
-                return;
-            };
-            let name = node_text(name_node, source);
-            let params = closure.child_by_field_name("parameters");
-            push_function(out, scopes, source, &name, node, closure, params);
+    fn visit_rest(&mut self, node: Node<'a>) {
+        match node.kind() {
+            "macro_invocation" => self.visit_macro_invocation(node),
+            "macro_definition" => self.visit_macro_definition(node),
+            "attribute_item" | "inner_attribute_item" | "line_comment" | "block_comment" => {}
+            _ => self.visit_children(node),
         }
     }
-    if let Some(value) = node.child_by_field_name("value") {
-        visit(value, source, scopes, out, include_tests);
+
+    fn visit_impl(&mut self, node: Node<'a>) {
+        self.visit_scoped(node, impl_name(node, self.source), true);
+    }
+
+    fn visit_trait(&mut self, node: Node<'a>) {
+        self.visit_scoped(node, trait_name(node, self.source), false);
+    }
+
+    fn visit_module(&mut self, node: Node<'a>) {
+        let Some(name) = node.child_by_field_name("name") else {
+            return;
+        };
+        let Some(body) = node.child_by_field_name("body") else {
+            return;
+        };
+        let module = node_text(name, self.source);
+        self.scopes.push(Scope::Module(module));
+        self.visit(body);
+        self.scopes.pop();
+    }
+
+    fn visit_macro_invocation(&mut self, node: Node<'a>) {
+        if in_function(&self.scopes) {
+            self.push_token_fns(node);
+        }
+    }
+
+    fn visit_children(&mut self, node: Node<'a>) {
+        for child in named_nodes(node) {
+            self.visit(child);
+        }
+    }
+
+    fn visit_scoped(&mut self, node: Node<'a>, name: String, inherent: bool) {
+        if name.is_empty() {
+            return;
+        }
+        self.scopes.push(if inherent {
+            Scope::Impl(name)
+        } else {
+            Scope::Trait(name)
+        });
+        if let Some(body) = node.child_by_field_name("body") {
+            self.visit(body);
+        }
+        self.scopes.pop();
+    }
+
+    fn visit_function(&mut self, node: Node<'a>) {
+        let Some(name_node) = node.child_by_field_name("name") else {
+            return;
+        };
+        let Some(body) = node.child_by_field_name("body") else {
+            return;
+        };
+        let name = node_text(name_node, self.source);
+        let params = node.child_by_field_name("parameters");
+        self.push_function(
+            &name,
+            FnSite {
+                item: node,
+                body: node,
+                params,
+            },
+        );
+        self.scopes.push(Scope::Function(name));
+        self.visit(body);
+        self.scopes.pop();
+    }
+
+    fn visit_binding(&mut self, node: Node<'a>) {
+        if !in_function(&self.scopes) {
+            self.visit_bound_closure(node);
+        }
+        if let Some(value) = node.child_by_field_name("value") {
+            self.visit(value);
+        }
+    }
+
+    fn visit_bound_closure(&mut self, node: Node<'a>) {
+        let Some(closure) = bound_closure(node) else {
+            return;
+        };
+        let Some(name_node) = node.child_by_field_name("name") else {
+            return;
+        };
+        let name = node_text(name_node, self.source);
+        let params = closure.child_by_field_name("parameters");
+        self.push_function(
+            &name,
+            FnSite {
+                item: node,
+                body: closure,
+                params,
+            },
+        );
+    }
+
+    fn visit_macro_definition(&mut self, node: Node<'a>) {
+        if in_function(&self.scopes) {
+            self.push_token_fns(node);
+            return;
+        }
+        let Some(name_node) = node.child_by_field_name("name") else {
+            return;
+        };
+        let name = node_text(name_node, self.source);
+        self.push_function(
+            &name,
+            FnSite {
+                item: node,
+                body: node,
+                params: None,
+            },
+        );
+        self.scopes.push(Scope::Function(name));
+        self.push_token_fns(node);
+        self.scopes.pop();
+    }
+
+    fn push_token_fns(&mut self, node: Node<'a>) {
+        for (name, body) in fns_in_tokens(node, self.source) {
+            self.push_function(
+                &name,
+                FnSite {
+                    item: body,
+                    body,
+                    params: None,
+                },
+            );
+            self.scopes.push(Scope::Function(name));
+            self.push_token_fns(body);
+            self.scopes.pop();
+        }
+    }
+
+    fn push_function(&mut self, name: &str, site: FnSite<'a>) {
+        let FnSite { item, body, params } = site;
+        let span = span_of(item);
+        let attributes = leading_attributes(item);
+        let anchor = attributes.first().copied().unwrap_or(item);
+        let waivers = waivers_above(anchor, self.source);
+        let mut touch = span;
+        if let Some(attribute) = attributes.first() {
+            let attribute_span = span_of(*attribute);
+            touch.start = attribute_span.start;
+        }
+        if let Some(first) = waivers.first() {
+            touch.start = first.line;
+        }
+        let params = chosen_params(body, params, self.source);
+        let ordinary = ordinary_names(&params);
+        let receiver = receiver_name(&params);
+        let body = classify(
+            body,
+            self.source,
+            Names {
+                receiver: receiver.as_deref(),
+                ordinary: &ordinary,
+            },
+        );
+        self.out.push(Function {
+            name: qualify(&self.scopes, name),
+            param_types: Vec::new(),
+            qualifier: String::new(),
+            span,
+            touch,
+            params,
+            body,
+            waivers,
+        });
     }
 }
 
@@ -264,51 +363,119 @@ fn peel_closure(node: Node<'_>) -> Option<Node<'_>> {
     }
 }
 
-fn push_function(
-    out: &mut Vec<Function>,
-    scopes: &[Scope],
-    source: &[u8],
-    name: &str,
-    item: Node<'_>,
-    body: Node<'_>,
-    params: Option<Node<'_>>,
-) {
-    let span = span_of(item);
-    let attributes = leading_attributes(item);
-    let anchor = attributes.first().copied().unwrap_or(item);
-    let waivers = waivers_above(anchor, source);
-    let mut touch = span;
-    if let Some(attribute) = attributes.first() {
-        touch.start = span_of(*attribute).start;
+fn peel(node: Node, source: &[u8]) -> Option<Peeled> {
+    match node.kind() {
+        "identifier"
+        | "self"
+        | "scoped_identifier"
+        | "scoped_type_identifier_in_expression_position" => Some(peel_name(node, source)),
+        _ => peel_compound(node, source),
     }
-    if let Some(first) = waivers.first() {
-        touch.start = first.line;
+}
+
+fn peel_name(node: Node, source: &[u8]) -> Peeled {
+    match node.kind() {
+        "identifier" | "self" => rooted_peel(node, source),
+        _ => empty_peel(),
     }
-    let params = if body.kind() == "closure_expression" {
-        closure_params(params, source)
-    } else {
-        function_params(params, source)
+}
+
+fn rooted_peel(node: Node, source: &[u8]) -> Peeled {
+    Peeled {
+        root: Some(node_text(node, source)),
+        hops: Vec::new(),
+    }
+}
+
+fn empty_peel() -> Peeled {
+    Peeled {
+        root: None,
+        hops: Vec::new(),
+    }
+}
+
+fn peel_compound(node: Node, source: &[u8]) -> Option<Peeled> {
+    match node.kind() {
+        "field_expression" => peel_field(node, source),
+        "generic_function" => peel_generic(node, source),
+        "call_expression" => peel_call(node, source),
+        "index_expression" => peel_index(node, source),
+        "parenthesized_expression" | "await_expression" | "try_expression" => {
+            peel_wrapped(node, source)
+        }
+        _ => None,
+    }
+}
+
+fn peel_field(node: Node, source: &[u8]) -> Option<Peeled> {
+    let object = node.child_by_field_name("value")?;
+    let mut peeled = peel(object, source).unwrap_or_else(empty_peel);
+    let name = node.child_by_field_name("field")?;
+    push_hop(
+        &mut peeled,
+        Hop {
+            name: node_text(name, source),
+            call: false,
+            line: line_of(name),
+        },
+    );
+    Some(peeled)
+}
+
+fn push_hop(peeled: &mut Peeled, hop: Hop) {
+    let hops = &mut peeled.hops;
+    hops.push(hop);
+}
+
+fn peel_generic(node: Node, source: &[u8]) -> Option<Peeled> {
+    let function = node.child_by_field_name("function")?;
+    peel(function, source)
+}
+
+fn peel_call(node: Node, source: &[u8]) -> Option<Peeled> {
+    let function = node.child_by_field_name("function")?;
+    if let Some(name) = bare_call_name(function, source) {
+        return peel_bare_call(node, name, function);
+    }
+    let mut peeled = peel(function, source)?;
+    mark_call(&mut peeled);
+    Some(peeled)
+}
+
+fn peel_bare_call(node: Node, name: String, function: Node) -> Option<Peeled> {
+    if bare_call_roots_a_chain(node) {
+        return Some(empty_peel());
+    }
+    Some(Peeled {
+        root: None,
+        hops: vec![Hop {
+            name,
+            call: true,
+            line: line_of(function),
+        }],
+    })
+}
+
+fn mark_call(peeled: &mut Peeled) {
+    let hops = &mut peeled.hops;
+    let Some(last) = hops.last_mut() else {
+        return;
     };
-    let ordinary: Vec<String> = params
-        .iter()
-        .filter(|param| !param.receiver)
-        .map(|param| param.name.clone())
-        .collect();
-    let receiver = params
-        .iter()
-        .find(|param| param.receiver)
-        .map(|param| param.name.clone());
-    let body = classify(body, source, receiver.as_deref(), &ordinary);
-    out.push(Function {
-        name: qualify(scopes, name),
-        param_types: Vec::new(),
-        qualifier: String::new(),
-        span,
-        touch,
-        params,
-        body,
-        waivers,
-    });
+    last.call = true;
+}
+
+fn peel_index(node: Node, source: &[u8]) -> Option<Peeled> {
+    let children = code_nodes(node);
+    let value = children.first()?;
+    peel(*value, source)
+}
+
+fn peel_wrapped(node: Node, source: &[u8]) -> Option<Peeled> {
+    let children = code_nodes(node);
+    let [child] = children.as_slice() else {
+        return None;
+    };
+    peel(*child, source)
 }
 
 fn function_params(params: Option<Node>, source: &[u8]) -> Vec<Param> {
@@ -334,17 +501,50 @@ fn function_params(params: Option<Node>, source: &[u8]) -> Vec<Param> {
 
 fn closure_params(params: Option<Node>, source: &[u8]) -> Vec<Param> {
     params
-        .map(|node| {
-            named_nodes(node)
-                .into_iter()
-                .map(|child| Param {
-                    name: binding_name(child, source),
-                    receiver: false,
-                })
-                .filter(|param| !param.name.is_empty())
-                .collect()
-        })
+        .map(|node| closure_param_list(node, source))
         .unwrap_or_default()
+}
+
+fn closure_param_list(node: Node, source: &[u8]) -> Vec<Param> {
+    named_nodes(node)
+        .into_iter()
+        .map(|child| Param {
+            name: binding_name(child, source),
+            receiver: false,
+        })
+        .filter(kept_param)
+        .collect()
+}
+
+fn kept_param(param: &Param) -> bool {
+    let name = &param.name;
+    !name.is_empty()
+}
+
+fn chosen_params(body: Node, params: Option<Node>, source: &[u8]) -> Vec<Param> {
+    if body.kind() == "closure_expression" {
+        closure_params(params, source)
+    } else {
+        function_params(params, source)
+    }
+}
+
+fn ordinary_names(params: &[Param]) -> Vec<String> {
+    params
+        .iter()
+        .filter(|param| !param.receiver)
+        .map(|param| {
+            let name = &param.name;
+            name.clone()
+        })
+        .collect()
+}
+
+fn receiver_name(params: &[Param]) -> Option<String> {
+    params.iter().find(|param| param.receiver).map(|param| {
+        let name = &param.name;
+        name.clone()
+    })
 }
 
 fn binding_name(node: Node, source: &[u8]) -> String {
@@ -390,7 +590,7 @@ fn is_test_attribute(node: Node, source: &[u8]) -> bool {
     }
     let path = node_text(named.remove(0), source);
     if path == "test" {
-        return attribute.child_by_field_name("arguments").is_none();
+        return missing_arguments(attribute);
     }
     if path != "cfg" {
         return false;
@@ -419,43 +619,68 @@ fn leading_attributes(node: Node<'_>) -> Vec<Node<'_>> {
     found
 }
 
+struct WaiverScan<'a> {
+    source: &'a [u8],
+    next_line: u32,
+    found: Vec<WaiverLine>,
+}
+
 fn waivers_above(node: Node, source: &[u8]) -> Vec<WaiverLine> {
-    let mut next_line = span_of(node).start;
-    let mut found = Vec::new();
-    consume_waiver_comments(node, source, &mut next_line, &mut found);
+    let start = span_of(node);
+    let mut scan = WaiverScan {
+        source,
+        next_line: start.start,
+        found: Vec::new(),
+    };
+    consume_waiver_comments(node, &mut scan);
+    reversed(scan.found)
+}
+
+fn reversed(mut found: Vec<WaiverLine>) -> Vec<WaiverLine> {
     found.reverse();
     found
 }
 
-fn consume_waiver_comments(
-    node: Node,
-    source: &[u8],
-    next_line: &mut u32,
-    found: &mut Vec<WaiverLine>,
-) -> bool {
+fn consume_waiver_comments(node: Node, scan: &mut WaiverScan<'_>) -> bool {
     let mut cursor = node.prev_sibling();
     while let Some(sibling) = cursor {
-        if sibling.kind() != "line_comment" {
+        if !take_waiver(scan, sibling) {
             return false;
         }
-        let span = span_of(sibling);
-        if span.start != span.end || span.start + 1 != *next_line || shares_code_line(sibling) {
-            return false;
-        }
-        let Some(waiver) = waiver_from_comment(&node_text(sibling, source), span.start) else {
-            return false;
-        };
-        found.push(waiver);
-        *next_line = span.start;
         cursor = sibling.prev_sibling();
     }
     true
 }
 
+fn take_waiver(scan: &mut WaiverScan<'_>, sibling: Node) -> bool {
+    if sibling.kind() != "line_comment" {
+        return false;
+    }
+    let span = span_of(sibling);
+    if !comment_is_adjacent(span, scan.next_line, sibling) {
+        return false;
+    }
+    let text = node_text(sibling, scan.source);
+    let Some(waiver) = waiver_from_comment(&text, span.start) else {
+        return false;
+    };
+    push_waiver(scan, waiver);
+    scan.next_line = span.start;
+    true
+}
+
+fn push_waiver(scan: &mut WaiverScan<'_>, waiver: WaiverLine) {
+    let found = &mut scan.found;
+    found.push(waiver);
+}
+
+fn comment_is_adjacent(span: Span, next_line: u32, sibling: Node) -> bool {
+    span.start == span.end && span.start + 1 == next_line && !shares_code_line(sibling)
+}
+
 fn waiver_from_comment(text: &str, line: u32) -> Option<WaiverLine> {
-    let text = text.trim();
-    let text = text.strip_prefix("//").unwrap_or(text).trim();
-    let (marker, rest) = take_token(text)?;
+    let text = trimmed_comment(text);
+    let (marker, rest) = take_token(&text)?;
     if marker != "slopmeter:" {
         return None;
     }
@@ -463,23 +688,42 @@ fn waiver_from_comment(text: &str, line: u32) -> Option<WaiverLine> {
     if verb != "waive" {
         return None;
     }
-    let (rule, rest) = match take_token(rest) {
-        Some((rule, rest)) => (Some(rule.to_string()), rest),
-        None => (None, ""),
-    };
-    let (number, reason) = match take_token(rest) {
-        Some((token, after)) if is_number_token(token) => {
-            (Some(token.to_string()), non_empty(after))
-        }
-        Some(_) => (None, non_empty(rest)),
-        None => (None, None),
-    };
+    let (rule, rest) = optional_token(rest);
+    let (number, reason) = waiver_number(rest);
     Some(WaiverLine {
         line,
         rule,
         number,
         reason,
     })
+}
+
+fn trimmed_comment(text: &str) -> String {
+    let text = text.trim();
+    let stripped = text.strip_prefix("//").unwrap_or(text);
+    stripped.trim().to_string()
+}
+
+fn optional_token(input: &str) -> (Option<String>, &str) {
+    match take_token(input) {
+        Some((rule, rest)) => (Some(rule.to_string()), rest),
+        None => (None, ""),
+    }
+}
+
+fn waiver_number(input: &str) -> (Option<String>, Option<String>) {
+    match take_token(input) {
+        Some((token, after)) if is_number_token(token) => {
+            (Some(token.to_string()), non_empty(after))
+        }
+        Some(_) => (None, non_empty(input)),
+        None => (None, None),
+    }
+}
+
+fn missing_arguments(attribute: Node) -> bool {
+    let arguments = attribute.child_by_field_name("arguments");
+    arguments.is_none()
 }
 
 fn non_empty(text: &str) -> Option<String> {
@@ -528,59 +772,69 @@ fn qualify(scopes: &[Scope], name: &str) -> String {
     parts.join("::")
 }
 
-fn visit_macro_definition(
-    node: Node,
-    source: &[u8],
-    scopes: &mut Vec<Scope>,
-    out: &mut Vec<Function>,
-) {
-    if in_function(scopes) {
-        push_token_fns(node, source, scopes, out);
-        return;
-    }
-    let Some(name_node) = node.child_by_field_name("name") else {
-        return;
-    };
-    let name = node_text(name_node, source);
-    push_function(out, scopes, source, &name, node, node, None);
-    scopes.push(Scope::Function(name));
-    push_token_fns(node, source, scopes, out);
-    scopes.pop();
-}
-
-fn push_token_fns(node: Node, source: &[u8], scopes: &mut Vec<Scope>, out: &mut Vec<Function>) {
-    for (name, body) in fns_in_tokens(node, source) {
-        push_function(out, scopes, source, &name, body, body, None);
-        scopes.push(Scope::Function(name));
-        push_token_fns(body, source, scopes, out);
-        scopes.pop();
-    }
-}
-
 fn fns_in_tokens<'a>(node: Node<'a>, source: &[u8]) -> Vec<(String, Node<'a>)> {
     let mut found = Vec::new();
     collect_fns(node, source, &mut found);
     found
 }
 
+struct FnSearch<'a, 's> {
+    source: &'s [u8],
+    found: &'s mut Vec<(String, Node<'a>)>,
+    skip: BTreeSet<(usize, usize)>,
+}
+
 fn collect_fns<'a>(node: Node<'a>, source: &[u8], found: &mut Vec<(String, Node<'a>)>) {
-    let children = all_children(node);
-    let mut skip = BTreeSet::new();
-    for (index, child) in children.iter().copied().enumerate() {
-        if skip.contains(&range_key(child)) {
-            continue;
-        }
-        if anonymous_token(child, source).as_deref() == Some("fn") {
-            if let Some((name, body)) = fn_after(&children, index, source) {
-                skip.insert(range_key(body));
-                found.push((name, body));
-                continue;
-            }
-        }
-        if child.child_count() > 0 {
-            collect_fns(child, source, found);
+    let mut search = FnSearch {
+        source,
+        found,
+        skip: BTreeSet::new(),
+    };
+    search.walk(node);
+}
+
+impl<'a, 's> FnSearch<'a, 's> {
+    fn walk(&mut self, node: Node<'a>) {
+        let children = all_children(node);
+        for index in 0..children.len() {
+            self.note(&children, index);
         }
     }
+
+    fn note(&mut self, siblings: &[Node<'a>], index: usize) {
+        let child = siblings[index];
+        if self.already_skipped(child) {
+            return;
+        }
+        if self.record(siblings, index) {
+            return;
+        }
+        if child.child_count() > 0 {
+            self.walk(child);
+        }
+    }
+
+    fn already_skipped(&self, child: Node<'a>) -> bool {
+        let skip = &self.skip;
+        skip.contains(&range_key(child))
+    }
+
+    fn record(&mut self, siblings: &[Node<'a>], index: usize) -> bool {
+        let child = siblings[index];
+        if !is_fn_token(child, self.source) {
+            return false;
+        }
+        let Some((name, body)) = fn_after(siblings, index, self.source) else {
+            return false;
+        };
+        self.skip.insert(range_key(body));
+        self.found.push((name, body));
+        true
+    }
+}
+
+fn is_fn_token(child: Node, source: &[u8]) -> bool {
+    anonymous_token(child, source).as_deref() == Some("fn")
 }
 
 fn fn_body_after<'a>(siblings: &[Node<'a>], index: usize, source: &[u8]) -> Option<Node<'a>> {
@@ -590,15 +844,29 @@ fn fn_body_after<'a>(siblings: &[Node<'a>], index: usize, source: &[u8]) -> Opti
 fn fn_after<'a>(siblings: &[Node<'a>], index: usize, source: &[u8]) -> Option<(String, Node<'a>)> {
     let mut name = None;
     for child in &siblings[index + 1..] {
-        if name.is_none() && child.kind() == "identifier" {
-            name = Some(node_text(*child, source));
-            continue;
-        }
-        if name.is_some() && opens_with(*child, "{") {
+        if take_fn_part(*child, source, &mut name) {
             return name.map(|name| (name, *child));
         }
     }
     None
+}
+
+fn take_fn_part(child: Node, source: &[u8], name: &mut Option<String>) -> bool {
+    if name_missing(name) && child.kind() == "identifier" {
+        *name = Some(node_text(child, source));
+        return false;
+    }
+    name_present(name) && opens_with(child, "{")
+}
+
+fn name_missing(name: &Option<String>) -> bool {
+    let missing = name.is_none();
+    missing
+}
+
+fn name_present(name: &Option<String>) -> bool {
+    let present = name.is_some();
+    present
 }
 
 fn in_function(scopes: &[Scope]) -> bool {
@@ -629,10 +897,10 @@ fn trait_name(node: Node, source: &[u8]) -> String {
     format!("{}{params}", node_text(name, source))
 }
 
-fn classify(node: Node<'_>, source: &[u8], receiver: Option<&str>, ordinary: &[String]) -> Body {
+fn classify(node: Node<'_>, source: &[u8], names: Names<'_>) -> Body {
     let mut classifier = Classifier {
         source,
-        receiver,
+        receiver: names.receiver,
         skip: None,
         lloc: 0,
         structure: 0,
@@ -641,7 +909,7 @@ fn classify(node: Node<'_>, source: &[u8], receiver: Option<&str>, ordinary: &[S
         cognitive: Vec::new(),
         chains: Vec::new(),
     };
-    let forward = classifier.forwarding(node, ordinary);
+    let forward = classifier.forwarding(node, names.ordinary);
     match node.kind() {
         "function_item" => {
             if let Some(body) = node.child_by_field_name("body") {
@@ -687,6 +955,31 @@ struct Peeled {
     hops: Vec<Hop>,
 }
 
+struct LetCursor {
+    lets: u32,
+    last: Option<BoolOp>,
+}
+
+#[derive(Clone, Copy)]
+struct TokenAt<'a, 's> {
+    siblings: &'s [Node<'a>],
+    index: usize,
+}
+
+impl<'a, 's> TokenAt<'a, 's> {
+    fn node(self) -> Node<'a> {
+        let siblings = self.siblings;
+        siblings[self.index]
+    }
+}
+
+struct TokenState<'a> {
+    nesting: u32,
+    last_bool: &'a mut Option<BoolOp>,
+    skipped: &'a mut BTreeSet<(usize, usize)>,
+    chain: &'a mut Option<TokenChain>,
+}
+
 struct Classifier<'a> {
     source: &'a [u8],
     receiver: Option<&'a str>,
@@ -729,39 +1022,62 @@ impl<'a> Classifier<'a> {
     }
 
     fn walk_statement(&mut self, node: Node<'a>, nesting: u32) {
+        if self.walk_active(node, nesting) {
+            return;
+        }
+        self.note_inert(node);
+    }
+
+    fn walk_active(&mut self, node: Node<'a>, nesting: u32) -> bool {
         match node.kind() {
-            "expression_statement" => {
-                let children = code_nodes(node);
-                match children.as_slice() {
-                    [child] => self.note_expression(*child, nesting),
-                    _ => {
-                        self.lloc += 1;
-                        for child in children {
-                            self.walk(child, nesting);
-                        }
-                    }
-                }
-            }
+            "expression_statement" => self.walk_expression_statement(node, nesting),
             "let_declaration" => self.walk_let(node, nesting),
-            "empty_statement" | "function_item" | "attribute_item" | "inner_attribute_item" => {}
-            "macro_invocation" => {
-                self.lloc += 1;
-                self.walk_macro(node, nesting);
-            }
-            "macro_definition" => {
-                self.lloc += 1;
-                self.walk_macro_definition(node, nesting);
-            }
-            "const_item" | "static_item" => {
-                self.lloc += 1;
-                if let Some(value) = node.child_by_field_name("value") {
-                    self.walk(value, nesting);
-                }
-            }
-            _ => self.lloc += 1,
+            "macro_invocation" => self.count_macro(node, nesting),
+            "macro_definition" => self.count_macro_def(node, nesting),
+            "const_item" | "static_item" => self.walk_const(node, nesting),
+            _ => return false,
+        }
+        true
+    }
+
+    fn walk_expression_statement(&mut self, node: Node<'a>, nesting: u32) {
+        let children = code_nodes(node);
+        match children.as_slice() {
+            [child] => self.note_expression(*child, nesting),
+            _ => self.walk_expression_parts(&children, nesting),
         }
     }
 
+    fn walk_expression_parts(&mut self, children: &[Node<'a>], nesting: u32) {
+        self.lloc += 1;
+        for child in children {
+            self.walk(*child, nesting);
+        }
+    }
+
+    fn count_macro(&mut self, node: Node<'a>, nesting: u32) {
+        self.lloc += 1;
+        self.walk_macro(node, nesting);
+    }
+
+    fn count_macro_def(&mut self, node: Node<'a>, nesting: u32) {
+        self.lloc += 1;
+        self.walk_macro_definition(node, nesting);
+    }
+
+    fn walk_const(&mut self, node: Node<'a>, nesting: u32) {
+        self.lloc += 1;
+        if let Some(value) = node.child_by_field_name("value") {
+            self.walk(value, nesting);
+        }
+    }
+
+    fn note_inert(&mut self, node: Node<'a>) {
+        match node.kind() {
+            "empty_statement" | "function_item" | "attribute_item" | "inner_attribute_item" => {}
+            _ => self.lloc += 1,
+        }
+    }
     fn note_expression(&mut self, node: Node<'a>, nesting: u32) {
         if node.kind() == "if_expression" {
             self.lloc += 1;
@@ -780,58 +1096,99 @@ impl<'a> Classifier<'a> {
     }
 
     fn walk(&mut self, node: Node<'a>, nesting: u32) {
+        if self.walk_control(node, nesting) {
+            return;
+        }
+        if self.walk_blockish(node, nesting) {
+            return;
+        }
+        if self.walk_chain_expr(node, nesting) {
+            return;
+        }
+        self.walk_other(node, nesting);
+    }
+
+    fn walk_control(&mut self, node: Node<'a>, nesting: u32) -> bool {
         match node.kind() {
             "if_expression" => self.walk_if(node, nesting, false),
             "while_expression" => self.walk_while(node, nesting),
             "loop_expression" => self.walk_loop(node, nesting),
             "for_expression" => self.walk_for(node, nesting),
             "match_expression" => self.walk_match(node, nesting),
-            "let_declaration" | "expression_statement" => self.walk_statement(node, nesting),
+            _ => return false,
+        }
+        true
+    }
+
+    fn walk_blockish(&mut self, node: Node<'a>, nesting: u32) -> bool {
+        match node.kind() {
             "block" | "unsafe_block" | "async_block" | "gen_block" | "const_block"
             | "try_block" => {
-                if let Some(inner) = transparent_block(node) {
-                    self.walk_block(inner, nesting);
-                }
+                self.walk_transparent(node, nesting);
             }
             "closure_expression" => self.walk_closure(node, nesting),
-            "binary_expression" => {
-                if bool_op(node, self.source).is_some() {
-                    self.walk_boolean(node, nesting);
-                } else {
-                    self.walk_named(node, nesting);
-                }
-            }
-            "let_chain" => self.walk_let_chain(node, nesting),
-            "let_condition" => self.walk_let_condition(node, nesting),
-            "try_expression" => {
-                self.decision(line_of(node), nesting);
-                self.record_chain(node);
-                self.walk_named(node, nesting);
-            }
-            "break_expression" | "continue_expression" => {
-                if node.child_by_field_name("label").is_some()
-                    || named_nodes(node)
-                        .iter()
-                        .any(|child| child.kind() == "label")
-                {
-                    self.fundamental(line_of(node));
-                }
-                self.walk_named(node, nesting);
-            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn walk_transparent(&mut self, node: Node<'a>, nesting: u32) {
+        if let Some(inner) = transparent_block(node) {
+            self.walk_block(inner, nesting);
+        }
+    }
+
+    fn walk_chain_expr(&mut self, node: Node<'a>, nesting: u32) -> bool {
+        match node.kind() {
             "field_expression"
             | "call_expression"
             | "generic_function"
             | "index_expression"
             | "parenthesized_expression"
-            | "await_expression" => {
-                self.record_chain(node);
-                self.walk_named(node, nesting);
-            }
+            | "await_expression" => self.record_and_walk(node, nesting),
+            "try_expression" => self.walk_try(node, nesting),
+            _ => return false,
+        }
+        true
+    }
+
+    fn record_and_walk(&mut self, node: Node<'a>, nesting: u32) {
+        self.record_chain(node);
+        self.walk_named(node, nesting);
+    }
+
+    fn walk_try(&mut self, node: Node<'a>, nesting: u32) {
+        self.decision(line_of(node), nesting);
+        self.record_chain(node);
+        self.walk_named(node, nesting);
+    }
+
+    fn walk_other(&mut self, node: Node<'a>, nesting: u32) {
+        match node.kind() {
+            "let_declaration" | "expression_statement" => self.walk_statement(node, nesting),
+            "binary_expression" => self.walk_binary(node, nesting),
+            "let_chain" => self.walk_let_chain(node, nesting),
+            "let_condition" => self.walk_let_condition(node, nesting),
+            "break_expression" | "continue_expression" => self.walk_jump(node, nesting),
             "macro_invocation" => self.walk_macro(node, nesting),
             _ => self.walk_named(node, nesting),
         }
     }
 
+    fn walk_binary(&mut self, node: Node<'a>, nesting: u32) {
+        if bool_op(node, self.source).is_some() {
+            self.walk_boolean(node, nesting);
+        } else {
+            self.walk_named(node, nesting);
+        }
+    }
+
+    fn walk_jump(&mut self, node: Node<'a>, nesting: u32) {
+        if has_label(node) {
+            self.fundamental(line_of(node));
+        }
+        self.walk_named(node, nesting);
+    }
     fn walk_named(&mut self, node: Node<'a>, nesting: u32) {
         for child in named_nodes(node) {
             self.walk(child, nesting);
@@ -840,31 +1197,54 @@ impl<'a> Classifier<'a> {
 
     fn walk_if(&mut self, node: Node<'a>, nesting: u32, else_if: bool) {
         let line = line_of(node);
+        self.note_if_branch(line, nesting, else_if);
+        self.decision(line, nesting);
+        self.walk_if_condition(node, nesting);
+        self.walk_if_body(node, nesting);
+        self.walk_if_else(node, nesting);
+    }
+
+    fn note_if_branch(&mut self, line: u32, nesting: u32, else_if: bool) {
         if else_if {
             self.hybrid(line);
         } else {
             self.structural(line, nesting);
         }
-        self.decision(line, nesting);
-        if let Some(condition) = node.child_by_field_name("condition") {
-            self.walk_condition(condition, nesting);
-        }
-        if let Some(body) = node.child_by_field_name("consequence") {
-            self.inside(|this| this.walk_block(body, nesting + 1));
-        }
-        if let Some(alternative) = node.child_by_field_name("alternative") {
-            let inner = code_nodes(alternative);
-            if let Some(child) = inner.first() {
-                if child.kind() == "if_expression" {
-                    self.walk_if(*child, nesting, true);
-                } else {
-                    self.hybrid(line_of(alternative));
-                    self.inside(|this| this.walk_block(*child, nesting + 1));
-                }
-            }
-        }
     }
 
+    fn walk_if_condition(&mut self, node: Node<'a>, nesting: u32) {
+        let Some(condition) = node.child_by_field_name("condition") else {
+            return;
+        };
+        self.walk_condition(condition, nesting);
+    }
+
+    fn walk_if_body(&mut self, node: Node<'a>, nesting: u32) {
+        let Some(body) = node.child_by_field_name("consequence") else {
+            return;
+        };
+        self.inside(|this| this.walk_block(body, nesting + 1));
+    }
+
+    fn walk_if_else(&mut self, node: Node<'a>, nesting: u32) {
+        let Some(alternative) = node.child_by_field_name("alternative") else {
+            return;
+        };
+        self.walk_else(alternative, nesting);
+    }
+
+    fn walk_else(&mut self, alternative: Node<'a>, nesting: u32) {
+        let inner = code_nodes(alternative);
+        let Some(child) = inner.first().copied() else {
+            return;
+        };
+        if child.kind() == "if_expression" {
+            self.walk_if(child, nesting, true);
+            return;
+        }
+        self.hybrid(line_of(alternative));
+        self.inside(|this| this.walk_block(child, nesting + 1));
+    }
     fn walk_while(&mut self, node: Node<'a>, nesting: u32) {
         self.lloc += 1;
         self.decision(line_of(node), nesting);
@@ -900,42 +1280,81 @@ impl<'a> Classifier<'a> {
 
     fn walk_match(&mut self, node: Node<'a>, nesting: u32) {
         self.structural(line_of(node), nesting);
-        if let Some(value) = node.child_by_field_name("value") {
-            self.walk(value, nesting);
-        }
-        if let Some(body) = node.child_by_field_name("body") {
-            for arm in named_nodes(body) {
-                if arm.kind() == "match_arm" {
-                    self.walk_arm(arm, nesting);
-                }
-            }
+        self.walk_match_value(node, nesting);
+        self.walk_match_arms(node, nesting);
+    }
+
+    fn walk_match_value(&mut self, node: Node<'a>, nesting: u32) {
+        let Some(value) = node.child_by_field_name("value") else {
+            return;
+        };
+        self.walk(value, nesting);
+    }
+
+    fn walk_match_arms(&mut self, node: Node<'a>, nesting: u32) {
+        let Some(body) = node.child_by_field_name("body") else {
+            return;
+        };
+        self.walk_arms(body, nesting);
+    }
+
+    fn walk_arms(&mut self, body: Node<'a>, nesting: u32) {
+        for arm in named_nodes(body) {
+            self.walk_one_arm(arm, nesting);
         }
     }
 
+    fn walk_one_arm(&mut self, arm: Node<'a>, nesting: u32) {
+        if arm.kind() == "match_arm" {
+            self.walk_arm(arm, nesting);
+        }
+    }
     fn walk_arm(&mut self, node: Node<'a>, nesting: u32) {
         let line = line_of(node);
-        let labels = node
-            .child_by_field_name("pattern")
+        self.note_arm_labels(node, line, nesting);
+        self.walk_arm_guard(node, nesting);
+        self.walk_arm_value(node, nesting);
+    }
+
+    fn note_arm_labels(&mut self, node: Node<'a>, line: u32, nesting: u32) {
+        let pattern = node.child_by_field_name("pattern");
+        let labels = pattern
             .map(|pattern| count_specified(pattern, self.source))
             .unwrap_or(0);
         for _ in 0..labels {
             self.decision(line, nesting);
         }
-        if let Some(pattern) = node.child_by_field_name("pattern") {
-            if let Some(guard) = pattern.child_by_field_name("condition") {
-                self.decision(line_of(guard), nesting);
-                self.walk_condition(guard, nesting);
-            }
-        }
-        if let Some(value) = node.child_by_field_name("value") {
-            if value.kind() == "block" || is_transparent(value.kind()) {
-                self.inside(|this| this.walk(value, nesting + 1));
-            } else {
-                self.inside(|this| this.note_expression(value, nesting + 1));
-            }
-        }
     }
 
+    fn walk_arm_guard(&mut self, node: Node<'a>, nesting: u32) {
+        let Some(pattern) = node.child_by_field_name("pattern") else {
+            return;
+        };
+        self.walk_guard(pattern, nesting);
+    }
+
+    fn walk_guard(&mut self, pattern: Node<'a>, nesting: u32) {
+        let Some(guard) = pattern.child_by_field_name("condition") else {
+            return;
+        };
+        self.decision(line_of(guard), nesting);
+        self.walk_condition(guard, nesting);
+    }
+
+    fn walk_arm_value(&mut self, node: Node<'a>, nesting: u32) {
+        let Some(value) = node.child_by_field_name("value") else {
+            return;
+        };
+        self.walk_arm_body(value, nesting);
+    }
+
+    fn walk_arm_body(&mut self, value: Node<'a>, nesting: u32) {
+        if arm_is_block(value) {
+            self.inside(|this| this.walk(value, nesting + 1));
+            return;
+        }
+        self.inside(|this| this.note_expression(value, nesting + 1));
+    }
     fn walk_let(&mut self, node: Node<'a>, nesting: u32) {
         self.lloc += 1;
         if let Some(value) = node.child_by_field_name("value") {
@@ -964,30 +1383,61 @@ impl<'a> Classifier<'a> {
     }
 
     fn walk_let_chain(&mut self, node: Node<'a>, nesting: u32) {
-        let mut lets = 0u32;
-        let mut last = None;
+        let mut state = LetCursor {
+            lets: 0,
+            last: None,
+        };
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
-            if !child.is_named() && node_text(child, self.source) == "&&" {
-                self.decision(line_of(child), nesting);
-                if last != Some(BoolOp::And) {
-                    self.fundamental(line_of(child));
-                    last = Some(BoolOp::And);
-                }
-            } else if child.kind() == "let_condition" {
-                lets += 1;
-                if lets > 1 {
-                    self.decision(line_of(child), nesting);
-                }
-                self.walk_let_condition(child, nesting);
-            } else if child.kind() == "let_chain" {
-                self.walk_let_chain(child, nesting);
-            } else if child.is_named() {
-                self.bool_spine(child, nesting, &mut last);
-            }
+            self.walk_let_link(child, nesting, &mut state);
         }
     }
 
+    fn walk_let_link(&mut self, child: Node<'a>, nesting: u32, state: &mut LetCursor) {
+        if self.note_let_and(child, nesting, state) {
+            return;
+        }
+        self.walk_let_piece(child, nesting, state);
+    }
+
+    fn note_let_and(&mut self, child: Node<'a>, nesting: u32, state: &mut LetCursor) -> bool {
+        if child.is_named() || node_text(child, self.source) != "&&" {
+            return false;
+        }
+        self.decision(line_of(child), nesting);
+        self.note_and(child, state);
+        true
+    }
+
+    fn note_and(&mut self, child: Node<'a>, state: &mut LetCursor) {
+        if state.last == Some(BoolOp::And) {
+            return;
+        }
+        self.fundamental(line_of(child));
+        state.last = Some(BoolOp::And);
+    }
+
+    fn walk_let_piece(&mut self, child: Node<'a>, nesting: u32, state: &mut LetCursor) {
+        if child.kind() == "let_condition" {
+            self.walk_extra_let(child, nesting, state);
+            return;
+        }
+        if child.kind() == "let_chain" {
+            self.walk_let_chain(child, nesting);
+            return;
+        }
+        if child.is_named() {
+            self.bool_spine(child, nesting, &mut state.last);
+        }
+    }
+
+    fn walk_extra_let(&mut self, child: Node<'a>, nesting: u32, state: &mut LetCursor) {
+        state.lets += 1;
+        if state.lets > 1 {
+            self.decision(line_of(child), nesting);
+        }
+        self.walk_let_condition(child, nesting);
+    }
     fn walk_closure(&mut self, node: Node<'a>, nesting: u32) {
         self.walk_closure_body(node, nesting + 1, false);
     }
@@ -1012,45 +1462,90 @@ impl<'a> Classifier<'a> {
     }
 
     fn bool_spine(&mut self, node: Node<'a>, nesting: u32, last: &mut Option<BoolOp>) {
-        if node.kind() == "unary_expression" && operator_text(node, self.source) == "!" {
-            if let Some(inner) = named_nodes(node).into_iter().next() {
-                self.bool_spine(inner, nesting, last);
-            }
+        if self.spine_unary(node, nesting, last) {
             return;
         }
-        if node.kind() == "parenthesized_expression" {
-            self.record_chain(node);
-            let mut inner = None;
-            for child in named_nodes(node) {
-                self.bool_spine(child, nesting, &mut inner);
-            }
+        if self.spine_group(node, nesting) {
             return;
         }
-        if node.kind() == "let_chain" {
-            self.walk_let_chain(node, nesting);
+        if self.spine_let(node, nesting) {
             return;
         }
+        self.spine_operator(node, nesting, last);
+    }
+
+    fn spine_unary(&mut self, node: Node<'a>, nesting: u32, last: &mut Option<BoolOp>) -> bool {
+        if node.kind() != "unary_expression" || operator_text(node, self.source) != "!" {
+            return false;
+        }
+        self.spine_negated(node, nesting, last);
+        true
+    }
+
+    fn spine_negated(&mut self, node: Node<'a>, nesting: u32, last: &mut Option<BoolOp>) {
+        let Some(inner) = first_named(node) else {
+            return;
+        };
+        self.bool_spine(inner, nesting, last);
+    }
+
+    fn spine_group(&mut self, node: Node<'a>, nesting: u32) -> bool {
+        if node.kind() != "parenthesized_expression" {
+            return false;
+        }
+        self.record_chain(node);
+        self.spine_grouped(node, nesting);
+        true
+    }
+
+    fn spine_grouped(&mut self, node: Node<'a>, nesting: u32) {
+        let mut inner = None;
+        for child in named_nodes(node) {
+            self.bool_spine(child, nesting, &mut inner);
+        }
+    }
+
+    fn spine_let(&mut self, node: Node<'a>, nesting: u32) -> bool {
+        if node.kind() != "let_chain" {
+            return false;
+        }
+        self.walk_let_chain(node, nesting);
+        true
+    }
+
+    fn spine_operator(&mut self, node: Node<'a>, nesting: u32, last: &mut Option<BoolOp>) {
         let Some(operator) = bool_op(node, self.source) else {
             self.walk(node, nesting);
             return;
         };
-        if let Some(left) = node.child_by_field_name("left") {
-            self.bool_spine(left, nesting, last);
-        }
-        let line = node
-            .child_by_field_name("operator")
-            .map(line_of)
-            .unwrap_or_else(|| line_of(node));
+        self.spine_left(node, nesting, last);
+        let line = operator_line(node);
         self.decision(line, nesting);
-        if *last != Some(operator) {
-            self.fundamental(line);
-            *last = Some(operator);
-        }
-        if let Some(right) = node.child_by_field_name("right") {
-            self.bool_spine(right, nesting, last);
-        }
+        self.note_operator(line, operator, last);
+        self.spine_right(node, nesting, last);
     }
 
+    fn spine_left(&mut self, node: Node<'a>, nesting: u32, last: &mut Option<BoolOp>) {
+        let Some(child) = node.child_by_field_name("left") else {
+            return;
+        };
+        self.bool_spine(child, nesting, last);
+    }
+
+    fn spine_right(&mut self, node: Node<'a>, nesting: u32, last: &mut Option<BoolOp>) {
+        let Some(child) = node.child_by_field_name("right") else {
+            return;
+        };
+        self.bool_spine(child, nesting, last);
+    }
+
+    fn note_operator(&mut self, line: u32, operator: BoolOp, last: &mut Option<BoolOp>) {
+        if *last == Some(operator) {
+            return;
+        }
+        self.fundamental(line);
+        *last = Some(operator);
+    }
     fn walk_macro(&mut self, node: Node<'a>, nesting: u32) {
         if ASSERTS.contains(&macro_name(node, self.source).as_str()) {
             self.decision(line_of(node), nesting);
@@ -1067,108 +1562,167 @@ impl<'a> Classifier<'a> {
         let mut last_bool = None;
         let mut skipped = BTreeSet::new();
         let mut chain = None;
-        self.walk_token_children(node, nesting, &mut last_bool, &mut skipped, &mut chain);
+        let mut state = TokenState {
+            nesting,
+            last_bool: &mut last_bool,
+            skipped: &mut skipped,
+            chain: &mut chain,
+        };
+        self.walk_token_children(node, &mut state);
     }
 
-    fn walk_token_children(
-        &mut self,
-        node: Node<'a>,
-        nesting: u32,
-        last_bool: &mut Option<BoolOp>,
-        skipped: &mut BTreeSet<(usize, usize)>,
-        chain: &mut Option<TokenChain>,
-    ) {
+    fn walk_token_children(&mut self, node: Node<'a>, state: &mut TokenState<'_>) {
         let children = all_children(node);
         for (index, child) in children.iter().copied().enumerate() {
-            if child.kind() == "token_tree" && skipped.contains(&range_key(child)) {
+            if skip_token(child, state.skipped) {
                 continue;
             }
-            self.walk_token(&children, index, nesting, last_bool, skipped, chain);
+            let at = TokenAt {
+                siblings: &children,
+                index,
+            };
+            self.walk_token(at, state);
         }
-        self.finish_token_chain(chain);
+        self.finish_chain(state);
     }
 
-    fn walk_token(
-        &mut self,
-        siblings: &[Node<'a>],
-        index: usize,
-        nesting: u32,
-        last_bool: &mut Option<BoolOp>,
-        skipped: &mut BTreeSet<(usize, usize)>,
-        chain: &mut Option<TokenChain>,
-    ) {
-        let node = siblings[index];
-        if node.kind() == "token_tree" || node.kind() == "token_repetition" {
-            if opens_with(node, "{") {
-                self.finish_token_chain(chain);
-            }
-            let mut inner_chain = None;
-            if opens_with(node, "(") || opens_with(node, "{") {
-                let mut inner_bool = None;
-                let mut inner_skipped = BTreeSet::new();
-                self.walk_token_children(
-                    node,
-                    nesting,
-                    &mut inner_bool,
-                    &mut inner_skipped,
-                    &mut inner_chain,
-                );
-            } else {
-                self.walk_token_children(node, nesting, last_bool, skipped, &mut inner_chain);
-            }
+    fn walk_token(&mut self, at: TokenAt<'a, '_>, state: &mut TokenState<'_>) {
+        if self.descend_token(at, state) {
             return;
         }
-        if self.consume_chain(siblings, index, chain) {
+        if self.consume_chain(at, state) {
             return;
         }
-        self.finish_token_chain(chain);
+        self.finish_chain(state);
+        self.walk_control_token(at, state);
+    }
+
+    fn descend_token(&mut self, at: TokenAt<'a, '_>, state: &mut TokenState<'_>) -> bool {
+        let node = at.node();
+        if !token_group(node) {
+            return false;
+        }
+        if opens_with(node, "{") {
+            self.finish_chain(state);
+        }
+        self.walk_nested_tokens(node, state);
+        true
+    }
+
+    fn walk_nested_tokens(&mut self, node: Node<'a>, state: &mut TokenState<'_>) {
+        if grouped_tokens(node) {
+            self.walk_grouped_tokens(node, state.nesting);
+            return;
+        }
+        self.walk_open_tokens(node, state);
+    }
+
+    fn walk_grouped_tokens(&mut self, node: Node<'a>, nesting: u32) {
+        let mut inner_bool = None;
+        let mut inner_skipped = BTreeSet::new();
+        let mut inner_chain = None;
+        let mut state = TokenState {
+            nesting,
+            last_bool: &mut inner_bool,
+            skipped: &mut inner_skipped,
+            chain: &mut inner_chain,
+        };
+        self.walk_token_children(node, &mut state);
+    }
+
+    fn walk_open_tokens(&mut self, node: Node<'a>, state: &mut TokenState<'_>) {
+        let mut inner_chain = None;
+        let nesting = state.nesting;
+        let mut inner = TokenState {
+            nesting,
+            last_bool: state.last_bool,
+            skipped: state.skipped,
+            chain: &mut inner_chain,
+        };
+        self.walk_token_children(node, &mut inner);
+    }
+
+    fn walk_control_token(&mut self, at: TokenAt<'a, '_>, state: &mut TokenState<'_>) {
+        let node = at.node();
         let Some(token) = control_token(node, self.source) else {
             return;
         };
-        match token.as_str() {
-            "if" | "while" | "for" | "loop" => {
-                let line = line_of(node);
-                let guard = token == "if" && is_guard(siblings, index, self.source);
-                let else_if = token == "if" && previous_is_else(siblings, index, self.source);
-                if guard {
-                    self.decision(line, nesting);
-                } else if else_if {
-                    self.decision(line, nesting);
-                    self.inside(|this| {
-                        this.walk_brace_body(siblings, index, nesting + 1, skipped);
-                    });
-                } else {
-                    self.structural(line, nesting);
-                    self.decision(line, nesting);
-                    self.inside(|this| {
-                        this.walk_brace_body(siblings, index, nesting + 1, skipped);
-                    });
-                }
-            }
-            "match" => {
-                self.structural(line_of(node), nesting);
-                self.inside(|this| this.walk_brace_body(siblings, index, nesting, skipped));
-            }
-            "else" => {
-                self.hybrid(line_of(node));
-                if else_body(siblings, index, self.source).is_some() {
-                    self.inside(|this| {
-                        this.walk_brace_body(siblings, index, nesting + 1, skipped);
-                    });
-                }
-            }
-            "&&" => self.bool_token(node, nesting, BoolOp::And, last_bool),
-            "||" => self.bool_token(node, nesting, BoolOp::Or, last_bool),
-            "|" => {}
-            "fn" => {
-                if let Some(body) = fn_body_after(siblings, index, self.source) {
-                    skipped.insert(range_key(body));
-                }
-            }
+        self.dispatch_token(&token, at, state);
+    }
+
+    fn dispatch_token(&mut self, token: &str, at: TokenAt<'a, '_>, state: &mut TokenState<'_>) {
+        if self.walk_loop_token(token, at, state) {
+            return;
+        }
+        self.dispatch_other_token(token, at, state);
+    }
+
+    fn walk_loop_token(
+        &mut self,
+        token: &str,
+        at: TokenAt<'a, '_>,
+        state: &mut TokenState<'_>,
+    ) -> bool {
+        match token {
+            "if" | "while" | "for" | "loop" => self.walk_token_loop(token, at, state),
+            _ => return false,
+        }
+        true
+    }
+
+    fn walk_token_loop(&mut self, token: &str, at: TokenAt<'a, '_>, state: &mut TokenState<'_>) {
+        let node = at.node();
+        let line = line_of(node);
+        if token == "if" && is_guard(at.siblings, at.index, self.source) {
+            self.decision(line, state.nesting);
+            return;
+        }
+        if token == "if" && previous_is_else(at.siblings, at.index, self.source) {
+            self.decision(line, state.nesting);
+            self.inside(|this| this.walk_brace_body(at, state));
+            return;
+        }
+        self.structural(line, state.nesting);
+        self.decision(line, state.nesting);
+        self.inside(|this| this.walk_brace_body(at, state));
+    }
+
+    fn dispatch_other_token(
+        &mut self,
+        token: &str,
+        at: TokenAt<'a, '_>,
+        state: &mut TokenState<'_>,
+    ) {
+        match token {
+            "match" => self.walk_token_match(at, state),
+            "else" => self.walk_token_else(at, state),
+            "&&" => self.bool_token(at.node(), BoolOp::And, state),
+            "||" => self.bool_token(at.node(), BoolOp::Or, state),
+            "fn" => self.skip_fn_body(at, state),
             _ => {}
         }
     }
 
+    fn walk_token_match(&mut self, at: TokenAt<'a, '_>, state: &mut TokenState<'_>) {
+        let node = at.node();
+        self.structural(line_of(node), state.nesting);
+        self.inside(|this| this.walk_brace_body(at, state));
+    }
+
+    fn walk_token_else(&mut self, at: TokenAt<'a, '_>, state: &mut TokenState<'_>) {
+        let node = at.node();
+        self.hybrid(line_of(node));
+        if else_present(at, self.source) {
+            self.inside(|this| this.walk_brace_body(at, state));
+        }
+    }
+
+    fn skip_fn_body(&mut self, at: TokenAt<'a, '_>, state: &mut TokenState<'_>) {
+        let Some(body) = fn_body_after(at.siblings, at.index, self.source) else {
+            return;
+        };
+        remember(state.skipped, body);
+    }
     fn walk_macro_definition(&mut self, node: Node<'a>, nesting: u32) {
         let mut cursor = node.walk();
         for child in node.children(&mut cursor) {
@@ -1181,69 +1735,66 @@ impl<'a> Classifier<'a> {
         }
     }
 
-    fn walk_brace_body(
-        &mut self,
-        siblings: &[Node<'a>],
-        index: usize,
-        nesting: u32,
-        skipped: &mut BTreeSet<(usize, usize)>,
-    ) {
-        let Some(body) = brace_after(siblings, index) else {
+    fn walk_brace_body(&mut self, at: TokenAt<'a, '_>, state: &mut TokenState<'_>) {
+        let Some(body) = brace_after(at.siblings, at.index) else {
             return;
         };
-        skipped.insert(range_key(body));
-        self.walk_tokens(body, nesting);
+        remember(state.skipped, body);
+        self.walk_tokens(body, state.nesting);
     }
 
-    fn consume_chain(
-        &mut self,
-        siblings: &[Node<'a>],
-        index: usize,
-        chain: &mut Option<TokenChain>,
-    ) -> bool {
-        let node = siblings[index];
-        if anonymous_token(node, self.source).as_deref() == Some(".") {
-            if let Some(built) = chain.as_mut() {
-                built.after_dot = true;
-            }
+    fn consume_chain(&mut self, at: TokenAt<'a, '_>, state: &mut TokenState<'_>) -> bool {
+        let node = at.node();
+        if dot_token(node, self.source) {
+            mark_dot(state);
             return true;
         }
         let Some((name, rooted)) = chain_name(node, self.source) else {
             return false;
         };
-        if chain.as_ref().is_some_and(|built| built.after_dot) {
-            let call = siblings
-                .get(index + 1)
-                .is_some_and(|next| opens_with(*next, "("));
-            let built = chain.as_mut().expect("dot started a chain");
-            if built.members.is_empty() {
-                built.line = line_of(node);
-            }
-            built.members.push(Member { name, call });
-            built.after_dot = false;
+        if chain_after_dot(state.chain) {
+            self.extend_chain(at, name, state);
             return true;
         }
-        let followed_by_dot = siblings
-            .get(index + 1)
-            .is_some_and(|next| anonymous_token(*next, self.source).as_deref() == Some("."));
-        if !followed_by_dot {
+        self.start_chain(at, rooted, state)
+    }
+
+    fn extend_chain(&mut self, at: TokenAt<'a, '_>, name: String, state: &mut TokenState<'_>) {
+        let call = next_call(at);
+        let line = line_of(at.node());
+        let built = live_chain(state);
+        push_member(built, Member { name, call }, line);
+    }
+
+    fn start_chain(
+        &mut self,
+        at: TokenAt<'a, '_>,
+        rooted: bool,
+        state: &mut TokenState<'_>,
+    ) -> bool {
+        if !followed_by_dot(at, self.source) {
             return false;
         }
-        self.finish_token_chain(chain);
-        *chain = Some(TokenChain {
+        self.finish_chain(state);
+        let line = line_of(at.node());
+        *state.chain = Some(TokenChain {
             rooted,
             members: Vec::new(),
-            line: line_of(node),
+            line,
             after_dot: false,
         });
         true
     }
 
-    fn finish_token_chain(&mut self, chain: &mut Option<TokenChain>) {
-        let Some(built) = chain.take() else {
+    fn finish_chain(&mut self, state: &mut TokenState<'_>) {
+        let Some(built) = take_built(state) else {
             return;
         };
-        if built.members.is_empty() {
+        self.store_token_chain(built);
+    }
+
+    fn store_token_chain(&mut self, built: TokenChain) {
+        if empty_members(&built) {
             return;
         }
         self.chains.push(Chain {
@@ -1253,18 +1804,12 @@ impl<'a> Classifier<'a> {
         });
     }
 
-    fn bool_token(
-        &mut self,
-        node: Node<'a>,
-        nesting: u32,
-        operator: BoolOp,
-        last_bool: &mut Option<BoolOp>,
-    ) {
+    fn bool_token(&mut self, node: Node<'a>, operator: BoolOp, state: &mut TokenState<'_>) {
         let line = line_of(node);
-        self.decision(line, nesting);
-        if *last_bool != Some(operator) {
+        self.decision(line, state.nesting);
+        if *state.last_bool != Some(operator) {
             self.fundamental(line);
-            *last_bool = Some(operator);
+            *state.last_bool = Some(operator);
         }
     }
 
@@ -1275,33 +1820,25 @@ impl<'a> Classifier<'a> {
         let Some(peeled) = peel(node, self.source) else {
             return;
         };
-        if peeled.hops.is_empty() {
+        if hops_empty(&peeled) {
             return;
         }
-        let bare_forward = self.skip.as_ref() == Some(&node.byte_range())
-            && peeled.root.is_none()
-            && peeled.hops.len() == 1;
-        if bare_forward {
+        if forward_root(&self.skip, &peeled, node) {
             return;
         }
-        let line = peeled.hops[0].line;
-        let rooted = self
-            .receiver
-            .is_some_and(|receiver| peeled.root.as_deref() == Some(receiver));
+        self.keep_peeled(peeled);
+    }
+
+    fn keep_peeled(&mut self, peeled: Peeled) {
+        let line = hop_line(&peeled);
+        let rooted = same_receiver(self.receiver, &peeled);
+        let members = hop_members(peeled);
         self.chains.push(Chain {
             line,
             rooted,
-            members: peeled
-                .hops
-                .into_iter()
-                .map(|hop| Member {
-                    name: hop.name,
-                    call: hop.call,
-                })
-                .collect(),
+            members,
         });
     }
-
     fn decision(&mut self, line: u32, nesting: u32) {
         self.decisions.push(Decision {
             line,
@@ -1344,26 +1881,188 @@ impl<'a> Classifier<'a> {
     }
 }
 
+fn has_label(node: Node) -> bool {
+    let label = node.child_by_field_name("label");
+    if label.is_some() {
+        return true;
+    }
+    let children = named_nodes(node);
+    children.iter().any(|child| child.kind() == "label")
+}
+
+fn arm_is_block(value: Node) -> bool {
+    value.kind() == "block" || is_transparent(value.kind())
+}
+
+fn first_named(node: Node<'_>) -> Option<Node<'_>> {
+    named_nodes(node).into_iter().next()
+}
+
+fn operator_line(node: Node) -> u32 {
+    let operator = node.child_by_field_name("operator");
+    if let Some(operator) = operator {
+        return line_of(operator);
+    }
+    line_of(node)
+}
+
+fn skip_token(child: Node, skipped: &BTreeSet<(usize, usize)>) -> bool {
+    if child.kind() != "token_tree" {
+        return false;
+    }
+    skipped.contains(&range_key(child))
+}
+
+fn token_group(node: Node) -> bool {
+    node.kind() == "token_tree" || node.kind() == "token_repetition"
+}
+
+fn grouped_tokens(node: Node) -> bool {
+    opens_with(node, "(") || opens_with(node, "{")
+}
+
+fn else_present(at: TokenAt<'_, '_>, source: &[u8]) -> bool {
+    let body = else_body(at.siblings, at.index, source);
+    body.is_some()
+}
+
+fn remember(skipped: &mut BTreeSet<(usize, usize)>, body: Node) {
+    skipped.insert(range_key(body));
+}
+
+fn dot_token(node: Node, source: &[u8]) -> bool {
+    anonymous_token(node, source).as_deref() == Some(".")
+}
+
+fn mark_dot(state: &mut TokenState<'_>) {
+    let chain = &mut state.chain;
+    let Some(built) = chain.as_mut() else {
+        return;
+    };
+    built.after_dot = true;
+}
+
+fn chain_after_dot(chain: &Option<TokenChain>) -> bool {
+    chain.as_ref().is_some_and(|built| built.after_dot)
+}
+
+fn next_call(at: TokenAt<'_, '_>) -> bool {
+    let next = at.siblings.get(at.index + 1);
+    next.is_some_and(|next| opens_with(*next, "("))
+}
+
+fn followed_by_dot(at: TokenAt<'_, '_>, source: &[u8]) -> bool {
+    let next = at.siblings.get(at.index + 1);
+    next.is_some_and(|next| dot_token(*next, source))
+}
+
+fn live_chain<'a, 'b>(state: &'b mut TokenState<'a>) -> &'b mut TokenChain {
+    let chain = &mut state.chain;
+    chain.as_mut().expect("dot started a chain")
+}
+
+fn take_built(state: &mut TokenState<'_>) -> Option<TokenChain> {
+    let chain = &mut state.chain;
+    chain.take()
+}
+
+fn empty_members(built: &TokenChain) -> bool {
+    let members = &built.members;
+    members.is_empty()
+}
+
+fn push_member(built: &mut TokenChain, member: Member, line: u32) {
+    if empty_members(built) {
+        built.line = line;
+    }
+    add_member(built, member);
+    built.after_dot = false;
+}
+
+fn add_member(built: &mut TokenChain, member: Member) {
+    let members = &mut built.members;
+    members.push(member);
+}
+
+fn hops_empty(peeled: &Peeled) -> bool {
+    let hops = &peeled.hops;
+    hops.is_empty()
+}
+
+fn hop_line(peeled: &Peeled) -> u32 {
+    let hops = &peeled.hops;
+    let first = &hops[0];
+    first.line
+}
+
+fn one_hop(peeled: &Peeled) -> bool {
+    let hops = &peeled.hops;
+    hops.len() == 1
+}
+
+fn missing_root(peeled: &Peeled) -> bool {
+    let root = &peeled.root;
+    root.is_none()
+}
+
+fn peeled_root(peeled: &Peeled) -> Option<&str> {
+    let root = &peeled.root;
+    root.as_deref()
+}
+
+fn same_receiver(receiver: Option<&str>, peeled: &Peeled) -> bool {
+    let root = peeled_root(peeled);
+    receiver.is_some_and(|name| root == Some(name))
+}
+
+fn hop_members(peeled: Peeled) -> Vec<Member> {
+    let hops = peeled.hops;
+    hops.into_iter()
+        .map(|hop| Member {
+            name: hop.name,
+            call: hop.call,
+        })
+        .collect()
+}
+
+fn forward_root(skip: &Option<std::ops::Range<usize>>, peeled: &Peeled, node: Node) -> bool {
+    same_range(skip, node) && missing_root(peeled) && one_hop(peeled)
+}
+
+fn same_range(skip: &Option<std::ops::Range<usize>>, node: Node) -> bool {
+    let range = node.byte_range();
+    skip.as_ref() == Some(&range)
+}
+
 fn forwarding_call<'a>(node: Node<'a>, source: &[u8]) -> Option<(u32, Node<'a>)> {
     match node.kind() {
-        "function_item" => {
-            let body = node.child_by_field_name("body")?;
-            let statement = sole_forward(&code_nodes(body), source)?;
-            Some((line_of(statement), unwrap_call(statement, source)?))
-        }
-        "closure_expression" => {
-            let body = node.child_by_field_name("body")?;
-            if body.kind() == "block" {
-                let statement = sole_forward(&code_nodes(body), source)?;
-                Some((line_of(statement), unwrap_call(statement, source)?))
-            } else {
-                Some((line_of(body), unwrap_call(body, source)?))
-            }
-        }
+        "function_item" => forward_function(node, source),
+        "closure_expression" => forward_closure(node, source),
         _ => None,
     }
 }
 
+fn forward_function<'a>(node: Node<'a>, source: &[u8]) -> Option<(u32, Node<'a>)> {
+    let body = node.child_by_field_name("body")?;
+    let statement = sole_forward(&code_nodes(body), source)?;
+    let call = unwrap_call(statement, source)?;
+    Some((line_of(statement), call))
+}
+
+fn forward_closure<'a>(node: Node<'a>, source: &[u8]) -> Option<(u32, Node<'a>)> {
+    let body = node.child_by_field_name("body")?;
+    if body.kind() == "block" {
+        return forward_block(body, source);
+    }
+    let call = unwrap_call(body, source)?;
+    Some((line_of(body), call))
+}
+
+fn forward_block<'a>(body: Node<'a>, source: &[u8]) -> Option<(u32, Node<'a>)> {
+    let statement = sole_forward(&code_nodes(body), source)?;
+    let call = unwrap_call(statement, source)?;
+    Some((line_of(statement), call))
+}
 fn sole_forward<'a>(statements: &[Node<'a>], source: &[u8]) -> Option<Node<'a>> {
     let mut kept = Vec::new();
     for (index, statement) in statements.iter().copied().enumerate() {
@@ -1471,19 +2170,36 @@ fn mentioned(nodes: &[Node], source: &[u8], name: &str) -> bool {
 }
 
 fn contains_name(node: Node, source: &[u8], name: &str) -> bool {
-    if node.kind() == "identifier" && node_text(node, source) == name {
+    name_in(node, (source, name))
+}
+
+fn name_in(node: Node, sought: (&[u8], &str)) -> bool {
+    if same_identifier(node, sought) {
         return true;
     }
+    child_contains(node, sought)
+}
+
+fn same_identifier(node: Node, sought: (&[u8], &str)) -> bool {
+    let (source, name) = sought;
+    node.kind() == "identifier" && node_text(node, source) == name
+}
+
+fn child_contains(node: Node, sought: (&[u8], &str)) -> bool {
     for index in 0..node.child_count() {
-        if let Some(child) = node.child(index) {
-            if contains_name(child, source, name) {
-                return true;
-            }
+        if child_has_name(node, index, sought) {
+            return true;
         }
     }
     false
 }
 
+fn child_has_name(node: Node, index: u32, sought: (&[u8], &str)) -> bool {
+    let Some(child) = node.child(index) else {
+        return false;
+    };
+    name_in(child, sought)
+}
 fn unwrap_call<'a>(node: Node<'a>, source: &[u8]) -> Option<Node<'a>> {
     match node.kind() {
         "call_expression" => {
@@ -1556,75 +2272,94 @@ fn is_literal(node: Node) -> bool {
 }
 
 fn call_is_clean(call: Node, source: &[u8]) -> bool {
-    if let Some(function) = call.child_by_field_name("function") {
-        if nested_call(function, source) {
-            return false;
-        }
+    if function_is_nested(call, source) {
+        return false;
     }
-    if let Some(arguments) = call.child_by_field_name("arguments") {
-        for argument in code_nodes(arguments) {
-            if nested_call(argument, source) {
-                return false;
-            }
+    arguments_are_clean(call, source)
+}
+
+fn function_is_nested(call: Node, source: &[u8]) -> bool {
+    let Some(function) = call.child_by_field_name("function") else {
+        return false;
+    };
+    nested_call(function, source)
+}
+
+fn arguments_are_clean(call: Node, source: &[u8]) -> bool {
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return true;
+    };
+    clean_arguments(arguments, source)
+}
+
+fn clean_arguments(arguments: Node, source: &[u8]) -> bool {
+    for argument in code_nodes(arguments) {
+        if nested_call(argument, source) {
+            return false;
         }
     }
     true
 }
-
 fn nested_call(node: Node, source: &[u8]) -> bool {
     if identity_named(node, source) {
-        return wrapper_receiver(node).is_some_and(contains_call);
+        return identity_wraps_call(node);
     }
     if node.kind() == "call_expression" {
         return true;
     }
+    child_is_call(node, source)
+}
+
+fn identity_wraps_call(node: Node) -> bool {
+    let receiver = wrapper_receiver(node);
+    receiver.is_some_and(contains_call)
+}
+
+fn child_is_call(node: Node, source: &[u8]) -> bool {
     for index in 0..node.child_count() {
-        if let Some(child) = node.child(index) {
-            if nested_call(child, source) {
-                return true;
-            }
+        if one_child_calls(node, index, source) {
+            return true;
         }
     }
     false
 }
 
+fn one_child_calls(node: Node, index: u32, source: &[u8]) -> bool {
+    let Some(child) = node.child(index) else {
+        return false;
+    };
+    nested_call(child, source)
+}
 fn contains_call(node: Node) -> bool {
     if node.kind() == "call_expression" {
         return true;
     }
+    child_contains_call(node)
+}
+
+fn child_contains_call(node: Node) -> bool {
     for index in 0..node.child_count() {
-        if let Some(child) = node.child(index) {
-            if contains_call(child) {
-                return true;
-            }
+        if one_contains_call(node, index) {
+            return true;
         }
     }
     false
 }
 
-fn wrapper_receiver(node: Node) -> Option<Node> {
-    node.child_by_field_name("function")?
-        .child_by_field_name("value")
+fn one_contains_call(node: Node, index: u32) -> bool {
+    let Some(child) = node.child(index) else {
+        return false;
+    };
+    contains_call(child)
 }
-
+fn wrapper_receiver(node: Node) -> Option<Node> {
+    let function = node.child_by_field_name("function")?;
+    function.child_by_field_name("value")
+}
 fn forwarded_names(call: Node, source: &[u8], ordinary: &[String]) -> Vec<String> {
     let mut found = BTreeSet::new();
-    if let Some(function) = call.child_by_field_name("function") {
-        if function.kind() == "field_expression" {
-            if let Some(object) = function.child_by_field_name("value") {
-                if let Some(name) = bare_name(object, source) {
-                    found.insert(name);
-                }
-            }
-        }
-    }
-    if let Some(arguments) = call.child_by_field_name("arguments") {
-        for argument in code_nodes(arguments) {
-            if let Some(name) = bare_name(argument, source) {
-                found.insert(name);
-            }
-        }
-    }
+    collect_receiver(call, source, &mut found);
+    collect_arguments(call, source, &mut found);
     ordinary
         .iter()
         .filter(|name| found.contains(*name))
@@ -1632,29 +2367,81 @@ fn forwarded_names(call: Node, source: &[u8], ordinary: &[String]) -> Vec<String
         .collect()
 }
 
+fn collect_receiver(call: Node, source: &[u8], found: &mut BTreeSet<String>) {
+    let Some(function) = call.child_by_field_name("function") else {
+        return;
+    };
+    if function.kind() != "field_expression" {
+        return;
+    }
+    insert_bare(function, source, found);
+}
+
+fn insert_bare(function: Node, source: &[u8], found: &mut BTreeSet<String>) {
+    let Some(object) = function.child_by_field_name("value") else {
+        return;
+    };
+    let Some(name) = bare_name(object, source) else {
+        return;
+    };
+    found.insert(name);
+}
+
+fn collect_arguments(call: Node, source: &[u8], found: &mut BTreeSet<String>) {
+    let Some(arguments) = call.child_by_field_name("arguments") else {
+        return;
+    };
+    for argument in code_nodes(arguments) {
+        insert_argument(argument, source, found);
+    }
+}
+
+fn insert_argument(argument: Node, source: &[u8], found: &mut BTreeSet<String>) {
+    let Some(name) = bare_name(argument, source) else {
+        return;
+    };
+    found.insert(name);
+}
 fn bare_name(node: Node, source: &[u8]) -> Option<String> {
     match node.kind() {
         "identifier" => Some(node_text(node, source)),
-        "parenthesized_expression" => {
-            let children = code_nodes(node);
-            let [child] = children.as_slice() else {
-                return None;
-            };
-            bare_name(*child, source)
-        }
-        "reference_expression" => node
-            .child_by_field_name("value")
-            .and_then(|value| bare_name(value, source)),
-        "unary_expression" if operator_text(node, source) == "*" => code_nodes(node)
-            .first()
-            .and_then(|child| bare_name(*child, source)),
-        "call_expression" if identity_named(node, source) => {
-            wrapper_receiver(node).and_then(|receiver| bare_name(receiver, source))
-        }
+        "parenthesized_expression" => bare_parenthesized(node, source),
+        "reference_expression" => bare_reference(node, source),
+        "unary_expression" => bare_unary(node, source),
+        "call_expression" => bare_identity(node, source),
         _ => None,
     }
 }
 
+fn bare_parenthesized(node: Node, source: &[u8]) -> Option<String> {
+    let children = code_nodes(node);
+    let [child] = children.as_slice() else {
+        return None;
+    };
+    bare_name(*child, source)
+}
+
+fn bare_reference(node: Node, source: &[u8]) -> Option<String> {
+    let value = node.child_by_field_name("value")?;
+    bare_name(value, source)
+}
+
+fn bare_unary(node: Node, source: &[u8]) -> Option<String> {
+    if operator_text(node, source) != "*" {
+        return None;
+    }
+    let children = code_nodes(node);
+    let child = children.first()?;
+    bare_name(*child, source)
+}
+
+fn bare_identity(node: Node, source: &[u8]) -> Option<String> {
+    if !identity_named(node, source) {
+        return None;
+    }
+    let receiver = wrapper_receiver(node)?;
+    bare_name(receiver, source)
+}
 fn identity_named(node: Node, source: &[u8]) -> bool {
     let Some(function) = node.child_by_field_name("function") else {
         return false;
@@ -1665,13 +2452,26 @@ fn identity_named(node: Node, source: &[u8]) -> bool {
     let Some(field) = function.child_by_field_name("field") else {
         return false;
     };
-    if !IDENTITY.contains(&node_text(field, source).as_str()) {
+    if !identity_field(field, source) {
         return false;
     }
-    node.child_by_field_name("arguments")
-        .is_none_or(|arguments| code_nodes(arguments).is_empty())
+    arguments_absent(node)
 }
 
+fn identity_field(field: Node, source: &[u8]) -> bool {
+    let name = node_text(field, source);
+    IDENTITY.contains(&name.as_str())
+}
+
+fn arguments_absent(node: Node) -> bool {
+    let arguments = node.child_by_field_name("arguments");
+    arguments.is_none_or(argument_list_empty)
+}
+
+fn argument_list_empty(arguments: Node) -> bool {
+    let nodes = code_nodes(arguments);
+    nodes.is_empty()
+}
 fn count_specified(node: Node, source: &[u8]) -> u32 {
     match node.kind() {
         "match_pattern" => {
@@ -1734,9 +2534,12 @@ fn control_token(node: Node<'_>, source: &[u8]) -> Option<String> {
 }
 
 fn opens_with(node: Node<'_>, token: &str) -> bool {
-    node.kind() == "token_tree" && node.child(0).is_some_and(|child| child.kind() == token)
+    if node.kind() != "token_tree" {
+        return false;
+    }
+    let child = node.child(0);
+    child.is_some_and(|child| child.kind() == token)
 }
-
 fn brace_after<'a>(siblings: &[Node<'a>], index: usize) -> Option<Node<'a>> {
     siblings[index + 1..]
         .iter()
@@ -1785,71 +2588,6 @@ fn macro_name(node: Node, source: &[u8]) -> String {
     }
 }
 
-fn peel(node: Node, source: &[u8]) -> Option<Peeled> {
-    match node.kind() {
-        "identifier" | "self" => Some(Peeled {
-            root: Some(node_text(node, source)),
-            hops: Vec::new(),
-        }),
-        "scoped_identifier" | "scoped_type_identifier_in_expression_position" => Some(Peeled {
-            root: None,
-            hops: Vec::new(),
-        }),
-        "field_expression" => {
-            let object = node.child_by_field_name("value")?;
-            let mut peeled = peel(object, source).unwrap_or(Peeled {
-                root: None,
-                hops: Vec::new(),
-            });
-            let name = node.child_by_field_name("field")?;
-            peeled.hops.push(Hop {
-                name: node_text(name, source),
-                call: false,
-                line: line_of(name),
-            });
-            Some(peeled)
-        }
-        "generic_function" => node
-            .child_by_field_name("function")
-            .and_then(|function| peel(function, source)),
-        "call_expression" => {
-            let function = node.child_by_field_name("function")?;
-            if let Some(name) = bare_call_name(function, source) {
-                if bare_call_roots_a_chain(node) {
-                    return Some(Peeled {
-                        root: None,
-                        hops: Vec::new(),
-                    });
-                }
-                return Some(Peeled {
-                    root: None,
-                    hops: vec![Hop {
-                        name,
-                        call: true,
-                        line: line_of(function),
-                    }],
-                });
-            }
-            let mut peeled = peel(function, source)?;
-            if let Some(last) = peeled.hops.last_mut() {
-                last.call = true;
-            }
-            Some(peeled)
-        }
-        "index_expression" => code_nodes(node)
-            .first()
-            .and_then(|value| peel(*value, source)),
-        "parenthesized_expression" | "await_expression" | "try_expression" => {
-            let children = code_nodes(node);
-            let [child] = children.as_slice() else {
-                return None;
-            };
-            peel(*child, source)
-        }
-        _ => None,
-    }
-}
-
 fn bare_call_name(node: Node, source: &[u8]) -> Option<String> {
     match node.kind() {
         "identifier" => Some(node_text(node, source)),
@@ -1876,64 +2614,92 @@ fn chain_root(node: Node) -> Node {
 }
 
 fn shares_code_line(comment: Node) -> bool {
-    let line = comment.start_position().row;
+    let line = row_of(comment);
     let mut cursor = comment.prev_sibling();
     while let Some(sibling) = cursor {
-        if sibling.kind() == "line_comment" {
-            if occupied_end(sibling) < line {
-                return false;
-            }
-            cursor = sibling.prev_sibling();
-            continue;
+        if !is_line_comment(sibling) {
+            return shares_row(sibling, line);
         }
-        return sibling.start_position().row <= line && occupied_end(sibling) >= line;
+        if occupied_end(sibling) < line {
+            return false;
+        }
+        cursor = sibling.prev_sibling();
     }
     false
 }
 
+fn is_line_comment(node: Node) -> bool {
+    node.kind() == "line_comment"
+}
+
+fn shares_row(sibling: Node, line: usize) -> bool {
+    let start = row_of(sibling);
+    start <= line && occupied_end(sibling) >= line
+}
 fn occupied_end(node: Node) -> usize {
     let end = node.end_position();
-    if end.column == 0 && end.row > node.start_position().row {
+    if end.column == 0 && end.row > row_of(node) {
         end.row - 1
     } else {
         end.row
     }
 }
-
 fn bare_call_roots_a_chain(node: Node) -> bool {
     let mut current = node;
     loop {
         let Some(parent) = current.parent() else {
             return false;
         };
-        match parent.kind() {
-            "field_expression" => {
-                return parent.child_by_field_name("value") == Some(current);
-            }
-            "index_expression" => {
-                if code_nodes(parent).first() != Some(&current) {
-                    return false;
-                }
-                current = parent;
-            }
-            "parenthesized_expression" | "await_expression" | "try_expression" => {
-                let children = code_nodes(parent);
-                if children.len() != 1 || children.first() != Some(&current) {
-                    return false;
-                }
-                current = parent;
-            }
-            "call_expression" | "generic_function" => {
-                if parent.child_by_field_name("function") != Some(current) {
-                    return false;
-                }
-                current = parent;
-            }
-            _ => return false,
+        match chain_parent(parent, current) {
+            ParentStep::Stop(found) => return found,
+            ParentStep::Rise(next) => current = next,
         }
     }
 }
 
+enum ParentStep<'a> {
+    Stop(bool),
+    Rise(Node<'a>),
+}
+
+fn chain_parent<'a>(parent: Node<'a>, current: Node<'a>) -> ParentStep<'a> {
+    match parent.kind() {
+        "field_expression" => ParentStep::Stop(field_value_is(parent, current)),
+        "index_expression" => index_step(parent, current),
+        "parenthesized_expression" | "await_expression" | "try_expression" => {
+            wrapped_step(parent, current)
+        }
+        "call_expression" | "generic_function" => call_step(parent, current),
+        _ => ParentStep::Stop(false),
+    }
+}
+
+fn field_value_is(parent: Node, current: Node) -> bool {
+    parent.child_by_field_name("value") == Some(current)
+}
+
+fn index_step<'a>(parent: Node<'a>, current: Node<'a>) -> ParentStep<'a> {
+    let children = code_nodes(parent);
+    if children.first() != Some(&current) {
+        return ParentStep::Stop(false);
+    }
+    ParentStep::Rise(parent)
+}
+
+fn wrapped_step<'a>(parent: Node<'a>, current: Node<'a>) -> ParentStep<'a> {
+    let children = code_nodes(parent);
+    if children.len() != 1 || children.first() != Some(&current) {
+        return ParentStep::Stop(false);
+    }
+    ParentStep::Rise(parent)
+}
+
+fn call_step<'a>(parent: Node<'a>, current: Node<'a>) -> ParentStep<'a> {
+    if parent.child_by_field_name("function") != Some(current) {
+        return ParentStep::Stop(false);
+    }
+    ParentStep::Rise(parent)
+}
 fn chain_continues(node: Node) -> bool {
     let Some(parent) = node.parent() else {
         return false;
@@ -2031,9 +2797,10 @@ fn code_nodes(node: Node<'_>) -> Vec<Node<'_>> {
 }
 
 fn span_of(node: Node) -> Span {
-    let start = node.start_position().row as u32 + 1;
+    let start_row = row_of(node);
+    let start = start_row as u32 + 1;
     let end_point = node.end_position();
-    let end = if end_point.column == 0 && end_point.row > node.start_position().row {
+    let end = if end_point.column == 0 && end_point.row > start_row {
         end_point.row as u32
     } else {
         end_point.row as u32 + 1
@@ -2043,7 +2810,6 @@ fn span_of(node: Node) -> Span {
         end: end.max(start),
     }
 }
-
 fn named_nodes(node: Node<'_>) -> Vec<Node<'_>> {
     let mut children = Vec::new();
     for index in 0..node.named_child_count() {
@@ -2063,16 +2829,18 @@ fn node_text(node: Node, source: &[u8]) -> String {
 }
 
 fn flat_text(node: Node, source: &[u8]) -> String {
-    node_text(node, source)
-        .split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
+    let text = node_text(node, source);
+    let parts: Vec<_> = text.split_whitespace().collect();
+    parts.join(" ")
 }
-
 fn line_of(node: Node) -> u32 {
-    node.start_position().row as u32 + 1
+    row_of(node) as u32 + 1
 }
 
+fn row_of(node: Node) -> usize {
+    let position = node.start_position();
+    position.row
+}
 fn token_line(node: Node, source: &[u8], token: &str) -> u32 {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {

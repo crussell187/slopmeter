@@ -99,6 +99,14 @@ impl std::fmt::Display for ConfigError {
             ConfigError::InvalidToml(err) => write!(f, "invalid TOML: {err}"),
             ConfigError::UnknownKey(key) => write!(f, "unknown key {key}"),
             ConfigError::WrongType(key) => write!(f, "{key} has the wrong type"),
+            other => other.fmt_rest(f),
+        }
+    }
+}
+
+impl ConfigError {
+    fn fmt_rest(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
             ConfigError::EmptyOverride(key) => write!(f, "{key} is empty"),
             ConfigError::InvalidPath(path) => write!(f, "invalid path {path}"),
             ConfigError::InvalidName(name) => write!(f, "invalid allow name {name}"),
@@ -111,6 +119,7 @@ impl std::fmt::Display for ConfigError {
             } => {
                 write!(f, "{language} F03 warn {warn} is not below gate {gate}")
             }
+            _ => Ok(()),
         }
     }
 }
@@ -171,57 +180,85 @@ impl Config {
     }
 }
 
+struct BuiltinGates {
+    f01: u32,
+    f03_warn: u32,
+    f03: u32,
+    f04: u32,
+    f05: u32,
+    f06: u32,
+    f08_receiver: u32,
+    f08_other: u32,
+    f11: u32,
+}
+
 impl LanguageProfile {
     fn builtin(language: Language) -> Self {
-        let (f01, f03_warn, f03, f04, f05, f06, f08_receiver, f08_other, f11) = match language {
-            Language::Python => (
-                PYTHON_F01_GATE,
-                PYTHON_F03_WARN,
-                PYTHON_F03_GATE,
-                PYTHON_F04_GATE,
-                PYTHON_F05_GATE,
-                PYTHON_F06_GATE,
-                PYTHON_F08_RECEIVER_HOPS,
-                PYTHON_F08_OTHER_HOPS,
-                PYTHON_F11_GATE,
-            ),
-            Language::Rust => (
-                RUST_F01_GATE,
-                RUST_F03_WARN,
-                RUST_F03_GATE,
-                RUST_F04_GATE,
-                RUST_F05_GATE,
-                RUST_F06_GATE,
-                RUST_F08_RECEIVER_HOPS,
-                RUST_F08_OTHER_HOPS,
-                RUST_F11_GATE,
-            ),
-            Language::Cpp => (
-                CPP_F01_GATE,
-                CPP_F03_WARN,
-                CPP_F03_GATE,
-                CPP_F04_GATE,
-                CPP_F05_GATE,
-                CPP_F06_GATE,
-                CPP_F08_RECEIVER_HOPS,
-                CPP_F08_OTHER_HOPS,
-                CPP_F11_GATE,
-            ),
+        let gates = match language {
+            Language::Python => python_gates(),
+            Language::Rust => rust_gates(),
+            Language::Cpp => cpp_gates(),
         };
-        Self {
-            f01_gate: f01,
-            f02_gate: F02_GATE,
-            f03_warn,
-            f03_gate: f03,
-            f04_gate: f04,
-            f05_gate: f05,
-            f06_gate: f06,
-            f07_percent: F07_PASS_THROUGH_PERCENT,
-            f08_receiver_hops: f08_receiver,
-            f08_other_hops: f08_other,
-            f08_allow: Vec::new(),
-            f11_gate: f11,
-        }
+        profile_from(gates)
+    }
+}
+
+fn python_gates() -> BuiltinGates {
+    BuiltinGates {
+        f01: PYTHON_F01_GATE,
+        f03_warn: PYTHON_F03_WARN,
+        f03: PYTHON_F03_GATE,
+        f04: PYTHON_F04_GATE,
+        f05: PYTHON_F05_GATE,
+        f06: PYTHON_F06_GATE,
+        f08_receiver: PYTHON_F08_RECEIVER_HOPS,
+        f08_other: PYTHON_F08_OTHER_HOPS,
+        f11: PYTHON_F11_GATE,
+    }
+}
+
+fn rust_gates() -> BuiltinGates {
+    BuiltinGates {
+        f01: RUST_F01_GATE,
+        f03_warn: RUST_F03_WARN,
+        f03: RUST_F03_GATE,
+        f04: RUST_F04_GATE,
+        f05: RUST_F05_GATE,
+        f06: RUST_F06_GATE,
+        f08_receiver: RUST_F08_RECEIVER_HOPS,
+        f08_other: RUST_F08_OTHER_HOPS,
+        f11: RUST_F11_GATE,
+    }
+}
+
+fn cpp_gates() -> BuiltinGates {
+    BuiltinGates {
+        f01: CPP_F01_GATE,
+        f03_warn: CPP_F03_WARN,
+        f03: CPP_F03_GATE,
+        f04: CPP_F04_GATE,
+        f05: CPP_F05_GATE,
+        f06: CPP_F06_GATE,
+        f08_receiver: CPP_F08_RECEIVER_HOPS,
+        f08_other: CPP_F08_OTHER_HOPS,
+        f11: CPP_F11_GATE,
+    }
+}
+
+fn profile_from(gates: BuiltinGates) -> LanguageProfile {
+    LanguageProfile {
+        f01_gate: gates.f01,
+        f02_gate: F02_GATE,
+        f03_warn: gates.f03_warn,
+        f03_gate: gates.f03,
+        f04_gate: gates.f04,
+        f05_gate: gates.f05,
+        f06_gate: gates.f06,
+        f07_percent: F07_PASS_THROUGH_PERCENT,
+        f08_receiver_hops: gates.f08_receiver,
+        f08_other_hops: gates.f08_other,
+        f08_allow: Vec::new(),
+        f11_gate: gates.f11,
     }
 }
 
@@ -238,21 +275,45 @@ pub fn load_config(root: &Path) -> Result<Config, ConfigError> {
 }
 
 fn parse_config(text: &str) -> Result<Config, ConfigError> {
-    let table: toml::Table = text
-        .parse()
-        .map_err(|err: toml::de::Error| ConfigError::InvalidToml(err.to_string()))?;
+    let parsed = text.parse::<toml::Table>();
+    let table = parsed.map_err(invalid_toml)?;
     let mut config = Config::builtin();
     for (key, value) in &table {
-        match key.as_str() {
-            "coverage" => config.coverage = Some(report_path(value, "coverage")?),
-            "mutation" => apply_mutation(&mut config, value)?,
-            "include" => config.include = Some(pattern_list(value, "include")?),
-            "exclude" => config.exclude = Some(pattern_list(value, "exclude")?),
-            "profile" => apply_profile(&mut config, value)?,
-            other => return Err(ConfigError::UnknownKey(other.to_string())),
-        }
+        apply_root(&mut config, key.as_str(), value)?;
     }
     Ok(config)
+}
+
+fn invalid_toml(err: toml::de::Error) -> ConfigError {
+    ConfigError::InvalidToml(err.to_string())
+}
+
+fn apply_root(config: &mut Config, key: &str, value: &toml::Value) -> Result<(), ConfigError> {
+    if key == "coverage" {
+        let path = report_path(value, "coverage")?;
+        config.coverage = Some(path);
+        return Ok(());
+    }
+    if key == "profile" {
+        return apply_profile(config, value);
+    }
+    apply_listed(config, key, value)
+}
+
+fn apply_listed(config: &mut Config, key: &str, value: &toml::Value) -> Result<(), ConfigError> {
+    match key {
+        "mutation" => apply_mutation(config, value)?,
+        "include" => {
+            let items = pattern_list(value, "include")?;
+            config.include = Some(items);
+        }
+        "exclude" => {
+            let items = pattern_list(value, "exclude")?;
+            config.exclude = Some(items);
+        }
+        other => return Err(ConfigError::UnknownKey(other.to_string())),
+    }
+    Ok(())
 }
 
 fn report_path(value: &toml::Value, key: &str) -> Result<String, ConfigError> {
@@ -274,12 +335,30 @@ fn apply_mutation(config: &mut Config, value: &toml::Value) -> Result<(), Config
         return Err(ConfigError::EmptyOverride("mutation".to_string()));
     }
     for (key, item) in table {
-        match key.as_str() {
-            "rust" => config.mutation_rust = Some(report_path(item, "mutation.rust")?),
-            "python" => config.mutation_python = Some(report_path(item, "mutation.python")?),
-            "cpp" => config.mutation_cpp = Some(report_path(item, "mutation.cpp")?),
-            other => return Err(ConfigError::UnknownKey(format!("mutation.{other}"))),
+        apply_mutation_key(config, key.as_str(), item)?;
+    }
+    Ok(())
+}
+
+fn apply_mutation_key(
+    config: &mut Config,
+    key: &str,
+    item: &toml::Value,
+) -> Result<(), ConfigError> {
+    match key {
+        "rust" => {
+            let path = report_path(item, "mutation.rust")?;
+            config.mutation_rust = Some(path);
         }
+        "python" => {
+            let path = report_path(item, "mutation.python")?;
+            config.mutation_python = Some(path);
+        }
+        "cpp" => {
+            let path = report_path(item, "mutation.cpp")?;
+            config.mutation_cpp = Some(path);
+        }
+        other => return Err(ConfigError::UnknownKey(format!("mutation.{other}"))),
     }
     Ok(())
 }
@@ -328,6 +407,12 @@ fn apply_profile(config: &mut Config, value: &toml::Value) -> Result<(), ConfigE
     Ok(())
 }
 
+struct ProfileRule<'a> {
+    label: &'a str,
+    name: &'a str,
+    body: &'a toml::Value,
+}
+
 fn apply_language(
     config: &mut Config,
     language: Language,
@@ -341,55 +426,115 @@ fn apply_language(
         return Err(ConfigError::EmptyOverride(format!("profile.{label}")));
     }
     for (rule, body) in table {
-        match rule.as_str() {
-            "F01" | "F02" | "F04" | "F05" | "F06" | "F11" => {
-                apply_count_gate(config, language, rule, body)?;
-            }
-            "F03" => apply_f03(config, language, body)?,
-            "F08" => apply_f08(config, language, body)?,
-            other => return Err(ConfigError::UnknownKey(format!("profile.{label}.{other}"))),
+        let entry = ProfileRule {
+            label,
+            name: rule.as_str(),
+            body,
+        };
+        apply_profile_rule(config, language, entry)?;
+    }
+    Ok(())
+}
+
+fn apply_profile_rule(
+    config: &mut Config,
+    language: Language,
+    rule: ProfileRule<'_>,
+) -> Result<(), ConfigError> {
+    if matches!(rule.name, "F01" | "F02" | "F04" | "F05" | "F06" | "F11") {
+        return apply_count_gate(
+            config,
+            CountGate {
+                language,
+                rule: rule.name,
+                value: rule.body,
+            },
+        );
+    }
+    match rule.name {
+        "F03" => apply_f03(config, language, rule.body)?,
+        "F08" => apply_f08(config, language, rule.body)?,
+        other => {
+            return Err(ConfigError::UnknownKey(format!(
+                "profile.{}.{other}",
+                rule.label
+            )))
         }
     }
     Ok(())
 }
 
-fn apply_count_gate(
-    config: &mut Config,
+struct CountGate<'a> {
     language: Language,
-    rule: &str,
-    value: &toml::Value,
-) -> Result<(), ConfigError> {
+    rule: &'a str,
+    value: &'a toml::Value,
+}
+
+fn apply_count_gate(config: &mut Config, gate: CountGate<'_>) -> Result<(), ConfigError> {
+    let key = count_key(gate.language, gate.rule);
+    let number = count_gate_number(gate.value, &key)?;
+    let ceiling = builtin_gate(gate.language, gate.rule).saturating_mul(2);
+    if number > ceiling {
+        return Err(ConfigError::OutOfRange(format!("{key}.gate")));
+    }
+    let profile = config.profile_mut(gate.language);
+    assign_count_gate(
+        profile,
+        AssignedGate {
+            rule: gate.rule,
+            gate: number,
+            key: &key,
+        },
+    )
+}
+
+fn count_key(language: Language, rule: &str) -> String {
     let label = language_name(language);
-    let key = format!("profile.{label}.{rule}");
+    format!("profile.{label}.{rule}")
+}
+
+fn count_gate_number(value: &toml::Value, key: &str) -> Result<u32, ConfigError> {
     let Some(table) = value.as_table() else {
-        return Err(ConfigError::WrongType(key));
+        return Err(ConfigError::WrongType(key.to_string()));
     };
     if table.is_empty() {
-        return Err(ConfigError::EmptyOverride(key));
+        return Err(ConfigError::EmptyOverride(key.to_string()));
     }
     let mut gate = None;
     for (name, item) in table {
-        match name.as_str() {
-            "gate" => gate = Some(nonneg(item, &format!("{key}.gate"))?),
-            other => return Err(ConfigError::UnknownKey(format!("{key}.{other}"))),
+        gate = one_count_gate(name.as_str(), item, key)?;
+    }
+    gate.ok_or_else(|| ConfigError::EmptyOverride(key.to_string()))
+}
+
+fn one_count_gate(name: &str, item: &toml::Value, key: &str) -> Result<Option<u32>, ConfigError> {
+    match name {
+        "gate" => {
+            let number = nonneg(item, &format!("{key}.gate"))?;
+            Ok(Some(number))
         }
+        other => Err(ConfigError::UnknownKey(format!("{key}.{other}"))),
     }
-    let Some(gate) = gate else {
-        return Err(ConfigError::EmptyOverride(key));
-    };
-    let ceiling = builtin_gate(language, rule).saturating_mul(2);
-    if gate > ceiling {
-        return Err(ConfigError::OutOfRange(format!("{key}.gate")));
-    }
-    let profile = config.profile_mut(language);
-    match rule {
-        "F01" => profile.f01_gate = gate,
-        "F02" => profile.f02_gate = gate,
-        "F04" => profile.f04_gate = gate,
-        "F05" => profile.f05_gate = gate,
-        "F06" => profile.f06_gate = gate,
-        "F11" => profile.f11_gate = gate,
-        _ => return Err(ConfigError::UnknownKey(key)),
+}
+
+struct AssignedGate<'a> {
+    rule: &'a str,
+    gate: u32,
+    key: &'a str,
+}
+
+fn assign_count_gate(
+    profile: &mut LanguageProfile,
+    assigned: AssignedGate<'_>,
+) -> Result<(), ConfigError> {
+    match assigned.rule {
+        "F01" => profile.f01_gate = assigned.gate,
+        "F02" => profile.f02_gate = assigned.gate,
+        "F04" => profile.f04_gate = assigned.gate,
+        "F05" => profile.f05_gate = assigned.gate,
+        "F06" => profile.f06_gate = assigned.gate,
+        "F11" => profile.f11_gate = assigned.gate,
+        _ => return Err(ConfigError::UnknownKey(assigned.key.to_string())),
     }
     Ok(())
 }
@@ -408,55 +553,117 @@ fn builtin_gate(language: Language, rule: &str) -> u32 {
     }
 }
 
+struct F03Levels {
+    warn: Option<u32>,
+    gate: Option<u32>,
+}
+
+struct ResolvedF03 {
+    warn: u32,
+    gate: u32,
+}
+
+struct F03Key<'a> {
+    label: &'a str,
+    key: &'a str,
+    item: &'a toml::Value,
+}
+
 fn apply_f03(
     config: &mut Config,
     language: Language,
     value: &toml::Value,
 ) -> Result<(), ConfigError> {
     let label = language_name(language);
+    let parsed = f03_levels(value, label)?;
+    let levels = checked_f03(language, label, parsed)?;
+    let profile = config.profile_mut(language);
+    profile.f03_warn = levels.warn;
+    profile.f03_gate = levels.gate;
+    Ok(())
+}
+
+fn f03_levels(value: &toml::Value, label: &str) -> Result<F03Levels, ConfigError> {
     let Some(table) = value.as_table() else {
         return Err(ConfigError::WrongType(format!("profile.{label}.F03")));
     };
     if table.is_empty() {
         return Err(ConfigError::EmptyOverride(format!("profile.{label}.F03")));
     }
-    let mut warn = None;
-    let mut gate = None;
+    let mut levels = F03Levels {
+        warn: None,
+        gate: None,
+    };
     for (key, item) in table {
-        match key.as_str() {
-            "warn" => warn = Some(nonneg(item, &format!("profile.{label}.F03.warn"))?),
-            "gate" => gate = Some(nonneg(item, &format!("profile.{label}.F03.gate"))?),
-            other => {
-                return Err(ConfigError::UnknownKey(format!(
-                    "profile.{label}.F03.{other}"
-                )))
-            }
-        }
+        let field = F03Key {
+            label,
+            key: key.as_str(),
+            item,
+        };
+        read_f03_key(&mut levels, field)?;
     }
-    if warn.is_none() && gate.is_none() {
+    if levels_unset(&levels) {
         return Err(ConfigError::EmptyOverride(format!("profile.{label}.F03")));
     }
+    Ok(levels)
+}
+
+fn levels_unset(levels: &F03Levels) -> bool {
+    let warn = levels.warn;
+    let gate = levels.gate;
+    warn.is_none() && gate.is_none()
+}
+
+fn read_f03_key(levels: &mut F03Levels, field: F03Key<'_>) -> Result<(), ConfigError> {
+    match field.key {
+        "warn" => {
+            let key = format!("profile.{}.F03.warn", field.label);
+            let number = nonneg(field.item, &key)?;
+            levels.warn = Some(number);
+        }
+        "gate" => {
+            let key = format!("profile.{}.F03.gate", field.label);
+            let number = nonneg(field.item, &key)?;
+            levels.gate = Some(number);
+        }
+        other => {
+            return Err(ConfigError::UnknownKey(format!(
+                "profile.{}.F03.{other}",
+                field.label
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn checked_f03(
+    language: Language,
+    label: &str,
+    levels: F03Levels,
+) -> Result<ResolvedF03, ConfigError> {
     let builtin_profile = LanguageProfile::builtin(language);
-    let warn = warn.unwrap_or(builtin_profile.f03_warn);
-    let builtin = builtin_profile.f03_gate;
-    let gate = gate.unwrap_or(builtin);
-    if warn > F03_WARN_MAX {
+    let builtin_warn = builtin_profile.f03_warn;
+    let builtin_gate = builtin_profile.f03_gate;
+    let chosen_warn = levels.warn.unwrap_or(builtin_warn);
+    let chosen_gate = levels.gate.unwrap_or(builtin_gate);
+    if chosen_warn > F03_WARN_MAX {
         return Err(ConfigError::OutOfRange(format!("profile.{label}.F03.warn")));
     }
-    if gate < 1 || gate > builtin.saturating_mul(2) {
+    let ceiling = builtin_gate.saturating_mul(2);
+    if chosen_gate < 1 || chosen_gate > ceiling {
         return Err(ConfigError::OutOfRange(format!("profile.{label}.F03.gate")));
     }
-    if warn >= gate {
+    if chosen_warn >= chosen_gate {
         return Err(ConfigError::WarnNotBelowGate {
             language: label.to_string(),
-            warn,
-            gate,
+            warn: chosen_warn,
+            gate: chosen_gate,
         });
     }
-    let profile = config.profile_mut(language);
-    profile.f03_warn = warn;
-    profile.f03_gate = gate;
-    Ok(())
+    Ok(ResolvedF03 {
+        warn: chosen_warn,
+        gate: chosen_gate,
+    })
 }
 
 fn apply_f08(
@@ -465,6 +672,14 @@ fn apply_f08(
     value: &toml::Value,
 ) -> Result<(), ConfigError> {
     let label = language_name(language);
+    let names = f08_names(value, label)?;
+    reject_allow_names(&names)?;
+    let profile = config.profile_mut(language);
+    profile.f08_allow = names;
+    Ok(())
+}
+
+fn f08_names(value: &toml::Value, label: &str) -> Result<Vec<String>, ConfigError> {
     let Some(table) = value.as_table() else {
         return Err(ConfigError::WrongType(format!("profile.{label}.F08")));
     };
@@ -473,25 +688,38 @@ fn apply_f08(
     }
     let mut allow = None;
     for (key, item) in table {
-        match key.as_str() {
-            "allow" => allow = Some(string_list(item, &format!("profile.{label}.F08.allow"))?),
-            other => {
-                return Err(ConfigError::UnknownKey(format!(
-                    "profile.{label}.F08.{other}"
-                )))
-            }
-        }
+        allow = one_f08_allow(key.as_str(), item, label)?;
     }
-    let Some(names) = allow else {
-        return Err(ConfigError::EmptyOverride(format!("profile.{label}.F08")));
-    };
-    for name in &names {
-        if name.is_empty() || name.contains(['.', ':', '/']) {
+    allow.ok_or_else(|| ConfigError::EmptyOverride(format!("profile.{label}.F08")))
+}
+
+fn one_f08_allow(
+    key: &str,
+    item: &toml::Value,
+    label: &str,
+) -> Result<Option<Vec<String>>, ConfigError> {
+    match key {
+        "allow" => {
+            let names = string_list(item, &format!("profile.{label}.F08.allow"))?;
+            Ok(Some(names))
+        }
+        other => Err(ConfigError::UnknownKey(format!(
+            "profile.{label}.F08.{other}"
+        ))),
+    }
+}
+
+fn reject_allow_names(names: &[String]) -> Result<(), ConfigError> {
+    for name in names {
+        if bad_allow_name(name) {
             return Err(ConfigError::InvalidName(name.clone()));
         }
     }
-    config.profile_mut(language).f08_allow = names;
     Ok(())
+}
+
+fn bad_allow_name(name: &str) -> bool {
+    name.is_empty() || name.contains(['.', ':', '/'])
 }
 
 fn nonneg(value: &toml::Value, key: &str) -> Result<u32, ConfigError> {
@@ -508,7 +736,8 @@ fn validate_repo_path(path: &str) -> Result<(), ConfigError> {
     if path.starts_with('/') || path.starts_with('\\') || has_drive_prefix(path) {
         return Err(ConfigError::InvalidPath(path.to_string()));
     }
-    if path.split(['/', '\\']).any(|segment| segment == "..") {
+    let mut segments = path.split(['/', '\\']);
+    if segments.any(|segment| segment == "..") {
         return Err(ConfigError::InvalidPath(path.to_string()));
     }
     Ok(())
@@ -519,22 +748,29 @@ fn validate_pattern(pattern: &str) -> Result<(), ConfigError> {
         return Err(ConfigError::InvalidPath(pattern.to_string()));
     }
     let trimmed = pattern.trim_end_matches('/');
-    if trimmed.is_empty()
-        || trimmed.starts_with('/')
-        || trimmed.starts_with('\\')
-        || has_drive_prefix(trimmed)
-    {
+    if bad_pattern_root(trimmed) {
         return Err(ConfigError::InvalidPath(pattern.to_string()));
     }
     for segment in trimmed.split(['/', '\\']) {
-        if segment.is_empty() || segment == "." || segment == ".." {
-            return Err(ConfigError::InvalidPath(pattern.to_string()));
-        }
-        if segment.contains("**") && segment != "**" {
+        if bad_pattern_segment(segment) {
             return Err(ConfigError::InvalidPath(pattern.to_string()));
         }
     }
     Ok(())
+}
+
+fn bad_pattern_root(trimmed: &str) -> bool {
+    trimmed.is_empty()
+        || trimmed.starts_with('/')
+        || trimmed.starts_with('\\')
+        || has_drive_prefix(trimmed)
+}
+
+fn bad_pattern_segment(segment: &str) -> bool {
+    if segment.is_empty() || segment == "." || segment == ".." {
+        return true;
+    }
+    segment.contains("**") && segment != "**"
 }
 
 fn has_drive_prefix(path: &str) -> bool {
@@ -576,10 +812,15 @@ fn segment_matches(pattern: &str, segment: &str) -> bool {
     if parts.len() == 1 {
         return pattern == segment;
     }
-    if !segment.starts_with(parts[0]) {
+    let prefix = parts[0];
+    if !segment.starts_with(prefix) {
         return false;
     }
-    let mut rest = &segment[parts[0].len()..];
+    let rest = &segment[prefix.len()..];
+    suffix_matches(&parts, rest)
+}
+
+fn suffix_matches(parts: &[&str], mut rest: &str) -> bool {
     for (index, part) in parts.iter().enumerate().skip(1) {
         if index + 1 == parts.len() {
             return rest.ends_with(part);
@@ -590,9 +831,23 @@ fn segment_matches(pattern: &str, segment: &str) -> bool {
         let Some(found) = rest.find(part) else {
             return false;
         };
-        rest = &rest[found + part.len()..];
+        let length = part.len();
+        rest = &rest[found + length..];
     }
     true
+}
+
+struct GateNote<'a> {
+    language: &'a str,
+    rule: &'a str,
+    value: u32,
+    builtin: u32,
+}
+
+struct Departure<'a> {
+    name: &'a str,
+    current: &'a LanguageProfile,
+    builtin: &'a LanguageProfile,
 }
 
 pub fn departures(config: &Config) -> Vec<String> {
@@ -600,34 +855,84 @@ pub fn departures(config: &Config) -> Vec<String> {
     for language in [Language::Python, Language::Rust, Language::Cpp] {
         let current = config.profile(language);
         let builtin = LanguageProfile::builtin(language);
-        let name = language_label(language);
-        note_gate(&mut notes, name, "F01", current.f01_gate, builtin.f01_gate);
-        note_gate(&mut notes, name, "F02", current.f02_gate, builtin.f02_gate);
-        if current.f03_warn != builtin.f03_warn {
-            notes.push(format!(
-                "{name} F03 warn is {}, built-in {}",
-                current.f03_warn, builtin.f03_warn
-            ));
-        }
-        note_gate(&mut notes, name, "F03", current.f03_gate, builtin.f03_gate);
-        note_gate(&mut notes, name, "F04", current.f04_gate, builtin.f04_gate);
-        note_gate(&mut notes, name, "F05", current.f05_gate, builtin.f05_gate);
-        note_gate(&mut notes, name, "F06", current.f06_gate, builtin.f06_gate);
-        if !current.f08_allow.is_empty() {
-            notes.push(format!(
-                "{name} F08 allow adds {}",
-                current.f08_allow.join(", ")
-            ));
-        }
-        note_gate(&mut notes, name, "F11", current.f11_gate, builtin.f11_gate);
+        let seen = Departure {
+            name: language_label(language),
+            current,
+            builtin: &builtin,
+        };
+        note_language(&mut notes, &seen);
     }
     notes
 }
 
-fn note_gate(notes: &mut Vec<String>, language: &str, rule: &str, value: u32, builtin: u32) {
-    if value != builtin {
+fn note_language(notes: &mut Vec<String>, seen: &Departure<'_>) {
+    note_rule(notes, seen, "F01");
+    note_rule(notes, seen, "F02");
+    note_f03_warn(notes, seen);
+    note_rule(notes, seen, "F03");
+    note_rule(notes, seen, "F04");
+    note_rule(notes, seen, "F05");
+    note_rule(notes, seen, "F06");
+    note_f08_allow(notes, seen);
+    note_rule(notes, seen, "F11");
+}
+
+fn note_rule(notes: &mut Vec<String>, seen: &Departure<'_>, rule: &str) {
+    let current = seen.current;
+    let builtin = seen.builtin;
+    let (value, baseline) = gate_pair(current, builtin, rule);
+    let name = seen.name;
+    note_gate(
+        notes,
+        GateNote {
+            language: name,
+            rule,
+            value,
+            builtin: baseline,
+        },
+    );
+}
+
+fn gate_pair(current: &LanguageProfile, builtin: &LanguageProfile, rule: &str) -> (u32, u32) {
+    match rule {
+        "F01" => (current.f01_gate, builtin.f01_gate),
+        "F02" => (current.f02_gate, builtin.f02_gate),
+        "F03" => (current.f03_gate, builtin.f03_gate),
+        "F04" => (current.f04_gate, builtin.f04_gate),
+        "F05" => (current.f05_gate, builtin.f05_gate),
+        "F06" => (current.f06_gate, builtin.f06_gate),
+        "F11" => (current.f11_gate, builtin.f11_gate),
+        _ => (0, 0),
+    }
+}
+
+fn note_f03_warn(notes: &mut Vec<String>, seen: &Departure<'_>) {
+    let current = seen.current;
+    let builtin = seen.builtin;
+    let warn = current.f03_warn;
+    let baseline = builtin.f03_warn;
+    if warn != baseline {
+        let name = seen.name;
+        notes.push(format!("{name} F03 warn is {warn}, built-in {baseline}"));
+    }
+}
+
+fn note_f08_allow(notes: &mut Vec<String>, seen: &Departure<'_>) {
+    let current = seen.current;
+    let allow = &current.f08_allow;
+    if allow.is_empty() {
+        return;
+    }
+    let listed = allow.join(", ");
+    let name = seen.name;
+    notes.push(format!("{name} F08 allow adds {listed}"));
+}
+
+fn note_gate(notes: &mut Vec<String>, note: GateNote<'_>) {
+    if note.value != note.builtin {
         notes.push(format!(
-            "{language} {rule} gate is {value}, built-in {builtin}"
+            "{} {} gate is {}, built-in {}",
+            note.language, note.rule, note.value, note.builtin
         ));
     }
 }
