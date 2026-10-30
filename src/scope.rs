@@ -1219,6 +1219,7 @@ def other():
                 swallowing: vec![],
                 io: vec![],
                 mutations: vec![],
+                nulls: vec![],
                 forward: None,
             },
             waivers: vec![],

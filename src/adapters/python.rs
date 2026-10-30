@@ -701,6 +701,7 @@ fn classify(node: Node, source: &[u8], names: Names<'_>) -> Body {
         swallowing: found.swallowing,
         io: record_io(node, source),
         mutations: record_mutations(node, source, names.ordinary),
+        nulls: Vec::new(),
         forward,
     }
 }
@@ -4075,5 +4076,17 @@ class Box:
         assert!(function(&file, "factory").body.mutations.is_empty());
         assert!(function(&file, "bound").body.mutations.is_empty());
         assert_eq!(function(&file, "Box.take").body.mutations, vec![20]);
+    }
+
+    #[test]
+    fn a_none_literal_records_nothing() {
+        let source = "\
+def missing(items):
+    take(None)
+    return None
+";
+        let file = parse("a.py", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+        assert!(function(&file, "missing").body.nulls.is_empty());
     }
 }

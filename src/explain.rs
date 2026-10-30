@@ -31,6 +31,7 @@ fn later_page(rule: &str) -> Option<&'static str> {
         "F08" => include_str!("../docs/explain/F08.txt"),
         "F09" => include_str!("../docs/explain/F09.txt"),
         "F10" => include_str!("../docs/explain/F10.txt"),
+        "F12" => include_str!("../docs/explain/F12.txt"),
         "F15" => include_str!("../docs/explain/F15.txt"),
         _ => return None,
     })
@@ -49,9 +50,9 @@ fn scope_page(rule: &str) -> Option<&'static str> {
 mod tests {
     use super::page;
 
-    const RULES: [&str; 14] = [
-        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F09", "F10", "F11", "F15", "S06",
-        "S07",
+    const RULES: [&str; 15] = [
+        "F01", "F02", "F03", "F04", "F05", "F06", "F07", "F08", "F09", "F10", "F11", "F12", "F15",
+        "S06", "S07",
     ];
     const GATES: [&str; 9] = [
         "F01", "F02", "F03", "F04", "F05", "F06", "F08", "F11", "F15",
@@ -63,7 +64,7 @@ mod tests {
         for rule in RULES {
             assert!(page(rule).is_some(), "{rule}");
         }
-        assert!(page("F12").is_none());
+        assert!(page("F13").is_none());
         assert!(page("f01").is_none());
     }
 
@@ -101,6 +102,10 @@ mod tests {
         assert!(f10.contains("A waiver line for F10 fails the run, because F10 is not a gate."));
         assert!(f10.contains("Rust is not applicable"));
         assert!(!f10.contains("excuses this gate"));
+        let f12 = page("F12").unwrap();
+        assert!(f12.contains("A waiver line for F12 fails the run, because F12 is not a gate."));
+        assert!(f12.contains("Python and Rust are not applicable"));
+        assert!(!f12.contains("excuses this gate"));
         let s06 = page("S06").unwrap();
         assert!(s06.contains("A waiver line for S06 fails the run."));
         assert!(!s06.contains("excuses this gate"));
@@ -163,6 +168,10 @@ mod tests {
             (
                 "F10",
                 "        warn\nPython   any\nRust     n/a\nC++      any\n",
+            ),
+            (
+                "F12",
+                "        warn\nPython   n/a\nRust     n/a\nC++      any\n",
             ),
             (
                 "F11",

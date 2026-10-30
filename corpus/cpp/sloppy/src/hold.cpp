@@ -19,3 +19,7 @@ void read(const char* path) {
 void fill(int& n) {
     n += 1;
 }
+
+int* missing() {
+    return nullptr;
+}

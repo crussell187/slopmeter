@@ -1,0 +1,35 @@
+F12  null literal
+
+A function that returns or passes null hides a missing value
+from its caller. It warns, and it does not fail the run.
+Python and Rust are not applicable.
+
+Counting
+One finding per function, at the first site. C++ scores a
+return whose expression is nullptr or NULL, and a call
+argument that is nullptr or NULL. A comparison against null
+is not a site. Python and Rust do not score this rule.
+There is no gate level.
+
+Threshold
+        warn
+Python   n/a
+Rust     n/a
+C++      any
+Any such function warns. No gate. Python and Rust are not
+applicable.
+A waiver line for F12 fails the run, because F12 is not a gate.
+
+Before
+int* find(const char* name) {
+    return nullptr;
+}
+
+After
+int find(const char* name) {
+    return -1;
+}
+
+Anti-fixes
+Replacing nullptr with NULL leaves the literal in place.
+A comparison against null leaves a returned null in place.

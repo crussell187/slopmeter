@@ -931,6 +931,7 @@ fn classify(node: Node<'_>, source: &[u8], names: Names<'_>) -> Body {
         swallowing: classifier.swallowing,
         io: record_io(node, source),
         mutations: Vec::new(),
+        nulls: Vec::new(),
         forward,
     }
 }
@@ -4535,6 +4536,18 @@ fn fill(items: &mut Vec<i32>) {
         let file = parse("a.rs", source.as_bytes());
         assert_eq!(file.unparsed_ratio, 0.0, "{source}");
         assert!(function(&file, "fill").body.mutations.is_empty());
+    }
+
+    #[test]
+    fn a_unit_return_records_no_null() {
+        let source = "\
+fn missing(items: &mut Vec<i32>) {
+    items.push(1);
+}
+";
+        let file = parse("a.rs", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+        assert!(function(&file, "missing").body.nulls.is_empty());
     }
 
     fn member_names(chain: &Chain) -> Vec<&str> {

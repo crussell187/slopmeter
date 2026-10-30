@@ -48,6 +48,7 @@ pub struct Measurement {
     pub swallowing: Vec<u32>,
     pub io: Vec<crate::ir::CallSite>,
     pub mutations: Vec<u32>,
+    pub nulls: Vec<u32>,
     pub waivers: Vec<WaiverLine>,
     pub crap: Option<f64>,
     pub coverage: Option<Coverage>,
@@ -87,6 +88,7 @@ fn measure_function(path: &str, function: &Function, allow: &[&str]) -> Measurem
         swallowing: body.swallowing.clone(),
         io: body.io.clone(),
         mutations: body.mutations.clone(),
+        nulls: body.nulls.clone(),
         waivers: waivers.clone(),
         crap: None,
         coverage: None,
@@ -261,6 +263,7 @@ mod tests {
             swallowing: vec![],
             io: vec![],
             mutations: vec![],
+            nulls: vec![],
             forward: None,
         }
     }

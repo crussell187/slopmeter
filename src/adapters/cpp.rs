@@ -1391,6 +1391,7 @@ fn classify(node: Node<'_>, score: Score<'_>) -> Body {
         swallowing: classifier.swallowing,
         io: record_io(node, score.source),
         mutations: record_mutations(node, score.source),
+        nulls: record_nulls(node),
         forward,
     }
 }
@@ -2993,6 +2994,79 @@ fn qualified_name(node: Node, source: &[u8]) -> Option<String> {
     Some(format!("{left}::{right}"))
 }
 
+fn record_nulls(node: Node) -> Vec<u32> {
+    let mut found = Vec::new();
+    walk_nulls(node, &mut found, true);
+    found
+}
+
+fn walk_nulls(node: Node, found: &mut Vec<u32>, root: bool) {
+    if skipped_null(node, root) {
+        return;
+    }
+    note_null(node, found);
+    let mut cursor = node.walk();
+    for child in node.children(&mut cursor) {
+        walk_nulls(child, found, false);
+    }
+}
+
+fn skipped_null(node: Node, root: bool) -> bool {
+    !root && node.kind() == "function_definition"
+}
+
+fn note_null(node: Node, found: &mut Vec<u32>) {
+    match node.kind() {
+        "return_statement" => note_returned(node, found),
+        "call_expression" => note_arguments(node, found),
+        _ => {}
+    }
+}
+
+fn note_returned(node: Node, found: &mut Vec<u32>) {
+    let Some(expr) = node.named_child(0) else {
+        return;
+    };
+    if !null_literal(expr) {
+        return;
+    }
+    found.push(line_of(node));
+}
+
+fn note_arguments(node: Node, found: &mut Vec<u32>) {
+    let Some(arguments) = node.child_by_field_name("arguments") else {
+        return;
+    };
+    for argument in code_nodes(arguments) {
+        note_argument(argument, found);
+    }
+}
+
+fn note_argument(argument: Node, found: &mut Vec<u32>) {
+    if !null_literal(argument) {
+        return;
+    }
+    found.push(line_of(argument));
+}
+
+fn null_literal(node: Node) -> bool {
+    if node.kind() == "null" {
+        return true;
+    }
+    peeled_null(node)
+}
+
+fn peeled_null(node: Node) -> bool {
+    if node.kind() != "parenthesized_expression" {
+        return false;
+    }
+    let children = code_nodes(node);
+    let [child] = children.as_slice() else {
+        return false;
+    };
+    null_literal(*child)
+}
+
 fn record_mutations(node: Node, source: &[u8]) -> Vec<u32> {
     if !written_void(node, source) {
         return Vec::new();
@@ -4449,5 +4523,64 @@ void mixed(
         assert_eq!(function(&file, "Box::take").body.mutations, vec![19]);
         assert_eq!(function(&file, "text").body.mutations, vec![21]);
         assert_eq!(function(&file, "mixed").body.mutations, vec![24]);
+    }
+
+    #[test]
+    fn a_null_literal_is_a_return_or_a_call_argument() {
+        let source = "\
+int* missing() {
+    return nullptr;
+}
+int* absent() {
+    return NULL;
+}
+void send() {
+    take(nullptr);
+    take(NULL);
+}
+void compare(int* p) {
+    if (p == nullptr) {
+        return;
+    }
+    if (p == NULL) {
+        return;
+    }
+}
+int* stored() {
+    int* p = nullptr;
+    return p;
+}
+int* wrapped() {
+    return (nullptr);
+}
+void pair() {
+    take(nullptr, NULL);
+}
+int* parent() {
+    struct Inner {
+        int* method() { return nullptr; }
+    };
+    return 0;
+}
+int* folded() {
+    auto pick = []() { return nullptr; };
+    return pick();
+}
+";
+        let file = parse("a.cpp", source.as_bytes());
+        assert_eq!(file.unparsed_ratio, 0.0, "{source}");
+        assert_eq!(function(&file, "missing").body.nulls, vec![2]);
+        assert_eq!(function(&file, "absent").body.nulls, vec![5]);
+        assert_eq!(function(&file, "send").body.nulls, vec![8, 9]);
+        assert!(function(&file, "compare").body.nulls.is_empty());
+        assert!(function(&file, "stored").body.nulls.is_empty());
+        assert_eq!(function(&file, "wrapped").body.nulls, vec![24]);
+        assert_eq!(function(&file, "pair").body.nulls, vec![27, 27]);
+        assert!(function(&file, "parent").body.nulls.is_empty());
+        assert_eq!(
+            function(&file, "parent::Inner::method").body.nulls,
+            vec![31]
+        );
+        assert_eq!(function(&file, "folded").body.nulls, vec![36]);
     }
 }
