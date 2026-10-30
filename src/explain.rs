@@ -39,7 +39,7 @@ mod tests {
     const GATES: [&str; 9] = [
         "F01", "F02", "F03", "F04", "F05", "F06", "F08", "F11", "F15",
     ];
-    const WAIVER: &str = "A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly above the function excuses this gate in Python, and the same tokens after `//` do so in Rust and C++, with a whole number except on F02, which may be fractional.";
+    const WAIVER: &str = "A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly above the function excuses this gate in Python, and the same tokens after `//` do so in Rust and C++, with a whole number except on F02, which may be fractional. The comment has to be in a change a person already reviewed.";
 
     #[test]
     fn a_known_rule_has_a_page_and_an_unknown_rule_does_not() {

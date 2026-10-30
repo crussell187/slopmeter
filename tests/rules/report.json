@@ -2,6 +2,7 @@
   "verdict": "fail",
   "scope": "strict",
   "slop_score": 433.59375,
+  "waived": 0,
   "kloc": 0.256,
   "tool_version": "0.0.0",
   "findings": [

@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
-use crate::ir::{File, Function, Language, Span};
+use crate::ir::{File, Function, Language, Span, WaiverLine};
 use crate::reporters::{Note, Scope};
 use crate::rules::Finding;
 
@@ -126,8 +126,87 @@ fn score_diff(root: &Path, job: &ScopeJob<'_>) -> Result<Scoped, ScopeError> {
     let change = load_change(root, changed)?;
     let files = job.files;
     let touched = touched_symbols(root, files, &change);
-    let findings = job.findings;
-    Ok(bucket_findings(findings, &touched))
+    let fresh = reject_added_waivers(files, job.findings, &change);
+    Ok(bucket_findings(&fresh, &touched))
+}
+
+fn reject_added_waivers(files: &[File], findings: &[Finding], change: &Change) -> Vec<Finding> {
+    findings
+        .iter()
+        .map(|finding| reject_one(files, finding, change))
+        .collect()
+}
+
+fn reject_one(files: &[File], finding: &Finding, change: &Change) -> Finding {
+    let mut copy = finding.clone();
+    if waiver_added(files, &copy, change) {
+        mark_written(&mut copy);
+    }
+    copy
+}
+
+fn mark_written(finding: &mut Finding) {
+    let attached = &mut finding.waiver;
+    let Some(waiver) = attached.as_mut() else {
+        return;
+    };
+    waiver.holds = false;
+    waiver.rejection = Some("written by this change".to_string());
+}
+
+fn waiver_added(files: &[File], finding: &Finding, change: &Change) -> bool {
+    let attached = &finding.waiver;
+    if attached.is_none() {
+        return false;
+    }
+    let Some(function) = function_of(files, finding) else {
+        return false;
+    };
+    let lines = &function.waivers;
+    let mut scan = lines.iter();
+    scan.any(|line| added_line(line, finding, change))
+}
+
+fn function_of<'a>(files: &'a [File], finding: &Finding) -> Option<&'a Function> {
+    let mut listed = files.iter();
+    let file = listed.find(|file| file.path == finding.path)?;
+    let functions = &file.functions;
+    let mut candidates = functions.iter();
+    candidates.find(|function| names_function(function, finding))
+}
+
+fn names_function(function: &Function, finding: &Finding) -> bool {
+    function.name == finding.name
+        && function.param_types == finding.param_types
+        && function.qualifier == finding.qualifier
+}
+
+fn added_line(line: &WaiverLine, finding: &Finding, change: &Change) -> bool {
+    names_rule(line, finding) && line_was_added(change, &finding.path, line.line)
+}
+
+fn names_rule(line: &WaiverLine, finding: &Finding) -> bool {
+    match &line.rule {
+        Some(rule) => rule == &finding.rule,
+        None => finding.rule == "waiver",
+    }
+}
+
+fn line_was_added(change: &Change, path: &str, line: u32) -> bool {
+    if path_untracked(change, path) {
+        return true;
+    }
+    let files = &change.files;
+    let Some(delta) = files.get(path) else {
+        return false;
+    };
+    let added = &delta.added;
+    added.contains(&line)
+}
+
+fn path_untracked(change: &Change, path: &str) -> bool {
+    let untracked = &change.untracked;
+    untracked.contains(path)
 }
 
 fn changed_ref<'a, 'b>(job: &'a ScopeJob<'b>) -> Option<&'a str> {
@@ -2285,5 +2364,140 @@ int other() {
             Language::Cpp,
         );
         assert_only_touched(&root, file);
+    }
+
+    fn nested(name: &str) -> String {
+        format!(
+            "\
+def {name}():
+    if True:
+        if True:
+            if True:
+                if True:
+                    return 1
+    return 0
+"
+        )
+    }
+
+    fn waived_nested(name: &str) -> String {
+        format!(
+            "# slopmeter: waive F05 9 nested on purpose\n{}",
+            nested(name)
+        )
+    }
+
+    fn python_file(path: &str, source: &str) -> (File, Vec<Finding>) {
+        let file = parse(path, source.as_bytes());
+        let findings = evaluate(&measure(&file, &[]), &Config::builtin().python);
+        (file, findings)
+    }
+
+    fn f05_waiver<'a>(findings: &'a [Finding], name: &str) -> &'a crate::rules::Waiver {
+        let finding = findings
+            .iter()
+            .find(|finding| finding.name == name && finding.rule == "F05")
+            .unwrap();
+        finding.waiver.as_ref().unwrap()
+    }
+
+    #[test]
+    fn a_waiver_the_change_adds_does_not_hold_and_an_unchanged_line_does() {
+        let root = repo("added-waiver", "main");
+        write(&root, "src/kept.py", &waived_nested("kept"));
+        write(&root, "src/open.py", &nested("open"));
+        commit_all(&root, "base");
+        let kept_source = waived_nested("kept").replace("return 1", "return 2");
+        write(&root, "src/kept.py", &kept_source);
+        write(&root, "src/open.py", &waived_nested("open"));
+        let (kept, kept_findings) = python_file("src/kept.py", &kept_source);
+        let (open, open_findings) = python_file("src/open.py", &waived_nested("open"));
+        let mut findings = kept_findings;
+        findings.extend(open_findings);
+
+        let scoped = partition(
+            &root,
+            &[kept, open],
+            &findings,
+            ScopeOptions {
+                changed: None,
+                strict: false,
+            },
+        )
+        .unwrap();
+
+        let held = f05_waiver(&scoped.findings, "kept");
+        assert!(held.holds);
+        assert!(held.rejection.is_none());
+        let rejected = f05_waiver(&scoped.findings, "open");
+        assert!(!rejected.holds);
+        assert_eq!(
+            rejected.rejection.as_deref(),
+            Some("written by this change")
+        );
+    }
+
+    #[test]
+    fn a_waiver_in_an_untracked_file_does_not_hold() {
+        let root = repo("untracked-waiver", "main");
+        write(&root, "src/old.py", "def other():\n    return 0\n");
+        commit_all(&root, "base");
+        let source = waived_nested("fresh");
+        write(&root, "src/fresh.py", &source);
+        let (file, findings) = python_file("src/fresh.py", &source);
+
+        let scoped = partition(
+            &root,
+            &[file],
+            &findings,
+            ScopeOptions {
+                changed: None,
+                strict: false,
+            },
+        )
+        .unwrap();
+
+        let rejected = f05_waiver(&scoped.findings, "fresh");
+        assert!(!rejected.holds);
+        assert_eq!(
+            rejected.rejection.as_deref(),
+            Some("written by this change")
+        );
+    }
+
+    #[test]
+    fn strict_and_a_run_outside_git_hold_every_well_formed_waiver() {
+        let root = repo("strict-waiver", "main");
+        write(&root, "src/open.py", &nested("open"));
+        commit_all(&root, "base");
+        let source = waived_nested("open");
+        write(&root, "src/open.py", &source);
+        let (file, findings) = python_file("src/open.py", &source);
+        let strict = partition(
+            &root,
+            &[file],
+            &findings,
+            ScopeOptions {
+                changed: None,
+                strict: true,
+            },
+        )
+        .unwrap();
+        assert!(f05_waiver(&strict.findings, "open").holds);
+
+        let outside = outside_repo("outside-waiver");
+        write(&outside, "src/open.py", &source);
+        let (file, findings) = python_file("src/open.py", &source);
+        let scoped = partition(
+            &outside,
+            &[file],
+            &findings,
+            ScopeOptions {
+                changed: None,
+                strict: false,
+            },
+        )
+        .unwrap();
+        assert!(f05_waiver(&scoped.findings, "open").holds);
     }
 }

@@ -42,6 +42,7 @@ struct Widths {
 struct Summary {
     score: Option<f64>,
     fail: bool,
+    waived: u32,
 }
 
 struct Listed<'a> {
@@ -56,7 +57,12 @@ pub fn render(report: &Report, json: bool) -> Rendered {
     sort_findings(&mut inherited);
     let fail = verdict_fails(&findings);
     let score = slop_score(&findings, &inherited, report.kloc);
-    let summary = Summary { score, fail };
+    let waived = held_count(&findings, &inherited);
+    let summary = Summary {
+        score,
+        fail,
+        waived,
+    };
     let rows = Listed {
         findings: &findings,
         inherited: &inherited,
@@ -163,6 +169,20 @@ fn waiver_holds(waiver: &Waiver) -> bool {
     waiver.holds
 }
 
+fn held_count(findings: &[Finding], inherited: &[Finding]) -> u32 {
+    let first = findings.iter();
+    let second = inherited.iter();
+    let listed = first.chain(second);
+    let matched = listed.filter(|finding| waiver_held(finding));
+    let count = matched.count();
+    count as u32
+}
+
+fn waiver_held(finding: &Finding) -> bool {
+    let waiver = finding.waiver.as_ref();
+    waiver.is_some_and(waiver_holds)
+}
+
 fn slop_score(findings: &[Finding], inherited: &[Finding], kloc: Option<f64>) -> Option<f64> {
     let kloc = kloc.filter(|kloc| *kloc > 0.0)?;
     let weight: u32 = findings
@@ -182,7 +202,7 @@ fn table(rows: &Listed<'_>, notes: &[Note], summary: Summary) -> String {
         lines.push(String::new());
     }
     push_notes(&mut lines, notes);
-    lines.push(score_line(summary.score, summary.fail));
+    lines.push(score_line(summary.score, summary.fail, summary.waived));
     join_lines(lines)
 }
 
@@ -355,12 +375,20 @@ fn note_line(note: &Note) -> String {
     }
 }
 
-fn score_line(score: Option<f64>, fail: bool) -> String {
+fn score_line(score: Option<f64>, fail: bool, waived: u32) -> String {
     let verdict = if fail { "fail" } else { "pass" };
+    let tail = verdict_tail(waived, verdict);
     match score {
-        Some(score) => format!("slop_score {}  {verdict}", show_score(score)),
-        None => verdict.to_string(),
+        Some(score) => format!("slop_score {}  {tail}", show_score(score)),
+        None => tail,
     }
+}
+
+fn verdict_tail(waived: u32, verdict: &str) -> String {
+    if waived == 0 {
+        return verdict.to_string();
+    }
+    format!("waived {waived}  {verdict}")
 }
 
 fn show(value: f64) -> String {
@@ -394,6 +422,7 @@ fn document(report: &Report, rows: &Listed<'_>, summary: Summary) -> Value {
         Value::String(scope_name(report.scope).to_string()),
     );
     doc.insert("slop_score".to_string(), optional_float(summary.score));
+    doc.insert("waived".to_string(), Value::from(summary.waived));
     doc.insert("kloc".to_string(), optional_float(report.kloc));
     doc.insert(
         "tool_version".to_string(),
@@ -846,6 +875,83 @@ mod tests {
             "the branch table is the point"
         );
         assert_eq!(document["findings"][0]["waiver"]["holds"], true);
+    }
+
+    fn held_waiver(finding: Finding) -> Finding {
+        let mut held = finding;
+        held.waiver = Some(Waiver {
+            excused: Some(9.0),
+            reason: Some("reviewed".to_string()),
+            holds: true,
+            rejection: None,
+        });
+        held
+    }
+
+    #[test]
+    fn waived_counts_held_waivers_across_both_lists_and_the_table_shows_it() {
+        let kept = held_waiver(finding(
+            "F01",
+            Level::Gate,
+            "src/a.py",
+            "kept",
+            2,
+            Metric {
+                measured: 9.0,
+                threshold: 8.0,
+                weight: 10,
+            },
+        ));
+        let inherited = held_waiver(finding(
+            "F05",
+            Level::Gate,
+            "src/b.py",
+            "old",
+            4,
+            Metric {
+                measured: 4.0,
+                threshold: 3.0,
+                weight: 10,
+            },
+        ));
+        let mut rejected = finding(
+            "F06",
+            Level::Gate,
+            "src/c.py",
+            "open",
+            1,
+            Metric {
+                measured: 60.0,
+                threshold: 51.0,
+                weight: 10,
+            },
+        );
+        rejected.waiver = Some(Waiver {
+            excused: Some(80.0),
+            reason: Some("just added".to_string()),
+            holds: false,
+            rejection: Some("written by this change".to_string()),
+        });
+        let report = Report {
+            scope: Scope::Changed,
+            tool_version: "0.0.0".to_string(),
+            kloc: Some(1.0),
+            findings: vec![kept, rejected],
+            inherited: vec![inherited],
+            notes: vec![],
+        };
+
+        let text = render(&report, false);
+        let json = render(&report, true);
+        let document: Value = serde_json::from_str(&json.stdout).unwrap();
+
+        assert_eq!(document["waived"], 2);
+        assert!(
+            json.stdout.find("\"slop_score\"").unwrap() < json.stdout.find("\"waived\"").unwrap()
+        );
+        assert!(json.stdout.find("\"waived\"").unwrap() < json.stdout.find("\"kloc\"").unwrap());
+        assert!(text.stdout.ends_with("slop_score 30.0  waived 2  fail\n"));
+        assert!(text.stdout.contains("written by this change"));
     }
 
     #[test]

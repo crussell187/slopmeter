@@ -21,6 +21,7 @@ A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
 above the function excuses this gate in Python, and the same tokens
 after `//` do so in Rust and C++, with a whole number except on F02,
 which may be fractional.
+The comment has to be in a change a person already reviewed.
 
 Before
 fn city(response: &Response) -> &str {

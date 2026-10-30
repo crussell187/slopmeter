@@ -11,8 +11,8 @@ and does not run the tests. No report, a missing file, or no DA lines
 in the function leaves the score uncomputed, and this rule emits
 nothing. S06 gates a touched function on that same fraction.
 A nested function's lines stay with it, and so do a lambda's.
-DA lines that are all zero are coverage 0, and the score is
-computed. The finding is that score, at the function line.
+DA lines that are all zero are coverage 0, and the score is computed.
+The finding is that score, at the function line.
 
 Threshold
         gate
@@ -25,7 +25,7 @@ A contiguous `# slopmeter: waive <RULE> <NUMBER> <REASON>` run directly
 above the function excuses this gate in Python, and the same tokens
 after `//` do so in Rust and C++, with a whole number except on F02,
 which may be fractional.
-
+The comment has to be in a change a person already reviewed.
 Before
 def classify(n, flag):
     if n < 0:

@@ -137,6 +137,154 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
+fn repo(name: &str) -> PathBuf {
+    let root = std::env::temp_dir().join(format!("slopmeter-waiver-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    git(&root, &["init", "-b", "main"]);
+    root
+}
+
+fn git(root: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(root)
+        .env("GIT_AUTHOR_NAME", "slopmeter")
+        .env("GIT_AUTHOR_EMAIL", "slopmeter@example.com")
+        .env("GIT_COMMITTER_NAME", "slopmeter")
+        .env("GIT_COMMITTER_EMAIL", "slopmeter@example.com")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_SYSTEM", "/dev/null")
+        .env_remove("GIT_DIR")
+        .env_remove("GIT_WORK_TREE")
+        .env_remove("GIT_INDEX_FILE")
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "git {args:?}\n{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn write_file(root: &Path, rel: &str, body: &str) {
+    let path = root.join(rel);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(path, body).unwrap();
+}
+
+fn commit_all(root: &Path) {
+    git(root, &["add", "-A"]);
+    git(root, &["commit", "-m", "base"]);
+}
+
+fn nested(name: &str) -> String {
+    format!(
+        "\
+def {name}():
+    if True:
+        if True:
+            if True:
+                if True:
+                    return 1
+    return 0
+"
+    )
+}
+
+fn waived(name: &str) -> String {
+    format!(
+        "# slopmeter: waive F05 9 nested on purpose\n{}",
+        nested(name)
+    )
+}
+
+fn check(root: &Path, args: &[&str]) -> (i32, String, serde_json::Value) {
+    let output = Command::new(env!("CARGO_BIN_EXE_slopmeter"))
+        .args(args)
+        .arg(root)
+        .output()
+        .expect("run slopmeter");
+    let stdout = String::from_utf8(output.stdout).unwrap();
+    let doc = serde_json::from_str(&stdout).unwrap_or(serde_json::Value::Null);
+    (output.status.code().unwrap_or(2), stdout, doc)
+}
+
+fn f05<'a>(doc: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+    doc["findings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|row| row["rule"] == "F05" && row["symbol"]["name"] == name)
+        .unwrap()
+}
+
+#[test]
+fn a_waiver_on_an_added_line_fails_and_a_reviewed_line_holds() {
+    let root = repo("reviewed");
+    write_file(&root, "kept.py", &waived("kept"));
+    commit_all(&root);
+    write_file(
+        &root,
+        "kept.py",
+        &waived("kept").replace("return 1", "return 2"),
+    );
+    let (code, stdout, doc) = check(&root, &["--json"]);
+    assert_eq!(code, 1, "{stdout}");
+    assert_eq!(doc["waived"], 1, "{stdout}");
+    assert_eq!(f05(&doc, "kept")["waiver"]["holds"], true, "{stdout}");
+    assert!(
+        f05(&doc, "kept")["waiver"]["rejection"].is_null(),
+        "{stdout}"
+    );
+
+    let root = repo("added");
+    write_file(&root, "open.py", &nested("open"));
+    commit_all(&root);
+    write_file(&root, "open.py", &waived("open"));
+    let (code, stdout, doc) = check(&root, &["--json"]);
+    assert_eq!(code, 1, "{stdout}");
+    assert_eq!(doc["waived"], 0, "{stdout}");
+    assert_eq!(
+        f05(&doc, "open")["waiver"]["rejection"],
+        "written by this change",
+        "{stdout}"
+    );
+    let (code, table, _) = check(&root, &[]);
+    assert_eq!(code, 1, "{table}");
+    assert!(table.contains("written by this change"), "{table}");
+    assert!(!table.contains("waived 1"), "{table}");
+
+    let (code, stdout, doc) = check(&root, &["--strict", "--json"]);
+    assert_eq!(code, 0, "{stdout}");
+    assert_eq!(doc["waived"], 1, "{stdout}");
+    assert_eq!(f05(&doc, "open")["waiver"]["holds"], true, "{stdout}");
+
+    let root = repo("untracked");
+    write_file(&root, "old.py", "def other():\n    return 0\n");
+    commit_all(&root);
+    write_file(&root, "fresh.py", &waived("fresh"));
+    let (code, stdout, doc) = check(&root, &["--json"]);
+    assert_eq!(code, 1, "{stdout}");
+    assert_eq!(doc["waived"], 0, "{stdout}");
+    assert_eq!(
+        f05(&doc, "fresh")["waiver"]["rejection"],
+        "written by this change",
+        "{stdout}"
+    );
+
+    let outside =
+        std::env::temp_dir().join(format!("slopmeter-waiver-outside-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&outside);
+    std::fs::create_dir_all(&outside).unwrap();
+    write_file(&outside, "open.py", &waived("open"));
+    let (code, stdout, doc) = check(&outside, &["--json"]);
+    assert_eq!(code, 0, "{stdout}");
+    assert_eq!(doc["waived"], 1, "{stdout}");
+    assert_eq!(f05(&doc, "open")["waiver"]["holds"], true, "{stdout}");
+}
+
 fn assert_wide_margin(doc: &serde_json::Value, stdout: &str) {
     let mut worst: BTreeMap<&str, (f64, f64)> = BTreeMap::new();
     for finding in doc["findings"].as_array().unwrap() {
