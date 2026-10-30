@@ -104,6 +104,7 @@ Redrawn 2026-10-27 after [the Phase 1 review](../../docs/review/2026-10-27-phase
 - [Bring this crate under the gates](issues/78-under-the-gates.md) — `slopmeter --strict` on this repo exits 0, with the thresholds and `slopmeter.toml` left as they were.
 - [Put the self-check in CI and create the GitHub remote](issues/65-self-check-and-remote.md) — the public repo is https://github.com/crussell187/slopmeter, with the four research branches already there; the CI job runs `cargo run --quiet -- --strict` after the tests.
 - [Waivers under an agent loop](issues/79-waivers-under-an-agent-loop.md) — a waiver line the diff adds does not hold on that run; unchanged lines, `--strict` and a run outside git hold every well-formed waiver; no switch refuses waivers and the number has no cap; the report counts held waivers as `waived` ([ADR 0034](../../docs/adr/0034-a-waiver-the-change-adds-does-not-hold.md)).
+- [Whether a stale coverage or mutation report holds](issues/80-stale-reports.md) — a report older than any file the diff changed is missing: touched functions fail S06 and S07 and CRAP is absent; under `--strict` the comparison is per scored file and adds a note, not a row; freshness is modification time and a tie is fresh ([ADR 0035](../../docs/adr/0035-a-report-older-than-the-change-is-missing.md)).
 
 ## Not yet specified
 
